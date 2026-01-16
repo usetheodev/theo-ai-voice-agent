@@ -1,0 +1,51 @@
+# AI Voice Agent Configuration
+
+app:
+  name: "AI Voice Agent"
+  env: "${APP_ENV:-development}"
+
+# RTP Configuration
+rtp:
+  host: "0.0.0.0"
+  port: 5080
+  buffer_size: 4194304  # 4MB UDP buffer
+
+# Asterisk ARI Configuration
+asterisk:
+  host: "${ASTERISK_HOST:-asterisk}"
+  ari_port: 8088
+  ari_user: "${ASTERISK_ARI_USER:-aiagent}"
+  ari_password: "${ASTERISK_ARI_PASSWORD:-ChangeMe123!}"
+
+# Whisper ASR
+whisper:
+  model: "${WHISPER_MODEL:-base}"
+  model_path: "/app/models/whisper/ggml-${WHISPER_MODEL:-base}.bin"
+  language: "pt"
+  sample_rate: 16000
+
+# LLM Configuration
+llm:
+  model: "${LLM_MODEL:-phi-3-mini}"
+  model_path: "/app/models/llm/${LLM_MODEL:-phi-3-mini}.gguf"
+  context_size: 2048
+  temperature: 0.7
+  max_tokens: 150
+
+# TTS Configuration
+tts:
+  voice: "${TTS_VOICE:-pt_BR-faber-medium}"
+  model_path: "/app/models/tts/${TTS_VOICE:-pt_BR-faber-medium}.onnx"
+  sample_rate: 22050
+
+# Logging
+logging:
+  level: "${LOG_LEVEL:-INFO}"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Audio Processing
+audio:
+  codec: "alaw"  # G.711 A-law
+  sample_rate: 8000
+  channels: 1
+  frame_duration_ms: 20
