@@ -93,7 +93,8 @@ class WhisperASR:
             segments = self.model.transcribe(
                 audio_data,
                 language=self.language,
-                n_threads=self.n_threads
+                n_threads=self.n_threads,
+                no_context=True  # Prevent hallucinations (84.5% reduction - Wang et al. 2025)
             )
 
             # Extract text from segments

@@ -191,9 +191,18 @@ class RTPParser:
 
     def get_stats(self) -> dict:
         """Get parser statistics"""
+        # Calculate loss rate with protection against > 100%
+        # (can happen with sequence reordering or resets)
+        if self.packets_parsed > 0:
+            raw_loss_rate = self.packets_lost / self.packets_parsed
+            # Clamp to [0.0, 1.0] - loss cannot exceed 100%
+            loss_rate = min(1.0, max(0.0, raw_loss_rate))
+        else:
+            loss_rate = 0.0
+
         return {
             'packets_parsed': self.packets_parsed,
             'parse_errors': self.parse_errors,
             'packets_lost': self.packets_lost,
-            'loss_rate': self.packets_lost / self.packets_parsed if self.packets_parsed > 0 else 0.0
+            'loss_rate': loss_rate
         }

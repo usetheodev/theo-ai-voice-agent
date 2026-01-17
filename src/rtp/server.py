@@ -187,12 +187,13 @@ class RTPServer:
         )
 
         # Create VAD with callbacks
+        # Higher thresholds to avoid detecting background noise as speech
         self.vad = VoiceActivityDetector(
             sample_rate=8000,
             frame_duration_ms=20,
-            energy_threshold_start=500.0,  # Adjust based on testing
-            energy_threshold_end=300.0,
-            silence_duration_ms=500,
+            energy_threshold_start=1200.0,  # Increased from 500 to reduce false positives
+            energy_threshold_end=700.0,     # Increased from 300 for cleaner detection
+            silence_duration_ms=700,        # Increased from 500 to wait longer for silence confirmation
             on_speech_start=self._on_speech_start,
             on_speech_end=self._on_speech_end
         )
@@ -208,10 +209,10 @@ class RTPServer:
         llm_config = self.config.get('llm', {})
         self.llm = Phi3LLM(
             model_path=llm_config.get('model_path', '/app/models/llm/phi-3-mini.gguf'),
-            system_prompt=llm_config.get('system_prompt', 'Você é um assistente virtual brasileiro, útil e amigável. Responda de forma concisa e natural.'),
-            n_threads=llm_config.get('n_threads', 4),
-            temperature=llm_config.get('temperature', 0.7),
-            max_tokens=llm_config.get('max_tokens', 150)
+            system_prompt=llm_config.get('system_prompt', 'Você é um assistente de voz brasileiro. Responda SEMPRE em português do Brasil. Seja EXTREMAMENTE conciso: máximo 2 frases curtas e diretas. Não invente informações.'),
+            n_threads=llm_config.get('n_threads', 6),
+            temperature=llm_config.get('temperature', 0.5),
+            max_tokens=llm_config.get('max_tokens', 50)
         )
 
         self.logger.info("✅ Audio pipeline initialized (Buffer + VAD + ASR + LLM)")

@@ -60,6 +60,8 @@ class Phi3LLM:
                 verbose=False
             )
             self.logger.info(f"Phi-3 LLM initialized: {model_path} (ctx={n_ctx}, threads={n_threads})")
+            self.logger.info(f"LLM config: max_tokens={max_tokens}, temperature={temperature}")
+            self.logger.info(f"System prompt: {system_prompt[:80]}...")
         except Exception as e:
             self.logger.error(f"Failed to initialize Phi-3 model: {e}")
             raise
@@ -102,7 +104,17 @@ class Phi3LLM:
                 prompt,
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
-                stop=["<|end|>", "<|user|>", "\n\nUser:", "\n\nHuman:"],
+                stop=[
+                    "<|end|>",
+                    "<|user|>",
+                    "\n\nUser:",
+                    "\n\nHuman:",
+                    "Instrucción",  # Stop Spanish contamination
+                    "Instrução",    # Stop Portuguese formal instructions
+                    "Pregunta",     # Stop Spanish questions
+                    "\n\n\n",       # Stop multiple newlines
+                    "\n\nExemplo:", # Stop examples
+                ],
                 echo=False
             )
 
