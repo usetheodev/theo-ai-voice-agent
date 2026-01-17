@@ -23,15 +23,8 @@ COPY ./requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Install Whisper.cpp
-RUN git clone https://github.com/ggerganov/whisper.cpp.git /tmp/whisper.cpp && \
-    cd /tmp/whisper.cpp && \
-    make && \
-    cp build/bin/main /usr/local/bin/whisper-cpp && \
-    cp build/libwhisper.so /usr/local/lib/ 2>/dev/null || \
-    cp libwhisper.so /usr/local/lib/ || true && \
-    ldconfig && \
-    rm -rf /tmp/whisper.cpp
+# Whisper.cpp will be installed via Python package (pywhispercpp)
+# No need to build from source
 
 # Install llama.cpp (for LLM)
 RUN git clone https://github.com/ggerganov/llama.cpp.git /tmp/llama.cpp && \
@@ -42,9 +35,10 @@ RUN git clone https://github.com/ggerganov/llama.cpp.git /tmp/llama.cpp && \
     cp main /usr/local/bin/llama-cpp || true && \
     rm -rf /tmp/llama.cpp
 
-# Install Piper TTS
-RUN wget -qO- https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_amd64.tar.gz | \
-    tar -xvz -C /usr/local/bin/
+# Install Piper TTS (Python package from OHF-Voice/piper1-gpl)
+# PyPI package name: piper-tts
+# Note: Successor of archived rhasspy/piper
+RUN pip install --no-cache-dir piper-tts
 
 # Create directories for models and logs
 RUN mkdir -p /app/models/{whisper,llm,tts} /app/logs

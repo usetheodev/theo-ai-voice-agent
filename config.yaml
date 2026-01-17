@@ -32,11 +32,12 @@ llm:
   temperature: 0.7
   max_tokens: 150
 
-# TTS Configuration
+# TTS Configuration (Piper1-GPL from OHF-Voice)
 tts:
   voice: "${TTS_VOICE:-pt_BR-faber-medium}"
   model_path: "/app/models/tts/${TTS_VOICE:-pt_BR-faber-medium}.onnx"
   sample_rate: 22050
+  # Note: piper1-gpl is Python package (no binary), models remain .onnx
 
 # Logging
 logging:
