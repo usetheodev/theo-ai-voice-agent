@@ -42,9 +42,10 @@ COPY certs/ /etc/asterisk/certs/
 RUN chown -R asterisk:asterisk /etc/asterisk
 
 # Copy Browser-Phone files for WebRTC client
-RUN mkdir -p /var/lib/asterisk/static-http
-COPY --from=browser-phone-source /app/Phone /var/lib/asterisk/static-http/
-RUN chmod -R 755 /var/lib/asterisk/static-http
+# Asterisk expects static files in /usr/share/asterisk/static-http/
+RUN mkdir -p /usr/share/asterisk/static-http
+COPY --from=browser-phone-source /app/Phone /usr/share/asterisk/static-http/
+RUN chmod -R 755 /usr/share/asterisk/static-http
 
 # Expose ports
 # SIP

@@ -9,7 +9,7 @@ echo "Configuration:"
 echo "  - RTP Port: ${RTP_PORT:-5080}"
 echo "  - Whisper Model: ${WHISPER_MODEL:-base}"
 echo "  - LLM Model: ${LLM_MODEL:-qwen2.5-3b-instruct}"
-echo "  - TTS Voice: ${TTS_VOICE:-pt_BR-faber-medium}"
+echo "  - TTS Voice: ${TTS_VOICE:-pf_dora} (Kokoro-82M)"
 echo "  - Log Level: ${LOG_LEVEL:-INFO}"
 echo ""
 
@@ -57,22 +57,10 @@ else
     echo "✅ LLM model already exists: $(basename $LLM_PATH)"
 fi
 
-# TTS (Piper)
-TTS_ONNX="/app/models/tts/${TTS_VOICE}.onnx"
-TTS_JSON="/app/models/tts/${TTS_VOICE}.onnx.json"
-if [ ! -f "$TTS_ONNX" ]; then
-    echo "📥 Downloading TTS model: ${TTS_VOICE}..."
-    mkdir -p /app/models/tts
-    wget -q --show-progress \
-        -O "$TTS_ONNX" \
-        "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/pt/pt_BR/faber/medium/pt_BR-faber-medium.onnx"
-    wget -q --show-progress \
-        -O "$TTS_JSON" \
-        "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/pt/pt_BR/faber/medium/pt_BR-faber-medium.onnx.json"
-    echo "✅ TTS model downloaded"
-else
-    echo "✅ TTS model already exists"
-fi
+# TTS (Kokoro-82M)
+# Kokoro downloads models automatically on first use via Python API
+# No manual download needed - models are cached in HuggingFace cache
+echo "✅ TTS (Kokoro-82M) - Models will be downloaded automatically on first use"
 
 echo ""
 echo "All models ready!"

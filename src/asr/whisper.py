@@ -7,8 +7,47 @@ Native C++ API for fast CPU inference without subprocess overhead.
 
 import logging
 import numpy as np
+import re
 from typing import Optional
 from pywhispercpp.model import Model
+
+
+# Common Whisper hallucination patterns to filter out
+HALLUCINATION_PATTERNS = [
+    r'\[MÚSICA DE FUNDO\]',
+    r'\[BACKGROUND MUSIC\]',
+    r'\[Música\]',
+    r'\[Aplausos\]',
+    r'\[Risos\]',
+    r'\[Music\]',
+    r'\[Applause\]',
+    r'\[Laughter\]',
+    r'\[♪.*?♪\]',  # Musical notes
+    r'\[.*?music.*?\]',  # Any variation with "music"
+]
+
+
+def filter_hallucinations(text: str) -> str:
+    """
+    Remove common Whisper hallucination patterns from transcription
+
+    Args:
+        text: Raw transcription from Whisper
+
+    Returns:
+        Cleaned transcription with hallucinations removed
+    """
+    if not text:
+        return text
+
+    cleaned = text
+    for pattern in HALLUCINATION_PATTERNS:
+        cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+
+    # Remove extra whitespace
+    cleaned = ' '.join(cleaned.split())
+
+    return cleaned.strip()
 
 
 class WhisperASR:
@@ -113,9 +152,22 @@ class WhisperASR:
                 transcription = ' '.join(text_parts).strip()
 
                 if transcription:
-                    self.transcriptions_count += 1
-                    self.logger.info(f"✅ Transcription #{self.transcriptions_count}: {transcription}")
-                    return transcription
+                    # Filter out hallucinations
+                    cleaned = filter_hallucinations(transcription)
+
+                    if cleaned:
+                        self.transcriptions_count += 1
+                        if cleaned != transcription:
+                            self.logger.info(
+                                f"✅ Transcription #{self.transcriptions_count} (filtered): {cleaned} "
+                                f"(original: {transcription})"
+                            )
+                        else:
+                            self.logger.info(f"✅ Transcription #{self.transcriptions_count}: {cleaned}")
+                        return cleaned
+                    else:
+                        self.logger.warning(f"Transcription only contained hallucinations: {transcription}")
+                        return None
 
             self.logger.warning("Transcription returned empty result")
             return None

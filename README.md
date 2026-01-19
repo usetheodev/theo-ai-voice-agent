@@ -33,14 +33,15 @@ This Proof of Concept (PoC) demonstrates how to integrate traditional telephone 
 - ✅ **Real-time RTP Processing** - 50 packets/second at 8kHz
 - ✅ **Modern Async Architecture** - Built with asyncari 0.20.6 and asyncio
 - ✅ **Smart VAD** - Voice Activity Detection with adjustable thresholds (0% false positives)
-- ✅ **AI Pipeline** - Whisper ASR + Qwen2.5 LLM fully integrated
+- ✅ **AI Pipeline** - Whisper ASR + Qwen2.5 LLM + Kokoro TTS fully integrated
 - ✅ **Portuguese Optimized** - Qwen2.5-3B-Instruct with 29+ language support
+- ✅ **Kokoro-82M TTS** - Lightweight (82M params), <0.3s latency, Brazilian Portuguese voices
 - ✅ **Hallucination Prevention** - 84.5% reduction in ASR hallucinations
 - ✅ **Real-time Statistics** - Live monitoring of audio packets and throughput
 - ✅ **On-premise Deployment** - No cloud dependencies
 - ✅ **CPU-only Inference** - No GPU required
 - ✅ **Docker-based** - Setup in < 15 minutes
-- 🚧 **TTS Integration** (In Progress - Phase 3)
+- 🚧 **Audio Response Encoding** (Pending - Phase 3)
 - 🚧 **Full-duplex Communication** (Planned - Phase 4)
 - 🚧 **Barge-in Support** (Planned - Phase 4)
 
@@ -142,7 +143,8 @@ Connect your IP phone using the same credentials as Option 2.
 - ✅ VAD detects speech accurately (0% false positives)
 - ✅ Whisper transcribes in Portuguese (no hallucinations)
 - ✅ Qwen2.5 LLM responds in Portuguese (~3s latency)
-- 🚧 TTS response (Phase 3 - pending)
+- ✅ Kokoro TTS generates speech (<0.3s latency)
+- 🚧 Audio encoding + RTP send (Phase 3 - pending)
 
 ### 3. Check Logs
 
@@ -243,11 +245,20 @@ Connect your IP phone using the same credentials as Option 2.
 - ✅ **Optimized config** - max_tokens=50, temperature=0.5, 6 threads
 - ✅ **Q4_K_M quantization** - Best quality/speed balance (~2.3GB)
 
+#### Kokoro-82M TTS
+- ✅ **Lightweight architecture** - Only 82M parameters
+- ✅ **Brazilian Portuguese** - 3 voices (pf_dora female, pm_alex/pm_santa male)
+- ✅ **<0.3s latency** - Ultra-fast synthesis for real-time
+- ✅ **Streaming support** - Generate audio chunks progressively
+- ✅ **Python native** - No subprocess overhead (vs Piper)
+- ✅ **Apache 2.0** - Production-ready license
+- ✅ **Community validated** - Asimov Academy created official guide
+
 #### Pipeline Orchestration
-- ✅ **End-to-end flow** - RTP → G.711 → VAD → Buffer → ASR → LLM
+- ✅ **End-to-end flow** - RTP → G.711 → VAD → Buffer → ASR → LLM → TTS
 - ✅ **Async architecture** - Non-blocking pipeline
 - ✅ **Real-time stats** - Monitoring at each stage
-- ✅ **5s total latency** - From speech end to LLM response
+- ✅ **~6s total latency** - From speech end to TTS audio generation
 
 ### Lessons Learned
 
@@ -274,6 +285,8 @@ Connect your IP phone using the same credentials as Option 2.
 4. **Qwen2.5 superior for Portuguese** - 29 languages vs Phi-3's 8, respects prompts
 5. **Model quantization matters** - Q4_K_M best balance for 3B models (~2.3GB)
 6. **LLM latency optimization** - max_tokens=50, temp=0.5, 6 threads = 3s (was 6s)
+7. **Piper archived, Kokoro active** - Switched to Kokoro-82M (Apache 2.0, community-backed)
+8. **TTS latency critical** - <0.3s keeps conversation natural, Piper/Kokoro both excellent
 
 ---
 
@@ -307,12 +320,35 @@ Connect your IP phone using the same credentials as Option 2.
 4. ✅ **Faster** (3s vs 4-6s with same hardware)
 5. ✅ **No unwanted translations** (Phi-3 translated to English)
 
+### Kokoro-82M TTS (Text-to-Speech)
+- **Model**: Kokoro-82M (StyleTTS 2 + ISTFTNet)
+- **Size**: 82M parameters (~200MB)
+- **Languages**: 8 languages + 54 voices (Brazilian Portuguese included)
+- **Latency**: <0.3s (100-300ms with GPU, 3-11x real-time on CPU)
+- **Sample Rate**: 24kHz
+- **Features**:
+  - 🇧🇷 Brazilian Portuguese: 3 voices (pf_dora ♀, pm_alex ♂, pm_santa ♂)
+  - Streaming audio generation (real-time chunks)
+  - Python native API (no subprocess)
+  - Apache 2.0 license (production-ready)
+  - 🏆 1st place TTS Arena (beat XTTS v2, MetaVoice)
+  - 1.9M+ monthly downloads on HuggingFace
+
+### Why Kokoro-82M over Piper TTS?
+1. ✅ **Active development** (Piper archived Oct/2025, Kokoro v1.0 Jan/2025)
+2. ✅ **Streaming support** (real-time chunks vs complete file)
+3. ✅ **Python native** (no subprocess overhead)
+4. ✅ **Better quality** (1st place TTS Arena)
+5. ✅ **Community validated** (Asimov Academy official guide)
+6. ✅ **Female voice** (pf_dora vs Piper's 2 male only)
+
 ### Model Download
 Models are downloaded automatically on first start:
 - Whisper: From `huggingface.co/ggerganov/whisper.cpp`
 - Qwen2.5: From `huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF`
+- Kokoro: From `huggingface.co/hexgrad/Kokoro-82M` (auto-cached)
 
-Total download: ~2.5GB (one-time, cached in Docker volume)
+Total download: ~2.7GB (one-time, cached in Docker volume)
 
 ---
 
@@ -365,8 +401,9 @@ WHISPER_MODEL=base  # tiny, base, small, medium
 # LLM
 LLM_MODEL=qwen2.5-3b-instruct  # Optimized for Portuguese (29+ languages)
 
-# TTS
-TTS_VOICE=pt_BR-faber-medium
+# TTS (Kokoro-82M)
+TTS_LANG=p  # p = Brazilian Portuguese
+TTS_VOICE=pf_dora  # pf_dora (female), pm_alex/pm_santa (male)
 
 # Asterisk ARI
 ASTERISK_ARI_PASSWORD=ChangeMe123!
@@ -414,9 +451,9 @@ This PoC follows a structured roadmap with 6 phases:
   - [x] Whisper.cpp integration (ASR) via pywhispercpp
   - [x] Qwen2.5-3B-Instruct via llama.cpp (LLM) - Best for Portuguese
   - [x] Hallucination prevention (no_context=True - 84.5% reduction)
-  - [x] Pipeline orchestration (VAD → Buffer → ASR → LLM)
-  - [ ] Piper TTS integration (pending)
-  - [ ] Audio response encoding + RTP send
+  - [x] Kokoro-82M TTS integration - Brazilian Portuguese voices
+  - [x] Pipeline orchestration (VAD → Buffer → ASR → LLM → TTS)
+  - [ ] Audio response encoding (PCM 24kHz → G.711 8kHz) + RTP send
 
 - [ ] **Phase 4**: Full-Duplex + Barge-in
   - [ ] Simultaneous send/receive

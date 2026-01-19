@@ -10,6 +10,20 @@ soundfile==0.12.1
 # VAD (Voice Activity Detection)
 webrtcvad==2.0.10
 
+# Asterisk ARI
+asyncari==0.20.6
+
+# ASR (Automatic Speech Recognition)
+pywhispercpp==1.2.0
+
+# LLM (Large Language Model)
+llama-cpp-python==0.2.90
+
+# TTS (Text-to-Speech)
+kokoro>=0.9.4
+torch>=2.5.0
+pyaudio>=0.2.11
+
 # Logging
 structlog==23.3.0
 

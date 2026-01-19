@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     portaudio19-dev \
     netcat-openbsd \
+    espeak-ng \
     && rm -rf /var/lib/apt/lists/*
 
 # Create working directory
@@ -35,10 +36,8 @@ RUN git clone https://github.com/ggerganov/llama.cpp.git /tmp/llama.cpp && \
     cp main /usr/local/bin/llama-cpp || true && \
     rm -rf /tmp/llama.cpp
 
-# Install Piper TTS (Python package from OHF-Voice/piper1-gpl)
-# PyPI package name: piper-tts
-# Note: Successor of archived rhasspy/piper
-RUN pip install --no-cache-dir piper-tts
+# Kokoro TTS dependencies are installed via requirements.txt
+# (kokoro>=0.9.4, torch>=2.5.0, pyaudio>=0.2.11)
 
 # Create directories for models and logs
 RUN mkdir -p /app/models/{whisper,llm,tts} /app/logs

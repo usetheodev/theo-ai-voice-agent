@@ -45,6 +45,7 @@ class VoiceActivityDetector:
                  energy_threshold_start: float = 500.0,
                  energy_threshold_end: float = 300.0,
                  silence_duration_ms: int = 500,
+                 min_speech_duration_ms: int = 500,
                  on_speech_start: Optional[Callable] = None,
                  on_speech_end: Optional[Callable] = None):
         """
@@ -56,6 +57,7 @@ class VoiceActivityDetector:
             energy_threshold_start: RMS energy to start speech detection
             energy_threshold_end: RMS energy to end speech detection
             silence_duration_ms: Silence duration to confirm end of speech
+            min_speech_duration_ms: Minimum speech duration to be considered valid (filters noise)
             on_speech_start: Callback when speech starts
             on_speech_end: Callback when speech ends
         """
@@ -64,6 +66,7 @@ class VoiceActivityDetector:
         self.energy_threshold_start = energy_threshold_start
         self.energy_threshold_end = energy_threshold_end
         self.silence_duration_ms = silence_duration_ms
+        self.min_speech_duration_ms = min_speech_duration_ms
 
         self.on_speech_start = on_speech_start
         self.on_speech_end = on_speech_end
@@ -80,6 +83,11 @@ class VoiceActivityDetector:
             (silence_duration_ms / frame_duration_ms)
         )
 
+        # Calculate minimum speech threshold in frames
+        self.min_speech_frames_threshold = int(
+            (min_speech_duration_ms / frame_duration_ms)
+        )
+
         # Statistics
         self.total_frames = 0
         self.speech_segments = 0
@@ -89,7 +97,8 @@ class VoiceActivityDetector:
             f"VAD initialized: "
             f"threshold_start={energy_threshold_start:.1f}, "
             f"threshold_end={energy_threshold_end:.1f}, "
-            f"silence_timeout={silence_duration_ms}ms ({self.silence_frames_threshold} frames)"
+            f"silence_timeout={silence_duration_ms}ms ({self.silence_frames_threshold} frames), "
+            f"min_speech={min_speech_duration_ms}ms ({self.min_speech_frames_threshold} frames)"
         )
 
     def calculate_rms_energy(self, pcm_data: bytes) -> float:
@@ -196,6 +205,17 @@ class VoiceActivityDetector:
     def _transition_to_silence(self):
         """Transition from SPEECH/PENDING_END to SILENCE"""
         duration_s = (self.speech_frames * self.frame_duration_ms) / 1000.0
+
+        # Validate minimum speech duration (filter out noise)
+        if self.speech_frames < self.min_speech_frames_threshold:
+            self.logger.debug(
+                f"🔇 Speech too short ({duration_s:.2f}s < {self.min_speech_duration_ms/1000:.2f}s), "
+                f"ignoring (likely noise)"
+            )
+            self.state = VADState.SILENCE
+            self.speech_frames = 0
+            self.silence_frames = 0
+            return
 
         self.logger.info(
             f"🤫 Speech ended (duration: {duration_s:.2f}s, {self.speech_frames} frames)"

@@ -34,12 +34,11 @@ llm:
   max_tokens: 50  # Shorter responses = 3x faster (was 150)
   system_prompt: "Você é um assistente de voz brasileiro. Responda SEMPRE em português do Brasil. Seja EXTREMAMENTE conciso: máximo 2 frases curtas e diretas. Não invente informações."
 
-# TTS Configuration (Piper1-GPL from OHF-Voice)
+# TTS Configuration (Kokoro-82M)
 tts:
-  voice: "${TTS_VOICE:-pt_BR-faber-medium}"
-  model_path: "/app/models/tts/${TTS_VOICE:-pt_BR-faber-medium}.onnx"
-  sample_rate: 22050
-  # Note: piper1-gpl is Python package (no binary), models remain .onnx
+  lang_code: "${TTS_LANG:-p}"  # p = Brazilian Portuguese
+  voice: "${TTS_VOICE:-pf_dora}"  # pf_dora (female), pm_alex/pm_santa (male)
+  sample_rate: 24000  # Kokoro uses 24kHz
 
 # Logging
 logging:
