@@ -1,0 +1,111 @@
+# AI Voice Agent - Default Configuration
+
+# ===== SIP SERVER =====
+sip:
+  # Network
+  host: 0.0.0.0
+  port: 5060
+
+  # Authentication
+  realm: voiceagent
+
+  # Limits
+  max_concurrent_calls: 100
+  ringing_timeout: 60  # seconds
+
+  # Authorized trunks (digest authentication)
+  trunks:
+    - username: carrier_demo
+      password: demo123
+      trunk_id: trunk-demo-001
+
+    # Add more trunks here:
+    # - username: carrier_prod
+    #   password: secret_password
+    #   trunk_id: trunk-prod-001
+
+  # IP whitelist (no authentication required)
+  ip_whitelist:
+    # - 203.0.113.0/24  # Carrier ABC
+    # - 198.51.100.0/24 # Carrier XYZ
+
+
+# ===== RTP SERVER =====
+rtp:
+  # Port allocation
+  port_range_start: 10000
+  port_range_end: 20000
+
+  # Codec priority (order matters!)
+  codec_priority:
+    - PCMU    # G.711 μ-law (standard USA)
+    - PCMA    # G.711 A-law (standard Europe)
+    # - opus  # TODO: Implement Opus codec
+
+  # Jitter buffer
+  jitter_buffer_ms: 60          # Target delay
+  jitter_buffer_max_ms: 200     # Max delay before dropping packets
+
+  # DTMF
+  dtmf_detection: true
+  dtmf_min_duration_ms: 40      # Minimum duration to consider valid
+
+  # Timeouts
+  rtp_timeout_ms: 5000          # No RTP for 5s → consider stream dead
+
+
+# ===== AI PIPELINE =====
+ai:
+  # ASR (Automatic Speech Recognition)
+  asr_model: openai/whisper-large-v3  # Options: whisper-tiny, whisper-base, whisper-large-v3
+  asr_language: pt  # Force Portuguese (auto-detect if null)
+
+  # LLM (Large Language Model)
+  llm_model: Qwen/Qwen2.5-7B  # Options: Qwen2.5-3B (faster), Qwen2.5-7B (better)
+  llm_max_tokens: 256         # Max response length
+  llm_temperature: 0.7        # 0.0 = deterministic, 1.0 = creative
+
+  # TTS (Text-to-Speech)
+  tts_model: kokoro-tts
+  tts_voice: af_bella  # Options: af_bella, af_sarah, am_adam, etc.
+  tts_speed: 1.0       # 0.5-2.0
+
+  # VAD (Voice Activity Detection)
+  vad_threshold: 0.5             # 0.0 = very sensitive, 1.0 = not sensitive
+  vad_min_speech_duration_ms: 300  # Minimum 300ms to consider speech
+
+  # System prompt
+  system_prompt: |
+    Você é um assistente de voz prestativo e amigável.
+    Responda de forma concisa e natural, como em uma conversa telefônica.
+    Mantenha respostas curtas (1-3 frases).
+
+    Informações úteis:
+    - Você está atendendo chamadas telefônicas
+    - O usuário está falando por telefone (não pode ver telas)
+    - Seja objetivo e direto
+
+
+# ===== LOGGING =====
+log_level: INFO  # DEBUG, INFO, WARNING, ERROR
+
+# ===== MONITORING =====
+metrics_port: 8000  # Prometheus metrics endpoint at http://localhost:8000/metrics
+
+
+# ===== ADVANCED (optional) =====
+
+# GPU optimization
+gpu:
+  enabled: true
+  device_map: auto  # 'auto' or specific GPU id (0, 1, etc.)
+
+# Model quantization (reduce memory usage)
+quantization:
+  enabled: false  # Set to true for 4-bit quantization
+  bits: 4         # 4 or 8
+
+# Performance tuning
+performance:
+  max_concurrent_ai_pipelines: 10  # Max concurrent AI processing
+  ai_worker_pool_size: 4           # Thread pool for blocking AI calls

@@ -1,201 +1,144 @@
 #!/usr/bin/env python3
 """
 AI Voice Agent - Main Entry Point
-Handles real-time voice conversations via Asterisk ARI + RTP
 """
 
 import asyncio
-import logging
+import signal
 import sys
 from pathlib import Path
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent))
+import click
 
-from utils.logger import setup_logger
-from utils.config import load_config
-from rtp.server import RTPServer
-from ari.client import ARIClient
+# Add src to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.common.config import AppConfig
+from src.common.logging import get_logger
+from src.common.metrics import start_metrics_server
+
+logger = get_logger('main')
 
 
-# Global state for call management
-active_calls = {}
+class Application:
+    """Main application orchestrator"""
+
+    def __init__(self, config: AppConfig):
+        self.config = config
+        self.orchestrator = None
+        self.shutdown_event = asyncio.Event()
+
+    async def start(self):
+        """Start the application"""
+        logger.info('🚀 Starting AI Voice Agent...')
+
+        # Validate config
+        errors = self.config.validate()
+        if errors:
+            for error in errors:
+                logger.error('Configuration error', error=error)
+            sys.exit(1)
+
+        logger.info('Configuration valid', config=str(self.config))
+
+        # Start metrics server
+        start_metrics_server(port=self.config.metrics_port)
+        logger.info('Metrics server started', port=self.config.metrics_port)
+
+        # TODO: Import and initialize modules
+        # from src.sip import SIPServer
+        # from src.rtp import RTPServer
+        # from src.ai import Voice2VoicePipeline
+        # from src.orchestrator import CallOrchestrator, EventBus
+
+        # event_bus = EventBus()
+        # sip_server = SIPServer(config=self.config.sip, event_bus=event_bus)
+        # rtp_server = RTPServer(config=self.config.rtp, event_bus=event_bus)
+        # ai_pipeline = Voice2VoicePipeline(config=self.config.ai, event_bus=event_bus)
+
+        # self.orchestrator = CallOrchestrator(
+        #     sip_server=sip_server,
+        #     rtp_server=rtp_server,
+        #     ai_pipeline=ai_pipeline,
+        #     event_bus=event_bus
+        # )
+
+        # await self.orchestrator.start()
+
+        logger.info('✅ AI Voice Agent running')
+        logger.info('SIP listening', host=self.config.sip.host, port=self.config.sip.port)
+        logger.info('Metrics available', url=f'http://localhost:{self.config.metrics_port}/metrics')
+
+        # Wait for shutdown signal
+        await self.shutdown_event.wait()
+
+    async def stop(self):
+        """Stop the application gracefully"""
+        logger.info('🛑 Shutting down AI Voice Agent...')
+
+        if self.orchestrator:
+            await self.orchestrator.stop()
+
+        logger.info('✅ Shutdown complete')
+
+    def handle_shutdown(self, signum, frame):
+        """Handle shutdown signals (SIGINT, SIGTERM)"""
+        logger.info('Shutdown signal received', signal=signum)
+        self.shutdown_event.set()
 
 
-async def main():
-    """Main application entry point"""
+@click.command()
+@click.option(
+    '--config',
+    '-c',
+    type=click.Path(exists=True),
+    default='config/default.yaml',
+    help='Path to configuration file'
+)
+@click.option(
+    '--log-level',
+    '-l',
+    type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']),
+    default=None,
+    help='Override log level from config'
+)
+def cli(config: str, log_level: str):
+    """
+    AI Voice Agent - Modular SIP/RTP voice system with AI
 
-    # Setup logging
-    logger = setup_logger()
-    logger.info("=" * 60)
-    logger.info("🤖 AI Voice Agent Starting (Asterisk ARI)...")
-    logger.info("=" * 60)
+    Examples:
 
+        # Use default config
+        python src/main.py
+
+        # Use custom config
+        python src/main.py --config config/production.yaml
+
+        # Override log level
+        python src/main.py --log-level DEBUG
+    """
+    # Load configuration
+    app_config = AppConfig.from_yaml(config)
+
+    # Override log level if provided
+    if log_level:
+        app_config.log_level = log_level
+
+    # Create application
+    app = Application(app_config)
+
+    # Setup signal handlers
+    signal.signal(signal.SIGINT, app.handle_shutdown)
+    signal.signal(signal.SIGTERM, app.handle_shutdown)
+
+    # Run
     try:
-        # Load configuration
-        config = load_config()
-        logger.info(f"Configuration loaded: {config.get('app_env', 'development')} environment")
-
-        # Initialize RTP server
-        rtp_host = config.get('rtp_host', '0.0.0.0')
-        rtp_port = config.get('rtp_port', 5080)
-
-        logger.info(f"Initializing RTP server on {rtp_host}:{rtp_port}")
-        rtp_server = RTPServer(host=rtp_host, port=rtp_port, config=config)
-
-        # Start RTP server
-        await rtp_server.start()
-
-        # Initialize ARI client
-        ari_host = config.get('asterisk_host', 'asterisk')
-        ari_port = config.get('asterisk_ari_port', 8088)
-        ari_user = config.get('asterisk_ari_user', 'aiagent')
-        ari_pass = config.get('asterisk_ari_password', 'ChangeMe123!')
-
-        logger.info(f"Initializing ARI client: {ari_host}:{ari_port}")
-        ari_client = ARIClient(
-            host=ari_host,
-            port=ari_port,
-            username=ari_user,
-            password=ari_pass,
-            app_name='aiagent'
-        )
-
-        # Register ARI event handlers
-        async def on_stasis_start(msg):
-            """Handle incoming call entering Stasis application"""
-            channel = msg.channel
-            channel_id = channel.id
-
-            # CRITICAL: Ignore StasisStart from ExternalMedia channels to prevent infinite loop
-            # ExternalMedia channels start with "UnicastRTP/" technology
-            if channel.json.get('name', '').startswith('UnicastRTP/'):
-                logger.debug(f"Ignoring StasisStart for ExternalMedia channel: {channel_id}")
-                return
-
-            logger.info("=" * 60)
-            logger.info("📞 New call received!")
-
-            caller_number = channel.json.get('caller', {}).get('number', 'Unknown')
-
-            logger.info(f"   Channel ID: {channel_id}")
-            logger.info(f"   Caller: {caller_number}")
-
-            # Answer the call
-            await ari_client.answer_channel(channel)
-
-            # Create ExternalMedia channel (routes RTP to AI Agent)
-            # Use alaw codec to match WebRTC endpoint priority
-            external_channel = await ari_client.create_external_media(
-                external_host='172.20.0.20',  # AI Agent container IP
-                external_port=rtp_port,
-                codec='alaw'  # Match WebRTC endpoint codec priority
-            )
-
-            if not external_channel:
-                logger.error("Failed to create ExternalMedia channel")
-                await ari_client.hangup_channel(channel)
-                return
-
-            external_channel_id = external_channel.id
-            logger.info(f"✅ ExternalMedia channel created: {external_channel_id}")
-
-            # Create bridge and connect both channels
-            # Force softmix to prevent native RTP bridging
-            bridge = await ari_client.create_bridge(bridge_type='mixing,dtmf_events,proxy_media')
-            if not bridge:
-                logger.error("Failed to create bridge")
-                await ari_client.hangup_channel(channel)
-                return
-
-            bridge_id = bridge.id
-
-            # Add both channels to bridge
-            await ari_client.add_channel_to_bridge(bridge_id, channel_id)
-            await ari_client.add_channel_to_bridge(bridge_id, external_channel_id)
-
-            # Phase 5.1: Add dummy Announcer channel to force softmix
-            # Without this, Asterisk optimizes to simple_bridge for 2-channel bridges,
-            # causing native RTP bridging which prevents agent audio from reaching client
-            # Note: Don't use role='announcer' - that's only for holding bridges
-            announcer_channel = await ari_client.create_announcer_channel()
-            if announcer_channel:
-                await ari_client.add_channel_to_bridge(bridge_id, announcer_channel.id)
-                announcer_channel_id = announcer_channel.id
-                logger.info(f"✅ Announcer channel added to force softmix: {announcer_channel_id}")
-            else:
-                logger.warning("⚠️  Failed to create Announcer channel - bridge may use simple_bridge")
-                announcer_channel_id = None
-
-            # Store call state
-            active_calls[channel_id] = {
-                'channel_id': channel_id,
-                'external_channel_id': external_channel_id,
-                'bridge_id': bridge_id,
-                'announcer_channel_id': announcer_channel_id,
-                'caller': caller_number
-            }
-
-            logger.info(f"✅ Call bridged successfully!")
-            logger.info(f"   Bridge ID: {bridge_id}")
-            logger.info("=" * 60)
-
-        async def on_stasis_end(msg):
-            """Handle call leaving Stasis application (hangup)"""
-            channel = msg.channel
-            channel_id = channel.id
-
-            logger.info(f"📞 Call ended: {channel_id}")
-
-            # Cleanup
-            if channel_id in active_calls:
-                call_data = active_calls[channel_id]
-
-                # Destroy bridge
-                await ari_client.destroy_bridge(call_data['bridge_id'])
-
-                # Hangup external channel (pass channel ID string)
-                await ari_client.hangup_channel(call_data['external_channel_id'])
-
-                # Phase 5.1: Hangup announcer channel if exists
-                if call_data.get('announcer_channel_id'):
-                    await ari_client.hangup_channel(call_data['announcer_channel_id'])
-
-                del active_calls[channel_id]
-
-                logger.info(f"✅ Call cleanup completed")
-
-        async def on_channel_dtmf_received(msg):
-            """Handle DTMF tones (future use for barge-in)"""
-            channel = msg.channel
-            channel_id = channel.id
-            digit = msg.digit
-
-            logger.info(f"📟 DTMF received on {channel_id}: {digit}")
-
-        # Register handlers
-        ari_client.on('StasisStart', on_stasis_start)
-        ari_client.on('StasisEnd', on_stasis_end)
-        ari_client.on('ChannelDtmfReceived', on_channel_dtmf_received)
-
-        logger.info("✅ AI Voice Agent is ready!")
-        logger.info(f"   - RTP listening on UDP {rtp_host}:{rtp_port}")
-        logger.info(f"   - ARI connecting to {ari_host}:{ari_port}")
-        logger.info(f"   - Stasis app: aiagent")
-        logger.info(f"   - Dial 9999 from extension 1000 to test")
-        logger.info("=" * 60)
-
-        # Run ARI event loop (blocks until disconnected)
-        await ari_client.run()
-
+        asyncio.run(app.start())
     except KeyboardInterrupt:
-        logger.info("\n🛑 Shutting down gracefully...")
-    except Exception as e:
-        logger.error(f"❌ Fatal error: {e}", exc_info=True)
-        sys.exit(1)
+        pass
     finally:
-        logger.info("👋 AI Voice Agent stopped")
+        asyncio.run(app.stop())
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+if __name__ == '__main__':
+    cli()

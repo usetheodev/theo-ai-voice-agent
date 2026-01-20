@@ -2,6 +2,7 @@
 .env
 .env.local
 examples/
+backup/
 # Python
 __pycache__/
 *.py[cod]

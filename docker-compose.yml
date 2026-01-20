@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+  # ===== ASTERISK (SIP Gateway para testes E2E) =====
   asterisk:
     build:
       context: ./docker/asterisk
@@ -10,19 +11,22 @@ services:
     restart: unless-stopped
 
     environment:
-      - AI_AGENT_HOST=${AI_AGENT_HOST:-ai-agent}
-      - AI_AGENT_PORT=${AI_AGENT_PORT:-5080}
+      # Configuração para conectar com nosso voiceagent
+      - AI_AGENT_HOST=voiceagent
+      - AI_AGENT_PORT=5060
 
     ports:
-      # SIP
+      # SIP (Asterisk exposto externamente)
       - "5060:5060/udp"
       - "5060:5060/tcp"
-      # RTP range (101 ports for PoC)
+
+      # RTP range (Asterisk)
       - "10000-10100:10000-10100/udp"
+
       # ARI HTTP (Asterisk REST Interface)
       - "8088:8088/tcp"
-      # HTTP + HTTPS/WSS for WebRTC Browser Phone
-      - "8090:8080/tcp"
+
+      # HTTPS/WSS for WebRTC Browser-Phone (REQUIRED)
       - "8089:8089/tcp"
 
     networks:
@@ -41,64 +45,139 @@ services:
       retries: 3
       start_period: 40s
 
-  ai-agent:
+  # ===== AI VOICE AGENT (Nosso sistema SIP Server) =====
+  voiceagent:
     build:
       context: .
-      dockerfile: ./docker/ai-agent/Dockerfile
-    container_name: ai-agent
-    hostname: ai-agent
+      dockerfile: Dockerfile
+    container_name: ai-voice-agent
+    hostname: voiceagent
     restart: unless-stopped
 
+    depends_on:
+      asterisk:
+        condition: service_healthy
+
     environment:
-      - RTP_PORT=${RTP_PORT:-5080}
-      - WHISPER_MODEL=${WHISPER_MODEL:-base}
-      - LLM_MODEL=${LLM_MODEL:-phi-3-mini}
-      - TTS_VOICE=${TTS_VOICE:-pt_BR-faber-medium}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - APP_ENV=${APP_ENV:-development}
+      # SIP Server config
+      - SIP_HOST=0.0.0.0
+      - SIP_PORT=5060
+      - SIP_REALM=voiceagent
+
+      # RTP config
+      - RTP_PORT_START=10200
+      - RTP_PORT_END=10300
+
+      # AI Models
+      - ASR_MODEL=openai/whisper-large-v3
+      - LLM_MODEL=Qwen/Qwen2.5-7B
+      - TTS_MODEL=kokoro-tts
+
+      # Logging
+      - LOG_LEVEL=INFO
+
+      # Metrics
+      - METRICS_PORT=8000
+
+      # GPU (comentar se usar CPU-only)
+      - CUDA_VISIBLE_DEVICES=0
 
     ports:
-      # RTP - COMMENTED: No need to expose to host, causes NAT/conntrack issues
-      # - "5080:5080/udp"
-      # Prometheus metrics (optional)
-      - "9090:9090/tcp"
+      # SIP (voiceagent exposto na porta 5080 do host para evitar conflito)
+      # Asterisk (5060) → voiceagent (5080 host → 5060 container)
+      - "5080:5060/udp"
+      - "5080:5060/tcp"
+
+      # RTP range (voiceagent - range diferente do Asterisk)
+      - "10200-10300:10200-10300/udp"
+
+      # Metrics (Prometheus)
+      - "8000:8000/tcp"
 
     networks:
       voip-net:
         ipv4_address: 172.20.0.20
 
     volumes:
-      - ./src:/app/src:ro
-      - ./config.yaml:/app/config.yaml:ro
-      - ai-models:/app/models
-      - ai-logs:/app/logs
+      - ./config:/app/config
+      - ./src:/app/src  # Mount source for development
+      - ./logs:/app/logs
+      - ./models:/app/models  # Cache for AI models
 
-    depends_on:
-      asterisk:
-        condition: service_healthy
+    env_file:
+      - .env
 
     healthcheck:
-      test: ["CMD", "nc", "-z", "-u", "127.0.0.1", "5080"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/metrics"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 60s  # Mais tempo para carregar modelos AI
 
+  # ===== PROMETHEUS (Monitoring - opcional) =====
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+
+    ports:
+      - "9090:9090"
+
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+
+    networks:
+      - voip-net
+
+    profiles:
+      - monitoring
+
+  # ===== GRAFANA (Visualization - opcional) =====
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+
+    ports:
+      - "3000:3000"
+
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=
+
+    networks:
+      - voip-net
+
+    profiles:
+      - monitoring
+
+# ===== NETWORKS =====
 networks:
   voip-net:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.20.0.0/24
+        - subnet: 172.20.0.0/16
 
+# ===== VOLUMES =====
 volumes:
+  # Asterisk volumes
   asterisk-logs:
-    driver: local
   asterisk-lib:
-    driver: local
   asterisk-spool:
-    driver: local
-  ai-models:
-    driver: local
-  ai-logs:
-    driver: local
+
+  # Monitoring volumes
+  prometheus-data:
+  grafana-data:
