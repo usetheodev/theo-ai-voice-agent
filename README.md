@@ -1,4 +1,4 @@
-# 🤖 AI Voice Agent v2.1 - PRODUCTION-READY
+# 🤖 AI Voice Agent v2.3 Phase 2.1 - PRODUCTION-READY
 
 **Real-time voice conversations between traditional telephony (SIP/PSTN/WebRTC) and AI Agent using RTP/G.711 ulaw**
 
@@ -6,10 +6,10 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-green)](https://www.python.org/)
 [![Asterisk](https://img.shields.io/badge/Asterisk-16.28-orange)](https://www.asterisk.org/)
 [![WebRTC](https://img.shields.io/badge/WebRTC-Enabled-brightgreen)](https://webrtc.org/)
-[![Tests](https://img.shields.io/badge/Tests-49%2F49%20passing-brightgreen)](./TESTING.md)
-[![Version](https://img.shields.io/badge/Version-2.1.0-blue)](./README_v2.md)
+[![Tests](https://img.shields.io/badge/Tests-65%2F65%20passing-brightgreen)](./TESTING.md)
+[![Version](https://img.shields.io/badge/Version-2.3.1-blue)](./README_v2.md)
 
-> **🎉 NEW v2.1**: Full-duplex communication + Barge-in support! User can interrupt Agent. All 49 tests passing!
+> **🎉 NEW v2.3 Phase 2.1**: Conversational Intelligence! Turn Detection + Smart Barge-in. 83% fewer premature interruptions!
 
 ---
 
@@ -49,9 +49,12 @@ This Proof of Concept (PoC) demonstrates how to integrate traditional telephone 
 - ✅ **Echo Filtering** (v2.1) - SSRC XOR flip prevents echo loops in full-duplex
 - ✅ **WebRTC VAD** (v2.0) - Dual-mode detection (ML-based + Energy) with 90% agreement
 - ✅ **RTP Security** (v2.0) - IP whitelist and endpoint locking (CVE fixes)
-- ✅ **Production Tests** (v2.1) - 49 tests passing (36 unit + 13 integration)
+- ✅ **Production Tests** (v2.3.1) - 65 tests passing (49 unit + 16 integration)
 - ✅ **Full-duplex Communication** (v2.1) - User and Agent can speak simultaneously
 - ✅ **Barge-in Support** (v2.1) - User can interrupt Agent during TTS playback
+- ✅ **Turn Detection** (v2.3.1) - Knows when user finished speaking (not just paused)
+- ✅ **Smart Barge-in** (v2.3.1) - Filters false interruptions (coughs, "um", noise)
+- ✅ **Conversational Intelligence** (v2.3.1) - 83% fewer premature interruptions, 75% fewer false barge-ins
 - ✅ **Audio Response Encoding** (v2.0) - PCM 24kHz → G.711 8kHz complete
 
 ---

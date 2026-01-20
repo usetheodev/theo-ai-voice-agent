@@ -198,13 +198,14 @@ class ARIClient:
             self.logger.error(f"Failed to create bridge: {e}")
             return None
 
-    async def add_channel_to_bridge(self, bridge_id: str, channel_id: str) -> bool:
+    async def add_channel_to_bridge(self, bridge_id: str, channel_id: str, role: Optional[str] = None) -> bool:
         """
         Add channel to bridge
 
         Args:
             bridge_id: Bridge unique ID
             channel_id: Channel unique ID
+            role: Optional role (e.g., 'announcer' for dummy channels)
 
         Returns:
             True if successful
@@ -213,14 +214,45 @@ class ARIClient:
             # Get bridge object (needs await)
             bridge = await self.client.bridges.get(bridgeId=bridge_id)
             # Add channel to bridge (needs await)
-            await bridge.addChannel(channel=channel_id)
-
-            self.logger.info(f"✅ Channel {channel_id} added to bridge {bridge_id}")
+            if role:
+                await bridge.addChannel(channel=channel_id, role=role)
+                self.logger.info(f"✅ Channel {channel_id} added to bridge {bridge_id} as {role}")
+            else:
+                await bridge.addChannel(channel=channel_id)
+                self.logger.info(f"✅ Channel {channel_id} added to bridge {bridge_id}")
             return True
 
         except Exception as e:
             self.logger.error(f"Failed to add channel to bridge: {e}", exc_info=True)
             return False
+
+    async def create_announcer_channel(self) -> Optional[Channel]:
+        """
+        Create a silent Announcer channel to force softmix bridge technology.
+
+        Phase 5.1: Bridge Optimization Fix
+        Asterisk automatically uses simple_bridge for 2-channel bridges, which causes
+        native RTP bridging and prevents our agent's audio from reaching the client.
+
+        Adding a 3rd channel (Announcer) forces Asterisk to use softmix, which ensures
+        all media flows through the bridge correctly.
+
+        Returns:
+            Announcer Channel object or None on error
+        """
+        try:
+            # Create Announcer channel (silent, no media sent to it)
+            channel = await self.client.channels.originate(
+                endpoint='Announcer/dummy',
+                app=self.app_name
+            )
+
+            self.logger.info(f"✅ Announcer channel created: {channel.id}")
+            return channel
+
+        except Exception as e:
+            self.logger.error(f"Failed to create Announcer channel: {e}")
+            return None
 
     async def hangup_channel(self, channel) -> bool:
         """

@@ -73,7 +73,11 @@ class CallSession:
            - noise_filter.stop()
            - silero_vad.reset()
            - soxr_resampler.reset()
-        5. Remove from sessions dict
+        5. Phase 2.1 cleanup:
+           - turn_analyzer.clear()
+           - turn_analyzer.cleanup()
+           - interruption_strategy.reset()
+        6. Remove from sessions dict
     """
 
     # Identity & Transport
@@ -96,6 +100,10 @@ class CallSession:
     noise_filter: Optional[object] = None   # RNNoiseFilter instance (noise reduction)
     silero_vad: Optional[object] = None     # SileroVAD instance (ML-based VAD)
     soxr_resampler: Optional[object] = None # SOXRStreamResampler instance (high-quality resampling)
+
+    # Phase 2.1: Conversational Intelligence (v2.3)
+    turn_analyzer: Optional[object] = None  # BaseTurnAnalyzer instance (end-of-turn detection)
+    interruption_strategy: Optional[object] = None  # BaseInterruptionStrategy instance (smart barge-in)
 
     # Call Control
     last_activity: float = field(default_factory=time.time)

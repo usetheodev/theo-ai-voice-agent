@@ -114,11 +114,25 @@ async def main():
             await ari_client.add_channel_to_bridge(bridge_id, channel_id)
             await ari_client.add_channel_to_bridge(bridge_id, external_channel_id)
 
+            # Phase 5.1: Add dummy Announcer channel to force softmix
+            # Without this, Asterisk optimizes to simple_bridge for 2-channel bridges,
+            # causing native RTP bridging which prevents agent audio from reaching client
+            # Note: Don't use role='announcer' - that's only for holding bridges
+            announcer_channel = await ari_client.create_announcer_channel()
+            if announcer_channel:
+                await ari_client.add_channel_to_bridge(bridge_id, announcer_channel.id)
+                announcer_channel_id = announcer_channel.id
+                logger.info(f"✅ Announcer channel added to force softmix: {announcer_channel_id}")
+            else:
+                logger.warning("⚠️  Failed to create Announcer channel - bridge may use simple_bridge")
+                announcer_channel_id = None
+
             # Store call state
             active_calls[channel_id] = {
                 'channel_id': channel_id,
                 'external_channel_id': external_channel_id,
                 'bridge_id': bridge_id,
+                'announcer_channel_id': announcer_channel_id,
                 'caller': caller_number
             }
 
@@ -142,6 +156,10 @@ async def main():
 
                 # Hangup external channel (pass channel ID string)
                 await ari_client.hangup_channel(call_data['external_channel_id'])
+
+                # Phase 5.1: Hangup announcer channel if exists
+                if call_data.get('announcer_channel_id'):
+                    await ari_client.hangup_channel(call_data['announcer_channel_id'])
 
                 del active_calls[channel_id]
 

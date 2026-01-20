@@ -349,6 +349,50 @@ class RTPServer:
                     self.logger.warning(f"   ⚠️  SOXR resampler failed to initialize: {e}")
                     session.soxr_resampler = None
 
+            # Phase 2.1: Initialize Conversational Intelligence Components
+            # ============================================================
+
+            # 1. Turn Detection (End-of-Turn Analysis)
+            turn_config = self.config.get('turn_detection', {})
+            if turn_config.get('enabled', True):
+                try:
+                    from audio.turn import SimpleTurnAnalyzer
+
+                    session.turn_analyzer = SimpleTurnAnalyzer(
+                        sample_rate=8000,
+                        pause_duration=turn_config.get('pause_duration', 1.0),
+                        min_duration=turn_config.get('min_duration', 0.3)
+                    )
+
+                    self.logger.info(
+                        f"   ✅ Turn Detection initialized "
+                        f"(pause={turn_config.get('pause_duration', 1.0)}s, "
+                        f"min={turn_config.get('min_duration', 0.3)}s)"
+                    )
+
+                except Exception as e:
+                    self.logger.warning(f"   ⚠️  Turn Detection failed to initialize: {e}")
+                    session.turn_analyzer = None
+
+            # 2. Smart Barge-in (Interruption Strategy)
+            interruption_config = self.config.get('interruption', {})
+            if interruption_config.get('enabled', True):
+                try:
+                    from audio.interruptions import MinDurationInterruptionStrategy
+
+                    session.interruption_strategy = MinDurationInterruptionStrategy(
+                        min_duration=interruption_config.get('min_duration', 0.8)
+                    )
+
+                    self.logger.info(
+                        f"   ✅ Smart Barge-in initialized "
+                        f"(min={interruption_config.get('min_duration', 0.8)}s)"
+                    )
+
+                except Exception as e:
+                    self.logger.warning(f"   ⚠️  Smart Barge-in failed to initialize: {e}")
+                    session.interruption_strategy = None
+
             # Add to sessions dict
             self.sessions[call_id] = session
 
@@ -443,23 +487,62 @@ class RTPServer:
         # Combine VAD results (logical OR - either method triggers speech)
         is_speech = is_speech_legacy or is_speech_silero
 
-        # Barge-in Detection (Phase 4): Check if user speaking during TTS playback
+        # ============================================================
+        # Phase 2.1: Turn Detection (End-of-Turn Analysis)
+        # ============================================================
+        if session.turn_analyzer:
+            # Append audio to turn analyzer
+            turn_state = session.turn_analyzer.append_audio(audio_to_process, is_speech)
+
+            # If turn complete, could trigger ASR here (future optimization)
+            # For now, we keep existing VAD-based buffer logic
+
+        # ============================================================
+        # Phase 2.1: Smart Barge-in (Interruption Strategy)
+        # ============================================================
+        # Barge-in Detection (Phase 4 + 2.1 enhancement):
+        # Check if user speaking during TTS playback
         if is_speech and session.current_playback_id is not None:
-            # User is speaking while agent plays TTS → INTERRUPT
-            self.logger.info(f"🎙️  Barge-in detected! User interrupted TTS [{session.call_id}]")
+            # Accumulate user audio for interruption strategy
+            if session.interruption_strategy:
+                await session.interruption_strategy.append_audio(audio_to_process, sample_rate=8000)
 
-            # Increment barge-in counter (metrics)
-            session.barge_in_count += 1
+        # When VAD detects silence after speech during TTS playback
+        elif not is_speech and session.current_playback_id is not None and session.interruption_strategy:
+            # User stopped speaking during agent playback
+            # Check if this was a REAL interruption (not cough/um)
+            should_interrupt = await session.interruption_strategy.should_interrupt()
 
-            # Stop current TTS playback via ARI
-            if self.ari_client:
-                playback_id = session.current_playback_id
-                session.current_playback_id = None  # Clear immediately to prevent duplicate stops
+            if should_interrupt:
+                # Real interruption detected!
+                self.logger.info(
+                    f"🎙️  Smart Barge-in: Real interruption detected! "
+                    f"User interrupted TTS [{session.call_id}] "
+                    f"(duration={session.interruption_strategy.get_current_duration():.2f}s)"
+                )
 
-                # Stop playback asynchronously (fire-and-forget)
-                asyncio.create_task(self._stop_playback_async(playback_id, session.call_id))
+                # Increment barge-in counter (metrics)
+                session.barge_in_count += 1
 
-            self.logger.info(f"✋ TTS playback stopped (barge-in #{session.barge_in_count}) [{session.call_id}]")
+                # Stop current TTS playback via ARI
+                if self.ari_client:
+                    playback_id = session.current_playback_id
+                    session.current_playback_id = None  # Clear immediately to prevent duplicate stops
+
+                    # Stop playback asynchronously (fire-and-forget)
+                    asyncio.create_task(self._stop_playback_async(playback_id, session.call_id))
+
+                self.logger.info(f"✋ TTS playback stopped (smart barge-in #{session.barge_in_count}) [{session.call_id}]")
+            else:
+                # False alarm (cough, "um", noise)
+                self.logger.debug(
+                    f"🚫 Smart Barge-in: False alarm ignored "
+                    f"(duration={session.interruption_strategy.get_current_duration():.2f}s < "
+                    f"min={session.interruption_strategy._min_duration}s) [{session.call_id}]"
+                )
+
+            # Reset strategy for next potential interruption
+            await session.interruption_strategy.reset()
 
         # If speech detected, add to buffer (continue processing user utterance)
         if is_speech:
@@ -855,6 +938,25 @@ class RTPServer:
                 session.soxr_resampler.reset()
             except Exception as e:
                 self.logger.debug(f"Error resetting SOXR resampler: {e}")
+
+        # =========================================================
+        # Phase 2.1: Cleanup Conversational Intelligence Components
+        # =========================================================
+
+        # Cleanup Turn Analyzer
+        if session.turn_analyzer:
+            try:
+                session.turn_analyzer.clear()
+                await session.turn_analyzer.cleanup()
+            except Exception as e:
+                self.logger.debug(f"Error cleaning up Turn Analyzer: {e}")
+
+        # Reset Interruption Strategy
+        if session.interruption_strategy:
+            try:
+                await session.interruption_strategy.reset()
+            except Exception as e:
+                self.logger.debug(f"Error resetting Interruption Strategy: {e}")
 
         # Note: socket is shared, don't close it
 
