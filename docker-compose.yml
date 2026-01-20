@@ -58,8 +58,8 @@ services:
       - APP_ENV=${APP_ENV:-development}
 
     ports:
-      # RTP
-      - "5080:5080/udp"
+      # RTP - COMMENTED: No need to expose to host, causes NAT/conntrack issues
+      # - "5080:5080/udp"
       # Prometheus metrics (optional)
       - "9090:9090/tcp"
 
@@ -69,6 +69,7 @@ services:
 
     volumes:
       - ./src:/app/src:ro
+      - ./config.yaml:/app/config.yaml:ro
       - ai-models:/app/models
       - ai-logs:/app/logs
 

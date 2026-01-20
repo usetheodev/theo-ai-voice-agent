@@ -114,6 +114,13 @@ class Phi3LLM:
                     "Pregunta",     # Stop Spanish questions
                     "\n\n\n",       # Stop multiple newlines
                     "\n\nExemplo:", # Stop examples
+                    "\n\n**Note",   # Stop meta-comments (English)
+                    "\n\n**Nota",   # Stop meta-comments (Portuguese)
+                    "\n\nNote:",    # Stop notes without asterisks
+                    "\n\nNota:",    # Stop Portuguese notes
+                    "\n\nObservação:", # Stop observations
+                    "**Note:**",    # Catch at start of new paragraph
+                    "**Nota:**",    # Catch Portuguese version
                 ],
                 echo=False
             )
@@ -190,10 +197,18 @@ class Phi3LLM:
         text = text.replace("<|user|>", "")
         text = text.replace("<|system|>", "")
 
+        # Remove meta-comments that might have slipped through
+        # Split on common meta-comment markers and keep only the first part
+        for marker in ["\n\n**Note", "\n\n**Nota", "\n\nNote:", "\n\nNota:",
+                      "\n\nObservação:", "**Note:**", "**Nota:**"]:
+            if marker in text:
+                text = text.split(marker)[0]
+                self.logger.debug(f"Removed meta-comment starting with: {marker}")
+
         # Remove leading/trailing whitespace
         text = text.strip()
 
-        # Remove duplicate punctuation
+        # Remove duplicate spaces
         while "  " in text:
             text = text.replace("  ", " ")
 

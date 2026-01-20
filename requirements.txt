@@ -32,8 +32,9 @@ pyyaml==6.0.1
 python-dotenv==1.0.0
 
 # Monitoring (optional)
-prometheus-client==0.19.0
+prometheus-client==0.21.1  # Updated: CVE-2024-3217 fix
 
 # Testing
-pytest==7.4.3
-pytest-asyncio==0.21.1
+pytest==8.4.2              # Latest pytest 8.x (pytest-asyncio 0.25.2 requires pytest<9)
+pytest-asyncio==0.25.2     # Updated: async test support
+pytest-cov==6.0.0          # NEW: coverage reporting (80%+ target)

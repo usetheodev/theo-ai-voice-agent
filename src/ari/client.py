@@ -140,7 +140,10 @@ class ARIClient:
             params = {
                 'app': self.app_name,
                 'external_host': f"{external_host}:{external_port}",
-                'format': codec
+                'format': codec,
+                'encapsulation': 'rtp',  # RTP encapsulation
+                'transport': 'udp',      # UDP transport
+                'direction': 'both'      # Bidirectional audio (send + receive)
             }
 
             if channel_id:

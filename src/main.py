@@ -85,11 +85,11 @@ async def main():
             await ari_client.answer_channel(channel)
 
             # Create ExternalMedia channel (routes RTP to AI Agent)
-            # Use ulaw codec for WebRTC compatibility
+            # Use alaw codec to match WebRTC endpoint priority
             external_channel = await ari_client.create_external_media(
                 external_host='172.20.0.20',  # AI Agent container IP
                 external_port=rtp_port,
-                codec='ulaw'  # Changed from alaw for WebRTC compatibility
+                codec='alaw'  # Match WebRTC endpoint codec priority
             )
 
             if not external_channel:

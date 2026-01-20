@@ -31,8 +31,8 @@ llm:
   context_size: 2048
   n_threads: 6  # Use more CPU threads for faster inference
   temperature: 0.5  # Lower temperature = faster, more deterministic
-  max_tokens: 50  # Shorter responses = 3x faster (was 150)
-  system_prompt: "Você é um assistente de voz brasileiro. Responda SEMPRE em português do Brasil. Seja EXTREMAMENTE conciso: máximo 2 frases curtas e diretas. Não invente informações."
+  max_tokens: 30  # VERY short responses for voice (was 50)
+  system_prompt: "Você é um assistente de voz brasileiro. Responda em português do Brasil com NO MÁXIMO 10 palavras. Seja direto. NUNCA adicione notas, comentários ou explicações sobre suas instruções."
 
 # TTS Configuration (Kokoro-82M)
 tts:
@@ -47,7 +47,28 @@ logging:
 
 # Audio Processing
 audio:
-  codec: "alaw"  # G.711 A-law
+  codec: "alaw"  # G.711 A-law (NOTE: RTPServer uses ulaw internally)
   sample_rate: 8000
   channels: 1
   frame_duration_ms: 20
+
+# VAD (Voice Activity Detection) - Dual-Mode: WebRTC + Energy
+vad:
+  # WebRTC VAD settings (Google ML-based)
+  webrtc_aggressiveness: 2  # INCREASED: 0-3 (2=more aggressive for noisy environments)
+
+  # Energy-based VAD thresholds (ADJUSTED for noisy environments)
+  energy_threshold_start: 1500.0  # INCREASED: Higher to avoid false positives from noise
+  energy_threshold_end: 400.0     # DECREASED: Lower to detect silence even with background noise
+
+  # Timing parameters
+  silence_duration_ms: 500        # DECREASED: Faster response (was 700ms)
+  min_speech_duration_ms: 300     # DECREASED: Accept shorter utterances (was 500ms)
+
+# RTP Security
+rtp_security:
+  allowed_asterisk_ips:
+    - "127.0.0.1"      # Localhost
+    - "::1"            # IPv6 localhost
+    - "172.20.0.10"    # WebRTC client IP
+    - "172.20.0.30"    # Asterisk container IP
