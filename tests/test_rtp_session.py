@@ -51,7 +51,11 @@ class TestCallSessionCreation:
             assert session.packets_received == 0
             assert session.packets_sent == 0
             assert session.echo_packets_filtered == 0
-            assert session.vad_muted is False
+            # Phase 4: vad_muted removed (full-duplex now)
+            assert session.current_playback_id is None
+            assert session.barge_in_count == 0
+            # Phase 5: Continuous audio stream
+            assert session.keepalive_task is None
         finally:
             sock.close()
 

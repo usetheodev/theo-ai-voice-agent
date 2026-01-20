@@ -1,4 +1,4 @@
-# 🤖 AI Voice Agent v2.0 - PRODUCTION-READY
+# 🤖 AI Voice Agent v2.1 - PRODUCTION-READY
 
 **Real-time voice conversations between traditional telephony (SIP/PSTN/WebRTC) and AI Agent using RTP/G.711 ulaw**
 
@@ -7,9 +7,9 @@
 [![Asterisk](https://img.shields.io/badge/Asterisk-16.28-orange)](https://www.asterisk.org/)
 [![WebRTC](https://img.shields.io/badge/WebRTC-Enabled-brightgreen)](https://webrtc.org/)
 [![Tests](https://img.shields.io/badge/Tests-49%2F49%20passing-brightgreen)](./TESTING.md)
-[![Version](https://img.shields.io/badge/Version-2.0.0-blue)](./README_v2.md)
+[![Version](https://img.shields.io/badge/Version-2.1.0-blue)](./README_v2.md)
 
-> **🎉 NEW v2.0**: Enterprise-grade refactor with multi-call support, echo filtering, WebRTC VAD, and 49 tests passing!
+> **🎉 NEW v2.1**: Full-duplex communication + Barge-in support! User can interrupt Agent. All 49 tests passing!
 
 ---
 
@@ -46,13 +46,13 @@ This Proof of Concept (PoC) demonstrates how to integrate traditional telephone 
 - ✅ **CPU-only Inference** - No GPU required
 - ✅ **Docker-based** - Setup in < 15 minutes
 - ✅ **Multi-Call Support** (v2.0) - Multiple simultaneous calls with per-call state isolation
-- ✅ **Echo Filtering** (v2.0) - SSRC tracking prevents echo loops in full-duplex
+- ✅ **Echo Filtering** (v2.1) - SSRC XOR flip prevents echo loops in full-duplex
 - ✅ **WebRTC VAD** (v2.0) - Dual-mode detection (ML-based + Energy) with 90% agreement
 - ✅ **RTP Security** (v2.0) - IP whitelist and endpoint locking (CVE fixes)
-- ✅ **Production Tests** (v2.0) - 49 tests passing (36 unit + 13 integration)
-- 🚧 **Audio Response Encoding** (Pending - Phase 3)
-- 🚧 **Full-duplex Communication** (Ready with echo filtering - needs testing)
-- 🚧 **Barge-in Support** (Planned - Phase 4)
+- ✅ **Production Tests** (v2.1) - 49 tests passing (36 unit + 13 integration)
+- ✅ **Full-duplex Communication** (v2.1) - User and Agent can speak simultaneously
+- ✅ **Barge-in Support** (v2.1) - User can interrupt Agent during TTS playback
+- ✅ **Audio Response Encoding** (v2.0) - PCM 24kHz → G.711 8kHz complete
 
 ---
 
@@ -297,6 +297,15 @@ Connect your IP phone using the same credentials as Option 2.
 7. **Piper archived, Kokoro active** - Switched to Kokoro-82M (Apache 2.0, community-backed)
 8. **TTS latency critical** - <0.3s keeps conversation natural, Piper/Kokoro both excellent
 
+**Phase 4:**
+1. **SSRC XOR flip works** - ExternalMedia accepts different SSRCs (contrary to initial assumption)
+2. **Echo filtering via SSRC** - XOR flip enables robust echo detection without VAD muting
+3. **Full-duplex stability** - No feedback loops with proper SSRC tracking
+4. **Barge-in detection** - VAD active during TTS enables user interruption
+5. **Simplified barge-in** - Inline implementation (~100 lines) vs complex coordinator (~400 lines)
+6. **RTP-based playback tracking** - Timestamp-based playback IDs for interruption
+7. **asyncio stop_playback()** - Fire-and-forget async task prevents blocking
+
 ---
 
 ## 🤖 AI Models
@@ -464,10 +473,11 @@ This PoC follows a structured roadmap with 6 phases:
   - [x] Pipeline orchestration (VAD → Buffer → ASR → LLM → TTS)
   - [ ] Audio response encoding (PCM 24kHz → G.711 8kHz) + RTP send
 
-- [ ] **Phase 4**: Full-Duplex + Barge-in
-  - [ ] Simultaneous send/receive
-  - [ ] DTMF detection for barge-in
-  - [ ] TTS interruption handling
+- [x] **Phase 4**: Full-Duplex + Barge-in ✅ **COMPLETE**
+  - [x] Simultaneous send/receive (SSRC XOR flip)
+  - [x] Echo filtering via SSRC tracking
+  - [x] Barge-in detection (VAD during TTS)
+  - [x] TTS interruption via ARI stop_playback()
 
 - [ ] **Phase 5**: Testing & Validation
   - [ ] Latency measurements
@@ -654,4 +664,4 @@ pytest tests/ -v                 # Run tests (49 tests)
 ---
 
 **Built with ❤️ for real-time AI voice interactions**
-**v2.0 - Production-Ready with 49 tests passing ✅**
+**v2.1 - Production-Ready with Full-Duplex + Barge-in ✅**

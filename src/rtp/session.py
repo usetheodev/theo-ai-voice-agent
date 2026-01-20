@@ -47,8 +47,11 @@ class CallSession:
         rtp_builder: RTPBuilder instance for this call
 
         # Call Control
-        vad_muted: True when TTS playing (prevents echo detection)
         last_activity: Unix timestamp of last RTP packet
+
+        # Barge-in Support (Phase 4)
+        current_playback_id: ID of active TTS playback (for interruption)
+        barge_in_count: Total barge-in events for this call
 
         # Statistics
         packets_received: Total inbound RTP packets
@@ -66,7 +69,11 @@ class CallSession:
         1. socket.close()
         2. audio_buffer.clear()
         3. vad.cleanup_call(call_id)
-        4. Remove from sessions dict
+        4. Phase 1 cleanup:
+           - noise_filter.stop()
+           - silero_vad.reset()
+           - soxr_resampler.reset()
+        5. Remove from sessions dict
     """
 
     # Identity & Transport
@@ -82,12 +89,23 @@ class CallSession:
 
     # Audio Pipeline (lazy init via property setters)
     audio_buffer: Optional[object] = None   # AudioBuffer instance
-    vad: Optional[object] = None            # VoiceActivityDetector instance
+    vad: Optional[object] = None            # VoiceActivityDetector instance (legacy WebRTC+Energy)
     rtp_builder: Optional[object] = None    # RTPBuilder instance
 
+    # Phase 1: Audio Quality Components (v2.2)
+    noise_filter: Optional[object] = None   # RNNoiseFilter instance (noise reduction)
+    silero_vad: Optional[object] = None     # SileroVAD instance (ML-based VAD)
+    soxr_resampler: Optional[object] = None # SOXRStreamResampler instance (high-quality resampling)
+
     # Call Control
-    vad_muted: bool = False
     last_activity: float = field(default_factory=time.time)
+
+    # Barge-in Support (Phase 4)
+    current_playback_id: Optional[str] = None  # Track active TTS playback for interruption
+    barge_in_count: int = 0  # Total barge-ins detected for this call
+
+    # Continuous Audio Stream (Phase 5)
+    keepalive_task: Optional[object] = None  # asyncio.Task for silence keepalive during LLM processing
 
     # Statistics
     packets_received: int = 0
@@ -127,27 +145,33 @@ class CallSession:
 
     def generate_outbound_ssrc(self) -> int:
         """
-        Generate outbound SSRC - MUST match inbound for Asterisk ExternalMedia.
+        Generate outbound SSRC using XOR flip for echo filtering.
 
-        CRITICAL: Asterisk ExternalMedia expects the SAME SSRC back.
-        Using a different SSRC causes audio to be rejected by the bridge.
+        UPDATED (Phase 4): Now uses DIFFERENT SSRC (XOR flip) to enable
+        echo filtering via SSRC tracking. This allows full-duplex communication
+        without VAD muting.
 
-        This is different from typical RTP echo filtering, but required for
-        ExternalMedia channels to work correctly.
+        Pattern: XOR flip with 0xFFFFFFFF ensures:
+        - Deterministic (same inbound → same outbound)
+        - Different from inbound (enables echo detection)
+        - Collision probability < 2^-32 (RFC 3550)
+
+        Example:
+            inbound_ssrc  = 0x12345678
+            outbound_ssrc = 0x12345678 ^ 0xFFFFFFFF = 0xEDCBA987
 
         Returns:
             Generated outbound SSRC (stored in self.outbound_ssrc)
 
-        Evidence:
-            https://community.asterisk.org/t/ssrc-change-bridging/103903
-            "audio doesn't make it into the bridge when SSRC changes"
+        Reference:
+            Asterisk-AI-Voice-Agent/src/rtp_server.py:228-233
         """
         if self.inbound_ssrc is None:
             # No inbound SSRC yet, generate random
-            self.outbound_ssrc = random.randint(0, 0xFFFFFFFF)
+            self.outbound_ssrc = random.randint(0x10000000, 0xFFFFFFFF)
         else:
-            # MUST use same SSRC for Asterisk ExternalMedia
-            self.outbound_ssrc = self.inbound_ssrc
+            # XOR flip for echo filtering (inbound ≠ outbound)
+            self.outbound_ssrc = (self.inbound_ssrc ^ 0xFFFFFFFF) & 0xFFFFFFFF
 
         return self.outbound_ssrc
 
@@ -155,26 +179,35 @@ class CallSession:
         """
         Check if RTP packet is echo (agent's own voice).
 
-        DISABLED for Asterisk ExternalMedia: Since we use the SAME SSRC
-        for inbound and outbound (required by Asterisk), we cannot use
-        SSRC-based echo filtering.
+        UPDATED (Phase 4): Echo filtering now ENABLED via SSRC tracking.
+        Since we use different SSRCs (XOR flip), we can detect and drop
+        echo packets without VAD muting.
 
-        Instead, we rely on:
-        1. VAD muting during TTS playback (vad_muted flag)
-        2. Asterisk bridge managing audio routing
+        This enables full-duplex communication:
+        - Agent can send audio (TTS) while receiving user speech
+        - User can interrupt agent (barge-in)
+        - No false VAD triggers from agent's own audio
 
         Args:
             ssrc: SSRC from received RTP packet header
 
         Returns:
-            False (echo filtering disabled for ExternalMedia compatibility)
+            True if packet is echo (ssrc == outbound_ssrc), False otherwise
 
-        Evidence:
-            Asterisk ExternalMedia requires matching SSRC
-            https://community.asterisk.org/t/ssrc-change-bridging/103903
+        Reference:
+            Asterisk-AI-Voice-Agent/src/rtp_server.py:319-330
         """
-        # SSRC-based filtering disabled for Asterisk ExternalMedia
-        return False
+        if self.outbound_ssrc is None:
+            # No outbound SSRC yet (no audio sent), cannot be echo
+            return False
+
+        is_echo = (ssrc == self.outbound_ssrc)
+
+        if is_echo:
+            self.echo_packets_filtered += 1
+            # Debug log will be added in RTPServer._process_rtp_packet
+
+        return is_echo
 
     def update_activity(self):
         """
@@ -219,7 +252,6 @@ class CallSession:
             'echo_packets_filtered': self.echo_packets_filtered,
             'bytes_received': self.bytes_received,
             'bytes_sent': self.bytes_sent,
-            'vad_muted': self.vad_muted,
             'idle_time': self.get_idle_time(),
             'call_duration': time.time() - self.last_activity,
         }
@@ -273,17 +305,20 @@ def test_call_session():
         remote_addr=("192.168.1.10", 5060)
     )
     session.inbound_ssrc = 0x12345678
-    session.generate_outbound_ssrc()
+    outbound = session.generate_outbound_ssrc()
 
-    assert session.outbound_ssrc == 0xEDCBA987  # XOR with 0xFFFFFFFF
+    # XOR flip validation
+    expected_outbound = (0x12345678 ^ 0xFFFFFFFF) & 0xFFFFFFFF
+    assert session.outbound_ssrc == expected_outbound
     assert session.inbound_ssrc != session.outbound_ssrc
-    print(f"✅ Test 2: SSRC tracking = inbound={session.inbound_ssrc:#010x}, outbound={session.outbound_ssrc:#010x}")
+    print(f"✅ Test 2: SSRC XOR flip = inbound={session.inbound_ssrc:#010x}, outbound={session.outbound_ssrc:#010x}")
 
-    # Test 3: Echo detection
-    assert session.is_echo_packet(0xEDCBA987) == True   # Own SSRC
-    assert session.is_echo_packet(0x12345678) == False  # Caller SSRC
-    assert session.is_echo_packet(0xAAAAAAAA) == False  # Other SSRC
-    print(f"✅ Test 3: Echo detection works")
+    # Test 3: Echo detection (UPDATED for Phase 4)
+    assert session.is_echo_packet(session.outbound_ssrc) == True   # Own SSRC = echo
+    assert session.is_echo_packet(0x12345678) == False  # Caller SSRC = NOT echo
+    assert session.is_echo_packet(0xAAAAAAAA) == False  # Other SSRC = NOT echo
+    assert session.echo_packets_filtered == 1  # One echo detected
+    print(f"✅ Test 3: Echo detection works (filtered={session.echo_packets_filtered})")
 
     # Test 4: Activity tracking
     initial_time = session.last_activity

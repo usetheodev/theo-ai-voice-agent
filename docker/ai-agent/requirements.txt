@@ -10,6 +10,15 @@ soundfile==0.12.1
 # VAD (Voice Activity Detection)
 webrtcvad==2.0.10
 
+# Silero VAD (ML-based, ONNX)
+onnxruntime==1.19.2
+
+# Audio Filters (Noise Reduction)
+pyrnnoise==0.1.0
+
+# Audio Resampling (High Quality)
+soxr==0.4.0
+
 # Asterisk ARI
 asyncari==0.20.6
 

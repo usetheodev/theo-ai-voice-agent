@@ -269,3 +269,33 @@ class ARIClient:
         except Exception as e:
             self.logger.error(f"Failed to destroy bridge {bridge_id}: {e}", exc_info=True)
             return False
+
+    async def stop_playback(self, playback_id: str) -> bool:
+        """
+        Stop ongoing audio playback (for barge-in support).
+
+        This method stops TTS playback when user interrupts the agent.
+        Added in Phase 4 (Barge-in Support).
+
+        Args:
+            playback_id: Playback unique ID (from play() operation)
+
+        Returns:
+            True if successful, False otherwise
+
+        Reference:
+            Asterisk-AI-Voice-Agent/src/ari_client.py:486
+        """
+        try:
+            # Get playback object via asyncari
+            playback = await self.client.playbacks.get(playbackId=playback_id)
+
+            # Stop playback
+            await playback.stop()
+
+            self.logger.info(f"⏹️  Playback stopped (barge-in): {playback_id}")
+            return True
+
+        except Exception as e:
+            self.logger.warning(f"Failed to stop playback {playback_id}: {e}")
+            return False

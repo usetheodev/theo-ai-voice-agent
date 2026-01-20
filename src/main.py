@@ -101,7 +101,8 @@ async def main():
             logger.info(f"✅ ExternalMedia channel created: {external_channel_id}")
 
             # Create bridge and connect both channels
-            bridge = await ari_client.create_bridge(bridge_type='mixing')
+            # Force softmix to prevent native RTP bridging
+            bridge = await ari_client.create_bridge(bridge_type='mixing,dtmf_events,proxy_media')
             if not bridge:
                 logger.error("Failed to create bridge")
                 await ari_client.hangup_channel(channel)
