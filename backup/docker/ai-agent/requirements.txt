@@ -1,0 +1,48 @@
+# Core
+asyncio==3.4.3
+aiofiles==23.2.1
+
+# RTP/Audio processing
+numpy==1.26.3
+scipy==1.11.4
+soundfile==0.12.1
+
+# VAD (Voice Activity Detection)
+webrtcvad==2.0.10
+
+# Silero VAD (ML-based, ONNX)
+onnxruntime==1.19.2
+
+# Audio Filters (Noise Reduction)
+pyrnnoise==0.1.0
+
+# Audio Resampling (High Quality)
+soxr==0.4.0
+
+# Asterisk ARI
+asyncari==0.20.6
+
+# ASR (Automatic Speech Recognition)
+pywhispercpp==1.2.0
+
+# LLM (Large Language Model)
+llama-cpp-python==0.2.90
+
+# TTS (Text-to-Speech)
+kokoro>=0.9.4
+torch>=2.5.0
+pyaudio>=0.2.11
+
+# Logging
+structlog==23.3.0
+
+# Config
+pyyaml==6.0.1
+python-dotenv==1.0.0
+
+# Monitoring (optional)
+prometheus-client==0.19.0
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1

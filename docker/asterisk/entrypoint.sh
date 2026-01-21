@@ -1,7 +1,8 @@
 #!/bin/bash
 set -e
 
-echo "========================================" echo "  📞 Starting Asterisk with WebRTC"
+echo "========================================"
+echo "  📞 Starting Asterisk with WebRTC"
 echo "========================================"
 echo ""
 

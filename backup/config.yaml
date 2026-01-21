@@ -1,0 +1,74 @@
+# AI Voice Agent Configuration
+
+app:
+  name: "AI Voice Agent"
+  env: "${APP_ENV:-development}"
+
+# RTP Configuration
+rtp:
+  host: "0.0.0.0"
+  port: 5080
+  buffer_size: 4194304  # 4MB UDP buffer
+
+# Asterisk ARI Configuration
+asterisk:
+  host: "${ASTERISK_HOST:-asterisk}"
+  ari_port: 8088
+  ari_user: "${ASTERISK_ARI_USER:-aiagent}"
+  ari_password: "${ASTERISK_ARI_PASSWORD:-ChangeMe123!}"
+
+# Whisper ASR
+whisper:
+  model: "${WHISPER_MODEL:-base}"
+  model_path: "/app/models/whisper/ggml-${WHISPER_MODEL:-base}.bin"
+  language: "pt"
+  sample_rate: 16000
+
+# LLM Configuration
+llm:
+  model: "${LLM_MODEL:-qwen2.5-3b-instruct}"
+  model_path: "/app/models/llm/${LLM_MODEL:-qwen2.5-3b-instruct-q4_k_m}.gguf"
+  context_size: 2048
+  n_threads: 6  # Use more CPU threads for faster inference
+  temperature: 0.5  # Lower temperature = faster, more deterministic
+  max_tokens: 30  # VERY short responses for voice (was 50)
+  system_prompt: "Você é um assistente de voz brasileiro. Responda em português do Brasil com NO MÁXIMO 10 palavras. Seja direto. NUNCA adicione notas, comentários ou explicações sobre suas instruções."
+
+# TTS Configuration (Kokoro-82M)
+tts:
+  lang_code: "${TTS_LANG:-p}"  # p = Brazilian Portuguese
+  voice: "${TTS_VOICE:-pf_dora}"  # pf_dora (female), pm_alex/pm_santa (male)
+  sample_rate: 24000  # Kokoro uses 24kHz
+
+# Logging
+logging:
+  level: "${LOG_LEVEL:-INFO}"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Audio Processing
+audio:
+  codec: "alaw"  # G.711 A-law (NOTE: RTPServer uses ulaw internally)
+  sample_rate: 8000
+  channels: 1
+  frame_duration_ms: 20
+
+# VAD (Voice Activity Detection) - Dual-Mode: WebRTC + Energy
+vad:
+  # WebRTC VAD settings (Google ML-based)
+  webrtc_aggressiveness: 2  # INCREASED: 0-3 (2=more aggressive for noisy environments)
+
+  # Energy-based VAD thresholds (ADJUSTED for noisy environments)
+  energy_threshold_start: 1500.0  # INCREASED: Higher to avoid false positives from noise
+  energy_threshold_end: 400.0     # DECREASED: Lower to detect silence even with background noise
+
+  # Timing parameters
+  silence_duration_ms: 500        # DECREASED: Faster response (was 700ms)
+  min_speech_duration_ms: 300     # DECREASED: Accept shorter utterances (was 500ms)
+
+# RTP Security
+rtp_security:
+  allowed_asterisk_ips:
+    - "127.0.0.1"      # Localhost
+    - "::1"            # IPv6 localhost
+    - "172.20.0.10"    # WebRTC client IP
+    - "172.20.0.30"    # Asterisk container IP

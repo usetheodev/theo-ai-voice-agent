@@ -14,7 +14,7 @@ RUN ls -la Phone/ && \
     test -f Phone/index.html || (echo "ERROR: Browser-Phone files not found!" && exit 1)
 
 # ===== STAGE 2: Asterisk =====
-FROM ubuntu:22.04
+FROM debian:bullseye-slim
 
 # Metadata
 LABEL maintainer="Voice Engineering Team"
@@ -23,53 +23,15 @@ LABEL description="Asterisk for AI Voice Agent E2E Testing with WebRTC"
 # Evitar interação durante instalação
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install dependencies
+# Install Asterisk from Debian packages (much faster than compiling)
 RUN apt-get update && apt-get install -y \
-    # Build tools
-    build-essential \
-    wget \
+    asterisk \
+    asterisk-modules \
+    asterisk-core-sounds-en \
+    asterisk-core-sounds-en-gsm \
     curl \
-    git \
-    pkg-config \
-    # Asterisk dependencies
-    libncurses5-dev \
-    libssl-dev \
-    libxml2-dev \
-    libsqlite3-dev \
-    uuid-dev \
-    libjansson-dev \
-    libedit-dev \
-    # Audio codecs
-    libspeex-dev \
-    libspeexdsp-dev \
-    libopus-dev \
-    # Utilities
-    tcpdump \
-    net-tools \
-    vim \
+    openssl \
     && rm -rf /var/lib/apt/lists/*
-
-# Download and compile Asterisk
-WORKDIR /tmp
-RUN wget http://downloads.asterisk.org/pub/telephony/asterisk/asterisk-20-current.tar.gz && \
-    tar -xzf asterisk-20-current.tar.gz && \
-    cd asterisk-20.* && \
-    ./configure --with-jansson-bundled && \
-    make menuselect.makeopts && \
-    # Disable unnecessary modules to speed up build
-    menuselect/menuselect --disable BUILD_NATIVE \
-                          --enable cdr_csv \
-                          --enable res_http_websocket \
-                          --enable res_ari \
-                          --enable res_pjsip \
-                          menuselect.makeopts && \
-    make -j$(nproc) && \
-    make install && \
-    make samples && \
-    make config && \
-    ldconfig && \
-    # Cleanup
-    cd / && rm -rf /tmp/asterisk-*
 
 # Create directories
 RUN mkdir -p /var/log/asterisk \
@@ -82,18 +44,16 @@ RUN mkdir -p /var/log/asterisk \
 COPY config/* /etc/asterisk/
 
 # ===== Browser Phone files for WebRTC client =====
-# Asterisk expects static files in /usr/share/asterisk/static-http/
+# Asterisk Debian package serves static files from /usr/share/asterisk/static-http/ by default
 RUN mkdir -p /usr/share/asterisk/static-http
 COPY --from=browser-phone-source /app/Phone /usr/share/asterisk/static-http/
 RUN chmod -R 755 /usr/share/asterisk/static-http
 
-# Create asterisk user
-RUN useradd -m asterisk && \
-    chown -R asterisk:asterisk /var/log/asterisk \
+# Set permissions (asterisk user already created by debian package)
+RUN chown -R asterisk:asterisk /var/log/asterisk \
                                /var/lib/asterisk \
                                /var/spool/asterisk \
-                               /etc/asterisk \
-                               /usr/share/asterisk/static-http
+                               /etc/asterisk
 
 # Expose ports
 # SIP signaling
