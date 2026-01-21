@@ -97,11 +97,14 @@ class SIPServer:
                 nonce_timeout=300,  # 5 minutes
                 preferred_algorithm=DigestAlgorithm.MD5
             )
-            logger.info("Authentication enabled",
+            logger.info("🔐 Authentication ENABLED",
                        realm=config.realm,
-                       trunks=len(users))
+                       algorithm=self.authenticator.preferred_algorithm.value,
+                       trunks=len(users),
+                       nonce_timeout=f"{self.authenticator.nonce_timeout}s")
         else:
-            logger.warn("⚠️ Authentication DISABLED - accepting all calls!")
+            logger.warn("⚠️ Authentication DISABLED - accepting all calls!",
+                       help="Set auth_enabled=true and configure trunks in config")
 
         logger.info("SIP Server initialized",
                    host=config.host,
@@ -263,14 +266,20 @@ class SIPServer:
         if self.authenticator:
             if not authorization:
                 # No Authorization header - send 401 challenge
-                logger.info("No auth credentials - sending 401 challenge", call_id=call_id)
+                logger.info("🔐 No auth credentials - sending 401 challenge",
+                          call_id=call_id,
+                          from_uri=from_uri.user if hasattr(from_uri, 'user') else 'unknown',
+                          algorithm=self.authenticator.preferred_algorithm.value)
                 await self._send_auth_challenge(message, addr)
                 return
 
             # Parse Authorization header
             credentials = DigestAuthenticator.parse_authorization_header(authorization)
             if not credentials:
-                logger.warn("Invalid Authorization header", call_id=call_id)
+                logger.warn("🔒 Invalid Authorization header format",
+                          call_id=call_id,
+                          from_uri=from_uri.user if hasattr(from_uri, 'user') else 'unknown',
+                          auth_header_prefix=authorization[:50] + "..." if len(authorization) > 50 else authorization)
                 await self._send_response(message, addr, SIPStatus.BAD_REQUEST, "Invalid Authorization")
                 return
 
@@ -281,22 +290,32 @@ class SIPServer:
             )
 
             if not is_valid:
-                logger.warn("Authentication failed", call_id=call_id, reason=error_msg)
+                logger.warn("🔒 Authentication validation failed",
+                          call_id=call_id,
+                          username=credentials.username,
+                          algorithm=credentials.algorithm.value,
+                          realm=credentials.realm,
+                          error=error_msg)
                 # Check if we should try MD5 fallback
                 if credentials.algorithm == DigestAlgorithm.SHA256:
                     # Client used SHA-256 but failed - send MD5 challenge
-                    logger.info("SHA-256 failed, trying MD5 fallback", call_id=call_id)
+                    logger.info("🔄 SHA-256 failed, trying MD5 fallback", call_id=call_id)
                     await self._send_auth_challenge(message, addr, algorithm=DigestAlgorithm.MD5)
                     return
                 else:
                     # MD5 also failed or already was MD5 - reject with 403
+                    logger.error("❌ Authentication failed - rejecting call",
+                               call_id=call_id,
+                               username=credentials.username,
+                               error=error_msg)
                     await self._send_response(message, addr, SIPStatus.FORBIDDEN, "Authentication Failed")
                     return
 
             logger.info("✅ Authentication successful",
                        call_id=call_id,
                        username=credentials.username,
-                       algorithm=credentials.algorithm.value)
+                       algorithm=credentials.algorithm.value,
+                       realm=credentials.realm)
 
         # Create session
         session_id = str(uuid.uuid4())
@@ -454,9 +473,11 @@ class SIPServer:
             extra_headers={'WWW-Authenticate': www_auth}
         )
 
-        logger.debug("401 challenge sent",
-                    algorithm=challenge.algorithm.value,
-                    realm=challenge.realm)
+        logger.info("🔐 401 Unauthorized challenge sent",
+                   algorithm=challenge.algorithm.value,
+                   realm=challenge.realm,
+                   qop=challenge.qop,
+                   nonce_timeout=f"{self.authenticator.nonce_timeout}s")
 
     async def _handle_ack(self, message: str, addr: tuple):
         """Handle ACK request"""

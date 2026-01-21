@@ -190,33 +190,44 @@ class DigestAuthenticator:
 
         # 1. Check if username exists
         if credentials.username not in self.users:
-            logger.warn("Authentication failed - unknown user",
-                       username=credentials.username)
-            return False, "Unknown user"
+            logger.warn("🔒 Authentication failed - unknown user",
+                       username=credentials.username,
+                       realm=credentials.realm,
+                       valid_users=list(self.users.keys()))
+            return False, f"Unknown user '{credentials.username}' in realm '{credentials.realm}'"
 
         # 2. Validate nonce exists and not expired
         nonce_timestamp = self._parse_nonce_timestamp(credentials.nonce)
         if nonce_timestamp is None:
-            logger.warn("Authentication failed - invalid nonce format")
-            return False, "Invalid nonce"
+            logger.warn("🔒 Authentication failed - invalid nonce format",
+                       nonce=credentials.nonce[:32] + "..." if len(credentials.nonce) > 32 else credentials.nonce,
+                       username=credentials.username)
+            return False, f"Invalid nonce format for user '{credentials.username}'"
 
         nonce_age = time.time() - nonce_timestamp
         if nonce_age > self.nonce_timeout:
-            logger.warn("Authentication failed - nonce expired",
-                       age=f"{nonce_age:.0f}s")
-            return False, "Nonce expired"
+            logger.warn("🔒 Authentication failed - nonce expired",
+                       username=credentials.username,
+                       age_seconds=f"{nonce_age:.0f}",
+                       max_age_seconds=self.nonce_timeout,
+                       help="Client may have cached old challenge")
+            return False, f"Nonce expired ({nonce_age:.0f}s old, max {self.nonce_timeout}s)"
 
         if nonce_age < 0:
-            logger.warn("Authentication failed - future nonce",
-                       age=f"{nonce_age:.0f}s")
-            return False, "Invalid nonce timestamp"
+            logger.warn("🔒 Authentication failed - future nonce",
+                       username=credentials.username,
+                       age_seconds=f"{nonce_age:.0f}",
+                       help="Server/client clock mismatch")
+            return False, f"Invalid nonce timestamp (clock skew: {nonce_age:.0f}s)"
 
         # 3. Verify realm matches
         if credentials.realm != self.realm:
-            logger.warn("Authentication failed - realm mismatch",
-                       expected=self.realm,
-                       received=credentials.realm)
-            return False, "Realm mismatch"
+            logger.warn("🔒 Authentication failed - realm mismatch",
+                       username=credentials.username,
+                       expected_realm=self.realm,
+                       received_realm=credentials.realm,
+                       help="Check trunk/endpoint realm configuration")
+            return False, f"Realm mismatch (expected '{self.realm}', got '{credentials.realm}')"
 
         # 4. Calculate expected digest
         password = self.users[credentials.username]
@@ -235,9 +246,12 @@ class DigestAuthenticator:
 
         # 5. Compare responses (constant-time comparison to prevent timing attacks)
         if not secrets.compare_digest(credentials.response, expected_response):
-            logger.warn("Authentication failed - digest mismatch",
-                       username=credentials.username)
-            return False, "Invalid credentials"
+            logger.warn("🔒 Authentication failed - digest mismatch",
+                       username=credentials.username,
+                       algorithm=credentials.algorithm.value,
+                       uri=credentials.uri,
+                       help="Wrong password or digest calculation error")
+            return False, f"Invalid password for user '{credentials.username}'"
 
         logger.info("✅ Authentication successful",
                    username=credentials.username,
