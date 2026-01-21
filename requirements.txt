@@ -10,7 +10,7 @@ aiofiles==23.2.1
 numpy==1.26.3
 scipy==1.11.4
 soundfile==0.12.1
-pyav>=12.0.0               # Audio/Video codecs (para RTP)
+av>=12.0.0                 # Audio/Video codecs (para RTP) - PyAV package
 
 # VAD (Voice Activity Detection)
 webrtcvad==2.0.10
@@ -29,7 +29,7 @@ accelerate>=0.27.0  # For model loading optimization
 # TTS (Text-to-Speech)
 kokoro>=0.9.4
 torch>=2.5.0
-pyaudio>=0.2.11
+# pyaudio>=0.2.11  # Not used - removed (requires portaudio system library)
 
 # Logging
 structlog==23.3.0
