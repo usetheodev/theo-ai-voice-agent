@@ -14,13 +14,14 @@ sip:
     - opus
 
   # Authentication
+  auth_enabled: true  # Set to false to disable authentication (NOT RECOMMENDED for production)
   realm: voiceagent
 
   # Limits
   max_concurrent_calls: 100
   ringing_timeout: 60  # seconds
 
-  # Authorized trunks (digest authentication)
+  # Authorized trunks (digest authentication - SHA-256 with MD5 fallback)
   trunks:
     - username: carrier_demo
       password: demo123

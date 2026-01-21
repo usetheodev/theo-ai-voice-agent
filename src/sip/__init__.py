@@ -6,7 +6,7 @@ Migrated from LiveKit SIP (Go)
 Public API for SIP Server functionality
 """
 
-from .server import SIPServer, SIPConfig, SIPProtocol
+from .server import SIPServer, SIPServerConfig, SIPProtocol
 from .session import (
     CallSession,
     CallStatus,
@@ -53,7 +53,7 @@ from .sdp import (
 __all__ = [
     # Server
     'SIPServer',
-    'SIPConfig',
+    'SIPServerConfig',
     'SIPProtocol',
 
     # Session

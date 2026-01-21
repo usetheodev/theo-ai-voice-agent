@@ -20,6 +20,7 @@ class SIPConfig:
     codecs: List[str] = field(default_factory=lambda: ["PCMU", "PCMA", "opus"])
     max_concurrent_calls: int = 100
     ringing_timeout: int = 60
+    auth_enabled: bool = True
     trunks: List[Dict[str, Any]] = field(default_factory=list)
     ip_whitelist: List[str] = field(default_factory=list)
 

@@ -59,7 +59,7 @@ class Application:
         logger.info('Metrics server started', port=self.config.metrics_port)
 
         # Import modules
-        from src.sip import SIPServer, SIPConfig
+        from src.sip import SIPServer, SIPServerConfig
         from src.rtp import RTPServer, RTPServerConfig
         from src.orchestrator.events import EventBus
         from src.audio import AudioPipeline, AudioPipelineConfig
@@ -384,14 +384,16 @@ class Application:
         self.session_monitor = asyncio.create_task(monitor_rtp_sessions())
 
         # Initialize SIP Server
-        sip_config = SIPConfig(
+        sip_config = SIPServerConfig(
             host=self.config.sip.host,
             port=self.config.sip.port,
             realm=self.config.sip.realm,
             external_ip=getattr(self.config.sip, 'external_ip', None),
             codecs=getattr(self.config.sip, 'codecs', ['PCMU', 'PCMA', 'opus']),
             rtp_port_start=self.config.rtp.port_start,
-            rtp_port_end=self.config.rtp.port_end
+            rtp_port_end=self.config.rtp.port_end,
+            auth_enabled=getattr(self.config.sip, 'auth_enabled', True),
+            trunks=getattr(self.config.sip, 'trunks', [])
         )
 
         sip_server = SIPServer(config=sip_config, event_bus=event_bus, rtp_server=rtp_server)

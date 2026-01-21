@@ -33,14 +33,15 @@ from .events import (
     EventType, CallInviteEvent, CallEstablishedEvent, CallEndedEvent, CallFailedEvent
 )
 from .sdp import SDPParser, SDPGenerator, negotiate_codec, extract_remote_address
+from .auth import DigestAuthenticator, DigestAlgorithm
 
 
 logger = get_logger('sip.server')
 
 
 @dataclass
-class SIPConfig:
-    """SIP Server Configuration"""
+class SIPServerConfig:
+    """SIP Server Configuration (internal use)"""
     host: str = "0.0.0.0"
     port: int = 5060
     realm: str = "voiceagent"
@@ -53,6 +54,10 @@ class SIPConfig:
     rtp_port_start: int = 10000
     rtp_port_end: int = 20000
 
+    # Authentication
+    auth_enabled: bool = True
+    trunks: list = field(default_factory=list)  # List of {username, password, trunk_id}
+
 
 class SIPServer:
     """
@@ -62,7 +67,7 @@ class SIPServer:
     Migrated from LiveKit SIP server.go
     """
 
-    def __init__(self, config: SIPConfig, event_bus: EventBus, rtp_server=None):
+    def __init__(self, config: SIPServerConfig, event_bus: EventBus, rtp_server=None):
         self.config = config
         self.event_bus = event_bus
         self.rtp_server = rtp_server  # Optional RTP server for audio
@@ -80,6 +85,23 @@ class SIPServer:
 
         # RTP port allocation
         self.next_rtp_port = config.rtp_port_start
+
+        # Digest Authentication
+        self.authenticator: Optional[DigestAuthenticator] = None
+        if config.auth_enabled and config.trunks:
+            # Build users dict from trunks
+            users = {trunk['username']: trunk['password'] for trunk in config.trunks}
+            self.authenticator = DigestAuthenticator(
+                realm=config.realm,
+                users=users,
+                nonce_timeout=300,  # 5 minutes
+                preferred_algorithm=DigestAlgorithm.SHA256
+            )
+            logger.info("Authentication enabled",
+                       realm=config.realm,
+                       trunks=len(users))
+        else:
+            logger.warn("⚠️ Authentication DISABLED - accepting all calls!")
 
         logger.info("SIP Server initialized",
                    host=config.host,
@@ -218,7 +240,7 @@ class SIPServer:
         """
         Handle INVITE request
 
-        This is the main call setup logic
+        This is the main call setup logic with digest authentication
         """
         headers = self._parse_headers(message)
         body = self._extract_body(message)
@@ -229,12 +251,52 @@ class SIPServer:
         via_header = headers.get('via', '')
         cseq = headers.get('cseq', '')
         contact = headers.get('contact', '')
+        authorization = headers.get('authorization', '')
 
         if not call_id:
             logger.warn("INVITE missing Call-ID")
             return
 
         logger.info("📞 INVITE received", call_id=call_id, from_addr=addr)
+
+        # ===== AUTHENTICATION CHECK =====
+        if self.authenticator:
+            if not authorization:
+                # No Authorization header - send 401 challenge
+                logger.info("No auth credentials - sending 401 challenge", call_id=call_id)
+                await self._send_auth_challenge(message, addr)
+                return
+
+            # Parse Authorization header
+            credentials = DigestAuthenticator.parse_authorization_header(authorization)
+            if not credentials:
+                logger.warn("Invalid Authorization header", call_id=call_id)
+                await self._send_response(message, addr, SIPStatus.BAD_REQUEST, "Invalid Authorization")
+                return
+
+            # Validate credentials
+            is_valid, error_msg = self.authenticator.validate_response(
+                credentials=credentials,
+                method=SIPMethod.INVITE
+            )
+
+            if not is_valid:
+                logger.warn("Authentication failed", call_id=call_id, reason=error_msg)
+                # Check if we should try MD5 fallback
+                if credentials.algorithm == DigestAlgorithm.SHA256:
+                    # Client used SHA-256 but failed - send MD5 challenge
+                    logger.info("SHA-256 failed, trying MD5 fallback", call_id=call_id)
+                    await self._send_auth_challenge(message, addr, algorithm=DigestAlgorithm.MD5)
+                    return
+                else:
+                    # MD5 also failed or already was MD5 - reject with 403
+                    await self._send_response(message, addr, SIPStatus.FORBIDDEN, "Authentication Failed")
+                    return
+
+            logger.info("✅ Authentication successful",
+                       call_id=call_id,
+                       username=credentials.username,
+                       algorithm=credentials.algorithm.value)
 
         # Create session
         session_id = str(uuid.uuid4())
@@ -359,6 +421,42 @@ class SIPServer:
         # Emit ESTABLISHED event
         established_event = CallEstablishedEvent(session=session)
         await self.event_bus.publish(established_event)
+
+    async def _send_auth_challenge(
+        self,
+        invite_message: str,
+        addr: tuple,
+        algorithm: Optional[DigestAlgorithm] = None
+    ):
+        """
+        Send 401 Unauthorized with WWW-Authenticate challenge
+
+        Args:
+            invite_message: Original INVITE message
+            addr: Client address
+            algorithm: Digest algorithm (None = use preferred)
+        """
+        if not self.authenticator:
+            return
+
+        # Generate challenge
+        challenge = self.authenticator.generate_challenge(algorithm=algorithm)
+
+        # Build WWW-Authenticate header
+        www_auth = self.authenticator.build_www_authenticate_header(challenge)
+
+        # Send 401 Unauthorized
+        await self._send_response(
+            invite_message,
+            addr,
+            SIPStatus.UNAUTHORIZED,
+            "Unauthorized",
+            extra_headers={'WWW-Authenticate': www_auth}
+        )
+
+        logger.debug("401 challenge sent",
+                    algorithm=challenge.algorithm.value,
+                    realm=challenge.realm)
 
     async def _handle_ack(self, message: str, addr: tuple):
         """Handle ACK request"""
