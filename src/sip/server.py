@@ -95,7 +95,7 @@ class SIPServer:
                 realm=config.realm,
                 users=users,
                 nonce_timeout=300,  # 5 minutes
-                preferred_algorithm=DigestAlgorithm.SHA256
+                preferred_algorithm=DigestAlgorithm.MD5
             )
             logger.info("Authentication enabled",
                        realm=config.realm,
