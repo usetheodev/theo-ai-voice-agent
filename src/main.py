@@ -59,6 +59,7 @@ class Application:
         from src.sip import SIPServer, SIPConfig
         from src.rtp import RTPServer, RTPServerConfig
         from src.orchestrator.events import EventBus
+        from src.audio import AudioPipeline, AudioPipelineConfig
 
         # Initialize EventBus
         event_bus = EventBus()
@@ -72,6 +73,70 @@ class Application:
         )
         rtp_server = RTPServer(config=rtp_config, event_bus=event_bus)
         await rtp_server.start()
+
+        # Initialize Audio Pipeline Config
+        audio_config = AudioPipelineConfig(
+            codec_law='ulaw',
+            vad_energy_threshold_start=self.config.ai.vad_threshold * 1000,  # Convert to RMS
+            vad_energy_threshold_end=self.config.ai.vad_threshold * 600,
+            vad_silence_duration_ms=500,
+            vad_min_speech_duration_ms=self.config.ai.vad_min_speech_duration_ms,
+            buffer_sample_rate=8000,
+            buffer_target_rate=16000
+        )
+
+        # Store audio pipelines (one per call)
+        self.audio_pipelines = {}
+
+        # Callback when speech is detected
+        def on_speech_ready(session_id: str, audio_bytes: bytes):
+            duration = len(audio_bytes) / 2 / 16000  # 16-bit samples at 16kHz
+            logger.info('🎤 Speech ready for AI processing',
+                       session_id=session_id,
+                       size_bytes=len(audio_bytes),
+                       duration_s=f"{duration:.2f}")
+            # TODO: Send to Whisper for transcription
+            logger.info('📝 [Next step: Send to Whisper for transcription]', session_id=session_id)
+
+        # Monitor RTP sessions and start audio pipelines
+        async def monitor_rtp_sessions():
+            """Monitor RTP sessions and start audio pipelines automatically"""
+            while True:
+                try:
+                    await asyncio.sleep(2)  # Check every 2 seconds
+
+                    # Check for new sessions
+                    for session_id, rtp_session in list(rtp_server.sessions.items()):
+                        # Start audio pipeline if not already running
+                        if session_id not in self.audio_pipelines:
+                            logger.info('🚀 Starting audio pipeline for session', session_id=session_id)
+
+                            # Create pipeline for this session
+                            pipeline = AudioPipeline(config=audio_config)
+
+                            # Set callback with session_id
+                            pipeline.on_speech_ready = lambda audio_bytes, sid=session_id: on_speech_ready(sid, audio_bytes)
+
+                            # Store pipeline
+                            self.audio_pipelines[session_id] = pipeline
+
+                            # Start processing in background
+                            asyncio.create_task(pipeline.process_call(rtp_session))
+
+                    # Clean up ended sessions
+                    for session_id in list(self.audio_pipelines.keys()):
+                        if session_id not in rtp_server.sessions:
+                            logger.info('🛑 Stopping audio pipeline for ended session', session_id=session_id)
+                            pipeline = self.audio_pipelines.pop(session_id)
+                            await pipeline.stop()
+
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.error('Error in RTP session monitor', error=str(e))
+
+        # Start session monitor
+        self.session_monitor = asyncio.create_task(monitor_rtp_sessions())
 
         # Initialize SIP Server
         sip_config = SIPConfig(
@@ -117,6 +182,21 @@ class Application:
         global logger
         if logger:
             logger.info('🛑 Shutting down AI Voice Agent...')
+
+        # Stop session monitor
+        if hasattr(self, 'session_monitor'):
+            self.session_monitor.cancel()
+            try:
+                await self.session_monitor
+            except asyncio.CancelledError:
+                pass
+
+        # Stop all audio pipelines
+        if hasattr(self, 'audio_pipelines'):
+            for session_id, pipeline in list(self.audio_pipelines.items()):
+                logger.info('Stopping audio pipeline', session_id=session_id)
+                await pipeline.stop()
+            self.audio_pipelines.clear()
 
         if self.sip_server:
             await self.sip_server.stop()
