@@ -2,6 +2,12 @@
 .env
 .env.local
 examples/
+
+# AI Models (large binary files - download with scripts/download_models.sh)
+models/*
+!models/README.md
+!models/.gitkeep
+
 # backup/
 # Python
 __pycache__/
