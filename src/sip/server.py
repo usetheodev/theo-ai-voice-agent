@@ -264,11 +264,14 @@ class SIPServer:
 
         # ===== AUTHENTICATION CHECK =====
         if self.authenticator:
+            # Extract caller for logging (before full parsing)
+            from_user = from_header.split(':')[1].split('@')[0] if ':' in from_header and '@' in from_header else 'unknown'
+
             if not authorization:
                 # No Authorization header - send 401 challenge
                 logger.info("🔐 No auth credentials - sending 401 challenge",
                           call_id=call_id,
-                          from_uri=from_uri.user if hasattr(from_uri, 'user') else 'unknown',
+                          from_user=from_user,
                           algorithm=self.authenticator.preferred_algorithm.value)
                 await self._send_auth_challenge(message, addr)
                 return
@@ -278,7 +281,7 @@ class SIPServer:
             if not credentials:
                 logger.warn("🔒 Invalid Authorization header format",
                           call_id=call_id,
-                          from_uri=from_uri.user if hasattr(from_uri, 'user') else 'unknown',
+                          from_user=from_user,
                           auth_header_prefix=authorization[:50] + "..." if len(authorization) > 50 else authorization)
                 await self._send_response(message, addr, SIPStatus.BAD_REQUEST, "Invalid Authorization")
                 return
