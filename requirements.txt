@@ -23,6 +23,8 @@ pywhispercpp==1.2.0
 
 # LLM (Large Language Model)
 llama-cpp-python==0.2.90
+transformers>=4.40.0
+accelerate>=0.27.0  # For model loading optimization
 
 # TTS (Text-to-Speech)
 kokoro>=0.9.4

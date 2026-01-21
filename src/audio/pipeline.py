@@ -129,7 +129,13 @@ class AudioPipeline:
 
                 # Accumulate speech frames
                 if is_speech:
-                    self.buffer.add_frame(pcm_data)
+                    buffer_added = self.buffer.add_frame(pcm_data)
+
+                    # If buffer is full, force speech end to process accumulated audio
+                    if not buffer_added:
+                        logger.warning("Buffer full - forcing speech end",
+                                      duration_s=self.buffer.get_duration())
+                        self.vad.force_speech_end()
 
         except asyncio.CancelledError:
             logger.info("Audio processing cancelled")

@@ -64,18 +64,20 @@ rtp:
 # ===== AI PIPELINE =====
 ai:
   # ASR (Automatic Speech Recognition)
-  asr_model: openai/whisper-large-v3  # Options: whisper-tiny, whisper-base, whisper-large-v3
+  asr_model: openai/whisper-base  # Model identifier (for documentation)
+  asr_model_path: models/whisper/ggml-base.bin  # Path to GGML model file
   asr_language: pt  # Force Portuguese (auto-detect if null)
+  asr_threads: 4  # CPU threads for inference (tune based on hardware: 2-8)
 
   # LLM (Large Language Model)
-  llm_model: Qwen/Qwen2.5-7B  # Options: Qwen2.5-3B (faster), Qwen2.5-7B (better)
-  llm_max_tokens: 256         # Max response length
+  llm_model: Qwen/Qwen2.5-1.5B-Instruct  # Options: Qwen2.5-1.5B-Instruct (CPU-friendly), Qwen2.5-3B, Qwen2.5-7B
+  llm_max_tokens: 128         # Max response length (reduced for faster inference)
   llm_temperature: 0.7        # 0.0 = deterministic, 1.0 = creative
 
   # TTS (Text-to-Speech)
   tts_model: kokoro-tts
-  tts_voice: af_bella  # Options: af_bella, af_sarah, am_adam, etc.
-  tts_speed: 1.0       # 0.5-2.0
+  tts_voice: pf_dora  # Brazilian Portuguese voices: pf_dora (female), pm_alex (male), pm_santa (male)
+  tts_speed: 1.0      # 0.5-2.0
 
   # VAD (Voice Activity Detection)
   vad_threshold: 0.5             # 0.0 = very sensitive, 1.0 = not sensitive

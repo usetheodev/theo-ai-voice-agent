@@ -40,8 +40,10 @@ class RTPConfig:
 @dataclass
 class AIConfig:
     """AI Pipeline Configuration"""
-    asr_model: str = "openai/whisper-large-v3"
+    asr_model: str = "openai/whisper-base"
+    asr_model_path: str = "models/whisper/ggml-base.bin"
     asr_language: str = "pt"
+    asr_threads: int = 4
     llm_model: str = "Qwen/Qwen2.5-7B"
     llm_max_tokens: int = 256
     llm_temperature: float = 0.7
