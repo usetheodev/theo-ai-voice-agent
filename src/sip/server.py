@@ -24,6 +24,7 @@ from .session import (
     CallSession, CallStatus, URI, Transport, AuthInfo,
     USER_AGENT, INVITE_OK_RETRY_INTERVAL, INVITE_OK_RETRY_ATTEMPTS
 )
+from .rate_limiter import RateLimiter, RateLimitConfig as RLConfig
 from .protocol import (
     SIPMethod, SIPStatus, generate_tag, generate_call_id, generate_branch,
     parse_via_header, build_via_header, parse_contact_header, build_contact_header,
@@ -57,6 +58,13 @@ class SIPServerConfig:
     # Authentication
     auth_enabled: bool = True
     trunks: list = field(default_factory=list)  # List of {username, password, trunk_id}
+
+    # IP Access Control
+    ip_whitelist: list = field(default_factory=list)
+    ip_blacklist: list = field(default_factory=list)
+
+    # Rate Limiting
+    rate_limit: 'RLConfig' = field(default_factory=lambda: RLConfig())
 
 
 class SIPServer:
@@ -106,6 +114,30 @@ class SIPServer:
             logger.warn("⚠️ Authentication DISABLED - accepting all calls!",
                        help="Set auth_enabled=true and configure trunks in config")
 
+        # Rate Limiting
+        self.rate_limiter: Optional[RateLimiter] = None
+        if config.rate_limit and config.rate_limit.enabled:
+            rl_config = RLConfig(
+                requests_per_minute=config.rate_limit.requests_per_minute,
+                burst_size=config.rate_limit.burst_size,
+                ban_threshold=config.rate_limit.ban_threshold,
+                ban_duration_seconds=config.rate_limit.ban_duration_seconds,
+                violation_window_seconds=config.rate_limit.violation_window_seconds,
+                cleanup_interval_seconds=config.rate_limit.cleanup_interval_seconds
+            )
+            self.rate_limiter = RateLimiter(rl_config)
+
+            # Initialize whitelist/blacklist from config
+            if config.ip_whitelist:
+                for ip in config.ip_whitelist:
+                    self.rate_limiter.add_to_whitelist(ip)
+            if config.ip_blacklist:
+                for ip in config.ip_blacklist:
+                    self.rate_limiter.add_to_blacklist(ip)
+        else:
+            logger.warn("⚠️ Rate Limiting DISABLED - no DDoS protection!",
+                       help="Set rate_limit.enabled=true in config")
+
         logger.info("SIP Server initialized",
                    host=config.host,
                    port=config.port,
@@ -146,6 +178,11 @@ class SIPServer:
         )
 
         self.running = True
+
+        # Start cleanup task for rate limiter
+        if self.rate_limiter:
+            asyncio.create_task(self._rate_limiter_cleanup_task())
+
         logger.info("✅ SIP Server started",
                    host=self.config.host,
                    port=self.config.port,
@@ -261,6 +298,22 @@ class SIPServer:
             return
 
         logger.info("📞 INVITE received", call_id=call_id, from_addr=addr)
+
+        # ===== RATE LIMITING CHECK =====
+        client_ip = addr[0]
+        if self.rate_limiter:
+            is_allowed, reason = self.rate_limiter.is_allowed(client_ip, "INVITE")
+            if not is_allowed:
+                logger.warn("🚫 Rate limit exceeded - rejecting INVITE",
+                           call_id=call_id,
+                           client_ip=client_ip,
+                           reason=reason)
+                await self._send_response(
+                    message, addr,
+                    SIPStatus.SERVICE_UNAVAILABLE,
+                    "Service Unavailable - Rate Limit Exceeded"
+                )
+                return
 
         # ===== AUTHENTICATION CHECK =====
         if self.authenticator:
@@ -655,6 +708,35 @@ class SIPServer:
         if self.transport:
             self.transport.sendto(message.encode('utf-8'), addr)
             logger.debug("SIP message sent", to_addr=addr, size=len(message))
+
+    async def _rate_limiter_cleanup_task(self):
+        """Periodic cleanup task for rate limiter"""
+        if not self.rate_limiter or not self.config.rate_limit:
+            return
+
+        interval = self.config.rate_limit.cleanup_interval_seconds
+
+        logger.info("🧹 Rate limiter cleanup task started",
+                   interval=f"{interval}s")
+
+        while self.running:
+            await asyncio.sleep(interval)
+
+            if not self.running:
+                break
+
+            # Run cleanup
+            self.rate_limiter.cleanup()
+
+            # Log statistics
+            stats = self.rate_limiter.get_stats()
+            logger.debug("Rate limiter stats",
+                        active_buckets=stats['active_buckets'],
+                        banned_ips=stats['banned_ips'],
+                        whitelisted=stats['whitelisted_ips'],
+                        blacklisted=stats['blacklisted_ips'])
+
+        logger.info("🧹 Rate limiter cleanup task stopped")
 
 
 class SIPProtocol(asyncio.DatagramProtocol):

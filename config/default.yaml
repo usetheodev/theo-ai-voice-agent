@@ -37,6 +37,20 @@ sip:
     # - 203.0.113.0/24  # Carrier ABC
     # - 198.51.100.0/24 # Carrier XYZ
 
+  # IP blacklist (permanently blocked)
+  ip_blacklist: []
+    # - 192.0.2.100  # Example malicious IP
+
+  # Rate Limiting (DDoS protection)
+  rate_limit:
+    enabled: true  # Set to false to disable rate limiting (NOT RECOMMENDED for production)
+    requests_per_minute: 60  # Max requests per minute per IP (60 = 1 request/second)
+    burst_size: 10  # Allow burst of N requests before rate limiting kicks in
+    ban_threshold: 5  # Ban IP after N rate limit violations within window
+    ban_duration_seconds: 300  # Ban for 5 minutes (300s)
+    violation_window_seconds: 60  # Track violations in 60-second window
+    cleanup_interval_seconds: 300  # Cleanup old entries every 5 minutes
+
 
 # ===== RTP SERVER =====
 rtp:

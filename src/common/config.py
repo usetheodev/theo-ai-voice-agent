@@ -11,6 +11,18 @@ from typing import List, Optional, Dict, Any
 
 
 @dataclass
+class RateLimitConfig:
+    """Rate Limiting Configuration"""
+    enabled: bool = True
+    requests_per_minute: int = 60
+    burst_size: int = 10
+    ban_threshold: int = 5
+    ban_duration_seconds: int = 300
+    violation_window_seconds: int = 60
+    cleanup_interval_seconds: int = 300
+
+
+@dataclass
 class SIPConfig:
     """SIP Server Configuration"""
     host: str = "0.0.0.0"
@@ -23,6 +35,8 @@ class SIPConfig:
     auth_enabled: bool = True
     trunks: List[Dict[str, Any]] = field(default_factory=list)
     ip_whitelist: List[str] = field(default_factory=list)
+    ip_blacklist: List[str] = field(default_factory=list)
+    rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
 
 
 @dataclass
@@ -77,7 +91,13 @@ class AppConfig:
             data = yaml.safe_load(f)
 
         # Parse nested configs
-        sip_config = SIPConfig(**data.get('sip', {}))
+        sip_data = data.get('sip', {})
+
+        # Parse rate_limit if present
+        if 'rate_limit' in sip_data and isinstance(sip_data['rate_limit'], dict):
+            sip_data['rate_limit'] = RateLimitConfig(**sip_data['rate_limit'])
+
+        sip_config = SIPConfig(**sip_data)
         rtp_config = RTPConfig(**data.get('rtp', {}))
         ai_config = AIConfig(**data.get('ai', {}))
 

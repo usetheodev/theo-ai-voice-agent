@@ -393,7 +393,10 @@ class Application:
             rtp_port_start=self.config.rtp.port_start,
             rtp_port_end=self.config.rtp.port_end,
             auth_enabled=getattr(self.config.sip, 'auth_enabled', True),
-            trunks=getattr(self.config.sip, 'trunks', [])
+            trunks=getattr(self.config.sip, 'trunks', []),
+            ip_whitelist=getattr(self.config.sip, 'ip_whitelist', []),
+            ip_blacklist=getattr(self.config.sip, 'ip_blacklist', []),
+            rate_limit=getattr(self.config.sip, 'rate_limit', None)
         )
 
         sip_server = SIPServer(config=sip_config, event_bus=event_bus, rtp_server=rtp_server)
