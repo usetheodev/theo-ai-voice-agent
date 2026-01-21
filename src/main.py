@@ -14,10 +14,11 @@ import click
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.common.config import AppConfig
-from src.common.logging import get_logger
+from src.common.logging import get_logger, configure_logging
 from src.common.metrics import start_metrics_server
 
-logger = get_logger('main')
+# Logger will be configured after loading config
+logger = None
 
 
 class Application:
@@ -26,10 +27,18 @@ class Application:
     def __init__(self, config: AppConfig):
         self.config = config
         self.orchestrator = None
+        self.sip_server = None
+        self.event_bus = None
         self.shutdown_event = asyncio.Event()
 
     async def start(self):
         """Start the application"""
+        global logger
+
+        # Configure logging
+        configure_logging(self.config.log_level)
+        logger = get_logger('main')
+
         logger.info('🚀 Starting AI Voice Agent...')
 
         # Validate config
@@ -45,14 +54,32 @@ class Application:
         start_metrics_server(port=self.config.metrics_port)
         logger.info('Metrics server started', port=self.config.metrics_port)
 
-        # TODO: Import and initialize modules
-        # from src.sip import SIPServer
-        # from src.rtp import RTPServer
-        # from src.ai import Voice2VoicePipeline
-        # from src.orchestrator import CallOrchestrator, EventBus
+        # Import modules
+        from src.sip import SIPServer, SIPConfig
+        from src.orchestrator.events import EventBus
 
-        # event_bus = EventBus()
-        # sip_server = SIPServer(config=self.config.sip, event_bus=event_bus)
+        # Initialize EventBus
+        event_bus = EventBus()
+
+        # Initialize SIP Server
+        sip_config = SIPConfig(
+            host=self.config.sip.host,
+            port=self.config.sip.port,
+            realm=self.config.sip.realm,
+            external_ip=getattr(self.config.sip, 'external_ip', None),
+            codecs=getattr(self.config.sip, 'codecs', ['PCMU', 'PCMA', 'opus']),
+            rtp_port_start=self.config.rtp.port_start,
+            rtp_port_end=self.config.rtp.port_end
+        )
+
+        sip_server = SIPServer(config=sip_config, event_bus=event_bus)
+        await sip_server.start()
+
+        # Store reference for cleanup
+        self.sip_server = sip_server
+        self.event_bus = event_bus
+
+        # TODO: Initialize RTP Server and AI Pipeline when ready
         # rtp_server = RTPServer(config=self.config.rtp, event_bus=event_bus)
         # ai_pipeline = Voice2VoicePipeline(config=self.config.ai, event_bus=event_bus)
 
@@ -74,12 +101,18 @@ class Application:
 
     async def stop(self):
         """Stop the application gracefully"""
-        logger.info('🛑 Shutting down AI Voice Agent...')
+        global logger
+        if logger:
+            logger.info('🛑 Shutting down AI Voice Agent...')
+
+        if self.sip_server:
+            await self.sip_server.stop()
 
         if self.orchestrator:
             await self.orchestrator.stop()
 
-        logger.info('✅ Shutdown complete')
+        if logger:
+            logger.info('✅ Shutdown complete')
 
     def handle_shutdown(self, signum, frame):
         """Handle shutdown signals (SIGINT, SIGTERM)"""

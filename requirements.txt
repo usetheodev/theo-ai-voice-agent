@@ -2,10 +2,15 @@
 asyncio==3.4.3
 aiofiles==23.2.1
 
+# SIP Stack (PJSIP - migração do LiveKit SIP)
+# Nota: PJSIP requer compilação (ver Dockerfile)
+# Alternativa: usar python-sipsimple
+
 # RTP/Audio processing
 numpy==1.26.3
 scipy==1.11.4
 soundfile==0.12.1
+pyav>=12.0.0               # Audio/Video codecs (para RTP)
 
 # VAD (Voice Activity Detection)
 webrtcvad==2.0.10
@@ -30,6 +35,7 @@ structlog==23.3.0
 # Config
 pyyaml==6.0.1
 python-dotenv==1.0.0
+click==8.1.7  # CLI framework
 
 # Monitoring (optional)
 prometheus-client==0.21.1  # Updated: CVE-2024-3217 fix

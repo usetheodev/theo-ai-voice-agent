@@ -4,7 +4,14 @@
 sip:
   # Network
   host: 0.0.0.0
-  port: 5060
+  port: 5061  # Using 5061 (Asterisk is using 5060)
+  external_ip: null  # Auto-detect if null, or set to public IP
+
+  # Codecs (in priority order)
+  codecs:
+    - PCMU
+    - PCMA
+    - opus
 
   # Authentication
   realm: voiceagent
@@ -33,8 +40,8 @@ sip:
 # ===== RTP SERVER =====
 rtp:
   # Port allocation
-  port_range_start: 10000
-  port_range_end: 20000
+  port_start: 10000
+  port_end: 20000
 
   # Codec priority (order matters!)
   codec_priority:
