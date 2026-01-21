@@ -62,9 +62,10 @@ class SIPServer:
     Migrated from LiveKit SIP server.go
     """
 
-    def __init__(self, config: SIPConfig, event_bus: EventBus):
+    def __init__(self, config: SIPConfig, event_bus: EventBus, rtp_server=None):
         self.config = config
         self.event_bus = event_bus
+        self.rtp_server = rtp_server  # Optional RTP server for audio
 
         # Active sessions
         self.sessions: Dict[str, CallSession] = {}
@@ -288,6 +289,23 @@ class SIPServer:
 
         self.sessions[session_id] = session
 
+        # Create RTP session if RTP server available
+        if self.rtp_server:
+            try:
+                rtp_session = await self.rtp_server.create_session(
+                    session_id=session_id,
+                    remote_ip=remote_ip,
+                    remote_port=remote_port
+                )
+                # Update local port with actual RTP port
+                session.local_port = rtp_session.connection.local_addr[1]
+                logger.info("RTP session created", session_id=session_id, port=session.local_port)
+            except Exception as e:
+                logger.error("Failed to create RTP session", error=str(e))
+                await self._send_response(message, addr, SIPStatus.SERVER_ERROR, "RTP setup failed")
+                del self.sessions[session_id]
+                return
+
         # Emit INVITE event
         invite_event = CallInviteEvent(
             session_id=session_id,
@@ -421,6 +439,10 @@ class SIPServer:
                    session_id=session_id,
                    reason=reason,
                    duration=f"{duration:.1f}s")
+
+        # End RTP session
+        if self.rtp_server:
+            await self.rtp_server.end_session(session_id)
 
         # Emit ENDED event
         ended_event = CallEndedEvent(

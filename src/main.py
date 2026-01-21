@@ -28,6 +28,7 @@ class Application:
         self.config = config
         self.orchestrator = None
         self.sip_server = None
+        self.rtp_server = None
         self.event_bus = None
         self.shutdown_event = asyncio.Event()
 
@@ -56,10 +57,21 @@ class Application:
 
         # Import modules
         from src.sip import SIPServer, SIPConfig
+        from src.rtp import RTPServer, RTPServerConfig
         from src.orchestrator.events import EventBus
 
         # Initialize EventBus
         event_bus = EventBus()
+
+        # Initialize RTP Server
+        rtp_config = RTPServerConfig(
+            port_start=self.config.rtp.port_start,
+            port_end=self.config.rtp.port_end,
+            listen_addr="0.0.0.0",
+            media_timeout=self.config.rtp.rtp_timeout_ms / 1000.0
+        )
+        rtp_server = RTPServer(config=rtp_config, event_bus=event_bus)
+        await rtp_server.start()
 
         # Initialize SIP Server
         sip_config = SIPConfig(
@@ -72,11 +84,12 @@ class Application:
             rtp_port_end=self.config.rtp.port_end
         )
 
-        sip_server = SIPServer(config=sip_config, event_bus=event_bus)
+        sip_server = SIPServer(config=sip_config, event_bus=event_bus, rtp_server=rtp_server)
         await sip_server.start()
 
-        # Store reference for cleanup
+        # Store references for cleanup
         self.sip_server = sip_server
+        self.rtp_server = rtp_server
         self.event_bus = event_bus
 
         # TODO: Initialize RTP Server and AI Pipeline when ready
@@ -107,6 +120,9 @@ class Application:
 
         if self.sip_server:
             await self.sip_server.stop()
+
+        if self.rtp_server:
+            await self.rtp_server.stop()
 
         if self.orchestrator:
             await self.orchestrator.stop()
