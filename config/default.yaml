@@ -67,9 +67,11 @@ rtp:
   # Security
   ip_validation_enabled: true  # Validate RTP packets are from expected IP (anti-hijacking)
 
-  # Jitter buffer
-  jitter_buffer_ms: 60          # Target delay
-  jitter_buffer_max_ms: 200     # Max delay before dropping packets
+  # Jitter Buffer (Adaptive - RFC 3550)
+  jitter_buffer_initial_ms: 60   # Initial buffer depth (default: 60ms)
+  jitter_buffer_min_ms: 20       # Minimum depth for low latency (default: 20ms)
+  jitter_buffer_max_ms: 300      # Maximum depth for high jitter networks (default: 300ms)
+  jitter_buffer_adaptation_rate: 0.1  # How fast to adapt 0.0-1.0 (default: 0.1)
 
   # DTMF
   dtmf_detection: true

@@ -49,9 +49,14 @@ class RTPConnection:
         self.expected_remote_ip: Optional[str] = None
         self.ip_validation_enabled: bool = self.config.ip_validation_enabled
 
+        # SSRC Tracking (Security - Hijacking Protection)
+        self.expected_ssrc: Optional[int] = None
+        self.ssrc_locked: bool = False
+
         # Statistics
         self.packets_accepted = 0
         self.packets_rejected_invalid_ip = 0
+        self.packets_rejected_invalid_ssrc = 0
         self.hijacking_attempts = 0
 
         # Callbacks
@@ -188,6 +193,50 @@ class RTPConnection:
 
         return True
 
+    def _validate_ssrc(self, header: RTPHeader) -> bool:
+        """
+        Validate SSRC to prevent hijacking
+
+        The first valid RTP packet locks the SSRC. Subsequent packets
+        with a different SSRC are rejected as potential hijacking attempts.
+
+        Args:
+            header: RTP packet header
+
+        Returns:
+            True if SSRC is valid, False if rejected
+        """
+        # Lock SSRC on first valid packet
+        if not self.ssrc_locked:
+            self.expected_ssrc = header.ssrc
+            self.ssrc_locked = True
+            logger.info("SSRC locked",
+                       ssrc=f"0x{header.ssrc:08x}")
+            return True
+
+        # Validate subsequent packets
+        if header.ssrc != self.expected_ssrc:
+            logger.error("🚨 SSRC MISMATCH - Possible hijacking attempt",
+                        expected=f"0x{self.expected_ssrc:08x}",
+                        actual=f"0x{header.ssrc:08x}",
+                        action="PACKET_DROPPED",
+                        severity="CRITICAL")
+            self.hijacking_attempts += 1
+            return False
+
+        return True
+
+    def reset_ssrc_lock(self):
+        """
+        Reset SSRC lock (e.g., on session restart)
+
+        This allows a new RTP stream to be accepted with a different SSRC.
+        Should be called when reusing the connection for a new session.
+        """
+        self.expected_ssrc = None
+        self.ssrc_locked = False
+        logger.info("SSRC lock reset")
+
     def on_rtp(self, callback: Callable[[RTPHeader, bytes], None]):
         """Register callback for incoming RTP packets"""
         self.on_rtp_callback = callback
@@ -246,6 +295,11 @@ class RTPConnection:
                     except ValueError as e:
                         logger.debug("Failed to parse RTP packet", error=str(e))
                         continue
+
+                    # Validate SSRC (security check - hijacking protection)
+                    if not self._validate_ssrc(packet.header):
+                        self.packets_rejected_invalid_ssrc += 1
+                        continue  # Drop packet with invalid SSRC
 
                     # Update stats
                     self.packet_count += 1
@@ -330,9 +384,12 @@ class RTPConnection:
             'local_addr': self.local_addr,
             'remote_addr': self.remote_addr,
             'expected_remote_ip': self.expected_remote_ip,
+            'expected_ssrc': f"0x{self.expected_ssrc:08x}" if self.expected_ssrc else None,
+            'ssrc_locked': self.ssrc_locked,
             'packet_count': self.packet_count,
             'packets_accepted': self.packets_accepted,
             'packets_rejected_invalid_ip': self.packets_rejected_invalid_ip,
+            'packets_rejected_invalid_ssrc': self.packets_rejected_invalid_ssrc,
             'hijacking_attempts': self.hijacking_attempts,
             'first_packet_received': self.first_packet_received,
             'last_packet_time': self.last_packet_time,

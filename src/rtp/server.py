@@ -12,6 +12,7 @@ from ..common.logging import get_logger
 from ..orchestrator.events import EventBus
 from .connection import RTPConnection, RTPConnectionConfig
 from .packet import RTPHeader
+from .jitter_buffer import AdaptiveJitterBuffer, JitterBufferConfig
 
 logger = get_logger('rtp.server')
 
@@ -26,14 +27,26 @@ class RTPServerConfig:
     media_timeout_initial: float = 30.0
     ip_validation_enabled: bool = True  # Enable IP validation for security
 
+    # Jitter Buffer
+    jitter_buffer_initial_ms: int = 60
+    jitter_buffer_min_ms: int = 20
+    jitter_buffer_max_ms: int = 300
+    jitter_buffer_adaptation_rate: float = 0.1
+
 
 class RTPSession:
     """RTP Session for a call"""
 
-    def __init__(self, session_id: str, connection: RTPConnection):
+    def __init__(self, session_id: str, connection: RTPConnection,
+                 jitter_buffer_config: Optional[JitterBufferConfig] = None):
         self.session_id = session_id
         self.connection = connection
         self.created_at = asyncio.get_event_loop().time()
+
+        # Jitter Buffer
+        if jitter_buffer_config is None:
+            jitter_buffer_config = JitterBufferConfig()
+        self.jitter_buffer = AdaptiveJitterBuffer(config=jitter_buffer_config)
 
         # Audio buffers (for future AI pipeline integration)
         self.audio_in_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
@@ -45,21 +58,98 @@ class RTPSession:
         self.bytes_received = 0
         self.bytes_sent = 0
 
+        # Playout task
+        self.playout_task: Optional[asyncio.Task] = None
+        self.playout_running = False
+
     def on_rtp_received(self, header: RTPHeader, payload: bytes):
         """Handle incoming RTP packet"""
         self.packets_received += 1
         self.bytes_received += len(payload)
 
-        # Put audio in queue for processing
-        try:
-            self.audio_in_queue.put_nowait((header, payload))
-        except asyncio.QueueFull:
-            logger.warn("Audio input queue full", session_id=self.session_id)
+        # Push to jitter buffer
+        accepted = self.jitter_buffer.push(header, payload)
+        if not accepted:
+            logger.debug("Packet rejected by jitter buffer",
+                        seq=header.sequence_number,
+                        session_id=self.session_id)
+            return
+
+        # Start playout loop on first packet
+        if not self.playout_running:
+            self.playout_running = True
+            self.playout_task = asyncio.create_task(self._playout_loop())
+            logger.info("Playout loop started", session_id=self.session_id)
 
         # TEST: Echo back silence to validate TX path
         # This sends RTP packets back to test transmission
         if self.packets_received % 50 == 1:  # Log every 50th packet
             asyncio.create_task(self._send_test_audio())
+
+    async def _playout_loop(self):
+        """
+        Playout loop - pops packets from jitter buffer in sequence
+
+        Handles:
+        - Waiting for jitter buffer to fill
+        - Packet loss (None returned from jitter buffer)
+        - Timing (20ms per packet for PCMU)
+        """
+        packet_interval = 0.020  # 20ms for PCMU
+        packets_output = 0
+
+        logger.info("Playout loop starting", session_id=self.session_id)
+
+        try:
+            while self.playout_running:
+                # Get next packet from jitter buffer (in sequence)
+                result = await self.jitter_buffer.pop()
+
+                if result is None:
+                    # Packet lost - generate silence for PLC
+                    logger.debug("Packet loss - inserting silence",
+                               session_id=self.session_id)
+                    # PCMU silence = 0xFF
+                    silence_payload = bytes([0xFF] * 160)
+                    # Create dummy header for lost packet
+                    header = RTPHeader(
+                        version=2, padding=False, extension=False,
+                        marker=False, payload_type=0,
+                        sequence_number=0, timestamp=0, ssrc=0
+                    )
+                    result = (header, silence_payload)
+
+                header, payload = result
+                packets_output += 1
+
+                # Put in audio queue for AI pipeline
+                try:
+                    self.audio_in_queue.put_nowait((header, payload))
+                except asyncio.QueueFull:
+                    logger.warn("Audio input queue full - dropping packet",
+                              session_id=self.session_id)
+
+                # Log periodically
+                if packets_output % 50 == 0:
+                    jb_stats = self.jitter_buffer.get_stats()
+                    logger.info("Playout progress",
+                               session_id=self.session_id,
+                               packets_output=packets_output,
+                               jitter_ms=jb_stats['current_jitter_ms'],
+                               buffer_depth_ms=jb_stats['current_depth_ms'],
+                               packets_lost=jb_stats['packets_lost'])
+
+                # Sleep for packet interval (20ms timing)
+                await asyncio.sleep(packet_interval)
+
+        except asyncio.CancelledError:
+            logger.info("Playout loop cancelled", session_id=self.session_id)
+        except Exception as e:
+            logger.error("Error in playout loop", session_id=self.session_id, error=str(e))
+        finally:
+            logger.info("Playout loop stopped",
+                       session_id=self.session_id,
+                       packets_output=packets_output)
 
     async def _send_test_audio(self):
         """Send test audio packet (silence) to validate TX path"""
@@ -107,6 +197,7 @@ class RTPSession:
             'bytes_sent': self.bytes_sent,
             'audio_in_queue_size': self.audio_in_queue.qsize(),
             'audio_out_queue_size': self.audio_out_queue.qsize(),
+            'jitter_buffer': self.jitter_buffer.get_stats(),
             'connection': self.connection.get_stats()
         }
 
@@ -183,8 +274,21 @@ class RTPServer:
         # Set remote address
         connection.set_remote_addr((remote_ip, remote_port))
 
+        # Create jitter buffer config from server config
+        jb_config = JitterBufferConfig(
+            initial_depth_ms=self.config.jitter_buffer_initial_ms,
+            min_depth_ms=self.config.jitter_buffer_min_ms,
+            max_depth_ms=self.config.jitter_buffer_max_ms,
+            packet_duration_ms=20,  # 20ms @ 8kHz PCMU
+            adaptation_rate=self.config.jitter_buffer_adaptation_rate
+        )
+
         # Create session
-        session = RTPSession(session_id=session_id, connection=connection)
+        session = RTPSession(
+            session_id=session_id,
+            connection=connection,
+            jitter_buffer_config=jb_config
+        )
 
         # Register RTP handler
         connection.on_rtp(session.on_rtp_received)
@@ -220,6 +324,15 @@ class RTPServer:
                    session_id=session_id,
                    packets_rx=session.packets_received,
                    packets_tx=session.packets_sent)
+
+        # Stop playout loop
+        if session.playout_task:
+            session.playout_running = False
+            session.playout_task.cancel()
+            try:
+                await session.playout_task
+            except asyncio.CancelledError:
+                pass
 
         # Stop connection
         await session.connection.stop()

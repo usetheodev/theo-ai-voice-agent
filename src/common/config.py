@@ -45,8 +45,16 @@ class RTPConfig:
     port_start: int = 10000
     port_end: int = 20000
     codec_priority: List[str] = field(default_factory=lambda: ["PCMU", "PCMA"])
-    jitter_buffer_ms: int = 60
-    jitter_buffer_max_ms: int = 200
+
+    # Jitter Buffer (Adaptive - RFC 3550)
+    jitter_buffer_initial_ms: int = 60     # Initial buffer depth
+    jitter_buffer_min_ms: int = 20         # Minimum depth (low latency)
+    jitter_buffer_max_ms: int = 300        # Maximum depth (high jitter)
+    jitter_buffer_adaptation_rate: float = 0.1  # Adaptation speed (0.0-1.0)
+
+    # Legacy fields for backwards compatibility
+    jitter_buffer_ms: int = 60             # Deprecated - use jitter_buffer_initial_ms
+
     dtmf_detection: bool = True
     dtmf_min_duration_ms: int = 40
     rtp_timeout_ms: int = 5000
