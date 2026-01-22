@@ -13,6 +13,7 @@ from collections import OrderedDict
 
 from ..common.logging import get_logger
 from .packet import RTPHeader
+from .packet_loss_concealment import PacketLossConcealment
 
 logger = get_logger('rtp.jitter_buffer')
 
@@ -74,6 +75,9 @@ class AdaptiveJitterBuffer:
 
         # Playout timing
         self.playout_timestamp: Optional[int] = None
+
+        # Packet Loss Concealment
+        self.plc = PacketLossConcealment(codec="PCMU")
 
         # Asyncio
         self.ready_event = asyncio.Event()
@@ -163,9 +167,13 @@ class AdaptiveJitterBuffer:
 
         # Try to get packet
         if next_seq in self.buffer:
+            # Good packet - pop from buffer
             header, payload, _ = self.buffer.pop(next_seq)
             self.last_seq_output = next_seq
             self.stats.packets_output += 1
+
+            # Update PLC with good packet for reference
+            self.plc.update_last_packet(header, payload)
 
             logger.debug("Packet output",
                         seq=next_seq,
@@ -173,15 +181,23 @@ class AdaptiveJitterBuffer:
 
             return (header, payload)
         else:
-            # Packet lost
+            # Packet lost - use PLC to conceal
             self.stats.packets_lost += 1
             self.last_seq_output = next_seq
 
-            logger.warn("Packet loss detected",
+            # Calculate loss rate for PLC level selection
+            total_packets = self.stats.packets_received
+            loss_rate = self.stats.packets_lost / max(1, total_packets)
+
+            # Generate concealment packet
+            header, payload = self.plc.conceal(next_seq, loss_rate)
+
+            logger.warn("Packet loss - PLC active",
                        seq=next_seq,
+                       loss_rate=f"{loss_rate*100:.2f}%",
                        buffer_size=len(self.buffer))
 
-            return None
+            return (header, payload)
 
     async def _wait_for_initial_fill(self):
         """Wait for buffer to fill to initial depth"""
@@ -267,6 +283,8 @@ class AdaptiveJitterBuffer:
 
     def get_stats(self) -> dict:
         """Get buffer statistics"""
+        plc_stats = self.plc.get_stats()
+
         return {
             'packets_received': self.stats.packets_received,
             'packets_output': self.stats.packets_output,
@@ -277,7 +295,8 @@ class AdaptiveJitterBuffer:
             'current_depth_ms': self.stats.current_depth_ms,
             'current_jitter_ms': round(self.stats.current_jitter_ms, 2),
             'buffer_underruns': self.stats.buffer_underruns,
-            'buffer_overruns': self.stats.buffer_overruns
+            'buffer_overruns': self.stats.buffer_overruns,
+            'plc': plc_stats
         }
 
     def reset(self):
@@ -292,4 +311,5 @@ class AdaptiveJitterBuffer:
         self.playout_timestamp = None
         self.stats = JitterBufferStats()
         self.stats.current_depth_ms = self.config.initial_depth_ms
+        self.plc.reset()
         logger.info("Jitter buffer reset")

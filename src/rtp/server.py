@@ -103,21 +103,14 @@ class RTPSession:
         try:
             while self.playout_running:
                 # Get next packet from jitter buffer (in sequence)
+                # Jitter buffer now handles PLC internally - always returns a packet
                 result = await self.jitter_buffer.pop()
 
                 if result is None:
-                    # Packet lost - generate silence for PLC
-                    logger.debug("Packet loss - inserting silence",
+                    # Should not happen - jitter buffer now handles PLC
+                    logger.error("Unexpected None from jitter buffer",
                                session_id=self.session_id)
-                    # PCMU silence = 0xFF
-                    silence_payload = bytes([0xFF] * 160)
-                    # Create dummy header for lost packet
-                    header = RTPHeader(
-                        version=2, padding=False, extension=False,
-                        marker=False, payload_type=0,
-                        sequence_number=0, timestamp=0, ssrc=0
-                    )
-                    result = (header, silence_payload)
+                    continue
 
                 header, payload = result
                 packets_output += 1
@@ -132,12 +125,14 @@ class RTPSession:
                 # Log periodically
                 if packets_output % 50 == 0:
                     jb_stats = self.jitter_buffer.get_stats()
+                    plc_stats = jb_stats.get('plc', {})
                     logger.info("Playout progress",
                                session_id=self.session_id,
                                packets_output=packets_output,
                                jitter_ms=jb_stats['current_jitter_ms'],
                                buffer_depth_ms=jb_stats['current_depth_ms'],
-                               packets_lost=jb_stats['packets_lost'])
+                               packets_lost=jb_stats['packets_lost'],
+                               plc_concealed=plc_stats.get('packets_concealed', 0))
 
                 # Sleep for packet interval (20ms timing)
                 await asyncio.sleep(packet_interval)
