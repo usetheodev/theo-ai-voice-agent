@@ -393,6 +393,7 @@ class Application:
             codecs=getattr(self.config.sip, 'codecs', ['PCMU', 'PCMA', 'opus']),
             rtp_port_start=self.config.rtp.port_start,
             rtp_port_end=self.config.rtp.port_end,
+            max_concurrent_calls=getattr(self.config.sip, 'max_concurrent_calls', 100),
             auth_enabled=getattr(self.config.sip, 'auth_enabled', True),
             trunks=getattr(self.config.sip, 'trunks', []),
             ip_whitelist=getattr(self.config.sip, 'ip_whitelist', []),

@@ -40,6 +40,27 @@ from .auth import DigestAuthenticator, DigestAlgorithm
 logger = get_logger('sip.server')
 
 
+class SIPServerStats:
+    """SIP Server Session Statistics"""
+
+    def __init__(self):
+        self.total_sessions_created = 0
+        self.total_sessions_rejected_limit = 0
+        self.total_sessions_timeout = 0
+        self.current_active_sessions = 0
+        self.peak_concurrent_sessions = 0
+
+    def to_dict(self) -> dict:
+        """Export stats as dictionary"""
+        return {
+            'total_sessions_created': self.total_sessions_created,
+            'total_sessions_rejected_limit': self.total_sessions_rejected_limit,
+            'total_sessions_timeout': self.total_sessions_timeout,
+            'current_active_sessions': self.current_active_sessions,
+            'peak_concurrent_sessions': self.peak_concurrent_sessions
+        }
+
+
 @dataclass
 class SIPServerConfig:
     """SIP Server Configuration (internal use)"""
@@ -54,6 +75,9 @@ class SIPServerConfig:
     # RTP port range
     rtp_port_start: int = 10000
     rtp_port_end: int = 20000
+
+    # Session Limits
+    max_concurrent_calls: int = 100
 
     # Authentication
     auth_enabled: bool = True
@@ -82,6 +106,12 @@ class SIPServer:
 
         # Active sessions
         self.sessions: Dict[str, CallSession] = {}
+
+        # Session limits
+        self.max_concurrent_calls = config.max_concurrent_calls
+
+        # Session statistics
+        self.stats = SIPServerStats()
 
         # UDP socket
         self.sock: Optional[socket.socket] = None
@@ -141,7 +171,8 @@ class SIPServer:
         logger.info("SIP Server initialized",
                    host=config.host,
                    port=config.port,
-                   local_ip=self.local_ip)
+                   local_ip=self.local_ip,
+                   max_concurrent_calls=self.max_concurrent_calls)
 
     def _get_local_ip(self) -> str:
         """Get local IP address"""
@@ -164,6 +195,24 @@ class SIPServer:
             self.next_rtp_port = self.config.rtp_port_start
 
         return port
+
+    def _can_accept_call(self) -> tuple[bool, Optional[str]]:
+        """
+        Check if we can accept a new call
+
+        Returns:
+            (can_accept, reason) - (True, None) if OK, (False, reason) if rejected
+        """
+        current_sessions = len(self.sessions)
+
+        if current_sessions >= self.max_concurrent_calls:
+            self.stats.total_sessions_rejected_limit += 1
+            logger.warn("🚫 Max concurrent calls reached",
+                       current=current_sessions,
+                       max=self.max_concurrent_calls)
+            return False, "Service Unavailable - Max Sessions Reached"
+
+        return True, None
 
     async def start(self):
         """Start SIP server"""
@@ -299,6 +348,20 @@ class SIPServer:
 
         logger.info("📞 INVITE received", call_id=call_id, from_addr=addr)
 
+        # ===== SESSION LIMIT CHECK =====
+        can_accept, reason = self._can_accept_call()
+        if not can_accept:
+            logger.warn("🚫 Max concurrent calls reached - rejecting INVITE",
+                       call_id=call_id,
+                       active_sessions=len(self.sessions),
+                       max_sessions=self.max_concurrent_calls)
+            await self._send_response(
+                message, addr,
+                SIPStatus.SERVICE_UNAVAILABLE,
+                reason
+            )
+            return
+
         # ===== RATE LIMITING CHECK =====
         client_ip = addr[0]
         if self.rate_limiter:
@@ -425,6 +488,17 @@ class SIPServer:
         )
 
         self.sessions[session_id] = session
+
+        # Update session statistics
+        self.stats.total_sessions_created += 1
+        self.stats.current_active_sessions = len(self.sessions)
+        if self.stats.current_active_sessions > self.stats.peak_concurrent_sessions:
+            self.stats.peak_concurrent_sessions = self.stats.current_active_sessions
+
+        logger.info("Session created",
+                   session_id=session_id,
+                   active_sessions=len(self.sessions),
+                   max_sessions=self.max_concurrent_calls)
 
         # Create RTP session if RTP server available
         if self.rtp_server:
@@ -632,6 +706,14 @@ class SIPServer:
 
         # Remove session
         del self.sessions[session_id]
+
+        # Update statistics
+        self.stats.current_active_sessions = len(self.sessions)
+
+        logger.info("Session removed",
+                   session_id=session_id,
+                   active_sessions=len(self.sessions),
+                   max_sessions=self.max_concurrent_calls)
 
     def _parse_headers(self, message: str) -> Dict[str, str]:
         """Parse SIP headers"""

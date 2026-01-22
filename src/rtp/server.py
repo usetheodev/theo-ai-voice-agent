@@ -205,7 +205,8 @@ class RTPServer:
         logger.info("RTP session created",
                    session_id=session_id,
                    local_port=local_port,
-                   remote=f"{remote_ip}:{remote_port}")
+                   remote=f"{remote_ip}:{remote_port}",
+                   active_sessions=len(self.sessions))
 
         return session
 
@@ -225,6 +226,10 @@ class RTPServer:
 
         # Remove session
         del self.sessions[session_id]
+
+        logger.info("RTP session removed",
+                   session_id=session_id,
+                   active_sessions=len(self.sessions))
 
     def get_session(self, session_id: str) -> Optional[RTPSession]:
         """Get RTP session by ID"""
