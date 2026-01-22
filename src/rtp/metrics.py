@@ -78,6 +78,23 @@ class PLCMetrics:
 
 
 @dataclass
+class DTMFMetrics:
+    """DTMF Detection Metrics"""
+    dtmf_events_detected: int = 0
+    invalid_packets: int = 0
+    current_event_active: bool = False
+
+
+@dataclass
+class RTCPMetrics:
+    """RTCP Protocol Metrics"""
+    rtcp_running: bool = False
+    rtcp_local_port: Optional[int] = None
+    rtcp_remote_addr: Optional[tuple] = None
+    rtt_ms: float = 0.0  # Round-Trip Time
+
+
+@dataclass
 class SessionMetrics:
     """RTP Session Metrics"""
     session_id: str
@@ -97,6 +114,12 @@ class SessionMetrics:
 
     # PLC metrics
     plc: PLCMetrics = field(default_factory=PLCMetrics)
+
+    # DTMF metrics
+    dtmf: DTMFMetrics = field(default_factory=DTMFMetrics)
+
+    # RTCP metrics
+    rtcp: RTCPMetrics = field(default_factory=RTCPMetrics)
 
 
 class RTPMetricsCollector:
@@ -178,6 +201,26 @@ class RTPMetricsCollector:
             net.bitrate_kbps_tx = (net.bytes_sent * 8) / (elapsed * 1000)
 
         self._last_update_time = now
+
+    def update_from_dtmf(self, dtmf_stats: dict):
+        """Update metrics from DTMF detector statistics"""
+        dtmf = self.metrics.dtmf
+
+        dtmf.dtmf_events_detected = dtmf_stats.get('dtmf_events_detected', 0)
+        dtmf.invalid_packets = dtmf_stats.get('invalid_packets', 0)
+        dtmf.current_event_active = dtmf_stats.get('current_event_active', False)
+
+    def update_from_rtcp(self, rtcp_stats: dict, rtt_ms: float):
+        """Update metrics from RTCP statistics"""
+        rtcp = self.metrics.rtcp
+
+        rtcp.rtcp_running = rtcp_stats.get('rtcp_running', False)
+        rtcp.rtcp_local_port = rtcp_stats.get('rtcp_local_port')
+        rtcp.rtcp_remote_addr = rtcp_stats.get('rtcp_remote_addr')
+        rtcp.rtt_ms = rtt_ms
+
+        # Also update network RTT (for backward compatibility)
+        self.metrics.network.rtt_ms = rtt_ms if rtt_ms > 0 else None
 
     def calculate_mos_score(self) -> float:
         """
@@ -375,5 +418,18 @@ class RTPMetricsCollector:
                 'level_1_percent': round(self.metrics.plc.level_1_percent, 1),
                 'level_2_percent': round(self.metrics.plc.level_2_percent, 1),
                 'level_3_percent': round(self.metrics.plc.level_3_percent, 1),
+            },
+
+            'dtmf': {
+                'dtmf_events_detected': self.metrics.dtmf.dtmf_events_detected,
+                'invalid_packets': self.metrics.dtmf.invalid_packets,
+                'current_event_active': self.metrics.dtmf.current_event_active,
+            },
+
+            'rtcp': {
+                'rtcp_running': self.metrics.rtcp.rtcp_running,
+                'rtcp_local_port': self.metrics.rtcp.rtcp_local_port,
+                'rtcp_remote_addr': str(self.metrics.rtcp.rtcp_remote_addr) if self.metrics.rtcp.rtcp_remote_addr else None,
+                'rtt_ms': round(self.metrics.rtcp.rtt_ms, 2) if self.metrics.rtcp.rtt_ms > 0 else None,
             }
         }

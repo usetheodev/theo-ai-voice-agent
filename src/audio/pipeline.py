@@ -88,6 +88,7 @@ class AudioPipeline:
 
         # Callbacks (for AI integration)
         self.on_speech_ready: Optional[Callable[[bytes], None]] = None
+        self.on_dtmf: Optional[Callable[[str], None]] = None  # Callback for DTMF digits
 
         logger.info("AudioPipeline initialized", config=config)
 
@@ -104,6 +105,9 @@ class AudioPipeline:
         self.stream = RTPAudioStream(rtp_session, self.codec)
 
         logger.info("Starting audio processing", session_id=rtp_session.session_id)
+
+        # Start DTMF monitoring task
+        dtmf_task = asyncio.create_task(self._monitor_dtmf(rtp_session))
 
         try:
             while self.running and rtp_session.connection.running:
@@ -143,6 +147,14 @@ class AudioPipeline:
             logger.error("Error in audio processing", error=str(e))
         finally:
             self.running = False
+
+            # Stop DTMF monitoring
+            dtmf_task.cancel()
+            try:
+                await dtmf_task
+            except asyncio.CancelledError:
+                pass
+
             if self.stream:
                 await self.stream.close()
 
@@ -179,6 +191,50 @@ class AudioPipeline:
 
         # Clear buffer for next speech segment
         self.buffer.clear()
+
+    async def _monitor_dtmf(self, rtp_session: RTPSession):
+        """
+        Monitor DTMF events from RTP session queue
+
+        Args:
+            rtp_session: RTP session with DTMF queue
+        """
+        logger.debug("DTMF monitoring started", session_id=rtp_session.session_id)
+
+        try:
+            while self.running:
+                try:
+                    # Wait for DTMF event
+                    dtmf_event = await asyncio.wait_for(
+                        rtp_session.dtmf_queue.get(),
+                        timeout=1.0
+                    )
+
+                    digit = dtmf_event.digit
+                    logger.info("📞 DTMF received for AI",
+                               session_id=rtp_session.session_id,
+                               digit=digit,
+                               duration_ms=dtmf_event.duration_ms)
+
+                    # Trigger DTMF callback for AI integration
+                    if self.on_dtmf:
+                        try:
+                            self.on_dtmf(digit)
+                        except Exception as e:
+                            logger.error("Error in DTMF callback",
+                                       error=str(e),
+                                       digit=digit)
+
+                except asyncio.TimeoutError:
+                    # No DTMF - continue monitoring
+                    continue
+
+        except asyncio.CancelledError:
+            logger.debug("DTMF monitoring cancelled", session_id=rtp_session.session_id)
+        except Exception as e:
+            logger.error("Error in DTMF monitoring",
+                        error=str(e),
+                        session_id=rtp_session.session_id)
 
     async def stop(self):
         """Stop audio processing"""

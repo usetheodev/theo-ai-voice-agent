@@ -1,0 +1,40 @@
+# Prometheus Configuration for AI Voice Agent Monitoring
+global:
+  scrape_interval: 15s  # Scrape metrics every 15 seconds
+  evaluation_interval: 15s  # Evaluate rules every 15 seconds
+  external_labels:
+    cluster: 'ai-voice-agent'
+    environment: 'production'
+
+# Scrape configurations
+scrape_configs:
+  # AI Voice Agent RTP Metrics
+  # NOTE: Using host.docker.internal for local development
+  # Change to 'voiceagent:8000' when running voice agent in container
+  - job_name: 'ai-voice-agent'
+    static_configs:
+      - targets: ['host.docker.internal:8000']
+        labels:
+          service: 'rtp-server'
+          component: 'voice-agent'
+
+    # Scrape metrics endpoint
+    metrics_path: '/metrics'
+
+    # Timeout for scraping
+    scrape_timeout: 10s
+
+    # Keep only Prometheus format metrics
+    metric_relabel_configs:
+      # Add custom labels
+      - source_labels: [__name__]
+        regex: 'rtp_.*|rtcp_.*|dtmf_.*'
+        action: keep
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: 'prometheus'
+          component: 'monitoring'

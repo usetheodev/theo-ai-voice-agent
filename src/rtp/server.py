@@ -14,6 +14,8 @@ from .connection import RTPConnection, RTPConnectionConfig
 from .packet import RTPHeader
 from .jitter_buffer import AdaptiveJitterBuffer, JitterBufferConfig
 from .metrics import RTPMetricsCollector
+from .dtmf import DTMFDetector, DTMFEvent
+from .rtcp import RTCPReceiverReport, ReceptionReport, RTCPSenderReport, parse_rtcp_packet, RTCP_SR
 
 logger = get_logger('rtp.server')
 
@@ -53,6 +55,24 @@ class RTPSession:
         self.audio_in_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
         self.audio_out_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
 
+        # DTMF Detection
+        self.dtmf_detector = DTMFDetector(payload_type=101)
+        self.dtmf_queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+
+        # Register DTMF callback to put events in queue
+        def on_dtmf(event: DTMFEvent):
+            try:
+                self.dtmf_queue.put_nowait(event)
+                logger.info("DTMF queued for AI processing",
+                           session_id=self.session_id,
+                           digit=event.digit)
+            except asyncio.QueueFull:
+                logger.warn("DTMF queue full - dropping event",
+                           session_id=self.session_id,
+                           digit=event.digit)
+
+        self.dtmf_detector.on_dtmf(on_dtmf)
+
         # Stats
         self.packets_received = 0
         self.packets_sent = 0
@@ -62,16 +82,45 @@ class RTPSession:
         # Metrics Collector
         self.metrics_collector = RTPMetricsCollector(session_id=session_id)
 
+        # RTCP Tracking
+        self.remote_ssrc: Optional[int] = None  # SSRC of remote sender
+        self.local_ssrc: int = 0x12345678  # Our SSRC (same as in _send_test_audio)
+        self.last_sr_ntp_timestamp: int = 0  # Middle 32 bits of NTP from last SR
+        self.last_sr_received_time: float = 0  # When we received last SR (system time)
+        self.rtt_ms: float = 0.0  # Round-Trip Time in milliseconds
+
+        # RTCP Socket (will be created when session starts)
+        self.rtcp_sock: Optional[asyncio.DatagramProtocol] = None
+        self.rtcp_transport: Optional[asyncio.DatagramTransport] = None
+        self.rtcp_local_port: Optional[int] = None
+        self.rtcp_remote_addr: Optional[tuple] = None
+
         # Playout task
         self.playout_task: Optional[asyncio.Task] = None
         self.playout_running = False
+
+        # RTCP task
+        self.rtcp_task: Optional[asyncio.Task] = None
+        self.rtcp_running = False
 
     def on_rtp_received(self, header: RTPHeader, payload: bytes):
         """Handle incoming RTP packet"""
         self.packets_received += 1
         self.bytes_received += len(payload)
 
-        # Push to jitter buffer
+        # Track remote SSRC (for RTCP)
+        if self.remote_ssrc is None:
+            self.remote_ssrc = header.ssrc
+            logger.debug("Remote SSRC captured", session_id=self.session_id, ssrc=hex(header.ssrc))
+
+        # Check for DTMF events (RFC 2833)
+        dtmf_event = self.dtmf_detector.process_rtp(header, payload)
+        if dtmf_event:
+            # DTMF detected - callback already queued it
+            # Don't push DTMF packets to jitter buffer (they're not audio)
+            return
+
+        # Push audio packets to jitter buffer
         accepted = self.jitter_buffer.push(header, payload)
         if not accepted:
             logger.debug("Packet rejected by jitter buffer",
@@ -131,9 +180,17 @@ class RTPSession:
                     # Collect metrics from jitter buffer and connection
                     jb_stats = self.jitter_buffer.get_stats()
                     conn_stats = self.connection.get_stats()
+                    dtmf_stats = self.dtmf_detector.get_stats()
+                    rtcp_stats = {
+                        'rtcp_running': self.rtcp_running,
+                        'rtcp_local_port': self.rtcp_local_port,
+                        'rtcp_remote_addr': self.rtcp_remote_addr
+                    }
 
                     self.metrics_collector.update_from_jitter_buffer(jb_stats)
                     self.metrics_collector.update_from_connection(conn_stats)
+                    self.metrics_collector.update_from_dtmf(dtmf_stats)
+                    self.metrics_collector.update_from_rtcp(rtcp_stats, self.rtt_ms)
 
                     # Get metrics summary with MOS score
                     metrics_summary = self.metrics_collector.get_summary()
@@ -197,14 +254,265 @@ class RTPSession:
         except Exception as e:
             logger.error("Failed to send RTP", session_id=self.session_id, error=str(e))
 
+    def generate_receiver_report(self) -> Optional[RTCPReceiverReport]:
+        """
+        Generate RTCP Receiver Report with reception quality statistics
+
+        Returns:
+            RTCPReceiverReport instance or None if no remote SSRC yet
+        """
+        if self.remote_ssrc is None:
+            # No RTP packets received yet
+            return None
+
+        # Create RR packet with our SSRC
+        rr = RTCPReceiverReport(ssrc=self.local_ssrc)
+
+        # Get stats from jitter buffer and connection
+        jb_stats = self.jitter_buffer.get_stats()
+
+        # Calculate fraction lost (0-255, representing 0-100%)
+        # Fraction lost since last RR
+        total_expected = jb_stats.packets_received + jb_stats.packets_lost
+        if total_expected > 0:
+            loss_fraction = jb_stats.packets_lost / total_expected
+            fraction_lost = min(255, int(loss_fraction * 256))
+        else:
+            fraction_lost = 0
+
+        # Extended highest sequence number received
+        # (RFC 3550: 16-bit cycle count + 16-bit highest seq)
+        extended_highest_seq = jb_stats.highest_seq_received
+
+        # Interarrival jitter (in RTP timestamp units)
+        # For PCMU @ 8kHz: jitter_ms * 8 = jitter in timestamp units
+        jitter_timestamp_units = int(jb_stats.current_jitter_ms * 8)
+
+        # LSR (Last SR timestamp) - middle 32 bits of NTP timestamp from last SR
+        lsr = self.last_sr_ntp_timestamp
+
+        # DLSR (Delay since Last SR) - in units of 1/65536 seconds
+        if self.last_sr_received_time > 0:
+            import time
+            delay_seconds = time.time() - self.last_sr_received_time
+            dlsr = int(delay_seconds * 65536) & 0xFFFFFFFF
+        else:
+            dlsr = 0
+
+        # Create reception report for remote sender
+        report = ReceptionReport(
+            ssrc=self.remote_ssrc,
+            fraction_lost=fraction_lost,
+            cumulative_lost=jb_stats.packets_lost,
+            extended_highest_seq=extended_highest_seq,
+            jitter=jitter_timestamp_units,
+            last_sr_timestamp=lsr,
+            delay_since_last_sr=dlsr
+        )
+
+        rr.add_report(report)
+
+        logger.debug("Generated RTCP RR",
+                    session_id=self.session_id,
+                    fraction_lost=fraction_lost,
+                    cumulative_lost=jb_stats.packets_lost,
+                    jitter_ms=jb_stats.current_jitter_ms)
+
+        return rr
+
+    async def start_rtcp(self, local_rtp_port: int, remote_ip: str, remote_rtp_port: int):
+        """
+        Start RTCP socket and send loop
+
+        Args:
+            local_rtp_port: Local RTP port (RTCP will use RTP+1)
+            remote_ip: Remote IP address
+            remote_rtp_port: Remote RTP port (RTCP will use RTP+1)
+        """
+        # RTCP uses RTP port + 1 (RFC 3550)
+        self.rtcp_local_port = local_rtp_port + 1
+        remote_rtcp_port = remote_rtp_port + 1
+        self.rtcp_remote_addr = (remote_ip, remote_rtcp_port)
+
+        # Create RTCP socket
+        loop = asyncio.get_event_loop()
+
+        class RTCPProtocol(asyncio.DatagramProtocol):
+            def __init__(self, session):
+                self.session = session
+
+            def datagram_received(self, data, addr):
+                # Handle incoming RTCP packets (SR, RR, etc.)
+                asyncio.create_task(self.session._on_rtcp_received(data, addr))
+
+        try:
+            transport, protocol = await loop.create_datagram_endpoint(
+                lambda: RTCPProtocol(self),
+                local_addr=('0.0.0.0', self.rtcp_local_port)
+            )
+
+            self.rtcp_transport = transport
+            self.rtcp_sock = protocol
+
+            logger.info("RTCP socket created",
+                       session_id=self.session_id,
+                       local_port=self.rtcp_local_port,
+                       remote=f"{remote_ip}:{remote_rtcp_port}")
+
+            # Start RTCP send loop
+            self.rtcp_running = True
+            self.rtcp_task = asyncio.create_task(self._rtcp_send_loop())
+
+        except Exception as e:
+            logger.error("Failed to create RTCP socket",
+                        session_id=self.session_id,
+                        error=str(e))
+
+    async def _rtcp_send_loop(self):
+        """
+        RTCP send loop - sends Receiver Reports every 5 seconds (RFC 3550)
+        """
+        logger.info("RTCP send loop started", session_id=self.session_id)
+
+        try:
+            while self.rtcp_running:
+                # Wait 5 seconds between reports (RFC 3550 recommends 5s)
+                await asyncio.sleep(5.0)
+
+                # Generate and send RR
+                rr = self.generate_receiver_report()
+                if rr and self.rtcp_transport:
+                    rr_bytes = rr.serialize()
+                    self.rtcp_transport.sendto(rr_bytes, self.rtcp_remote_addr)
+
+                    logger.debug("RTCP RR sent",
+                               session_id=self.session_id,
+                               size=len(rr_bytes),
+                               remote=self.rtcp_remote_addr)
+
+        except asyncio.CancelledError:
+            logger.info("RTCP send loop cancelled", session_id=self.session_id)
+        except Exception as e:
+            logger.error("Error in RTCP send loop",
+                        session_id=self.session_id,
+                        error=str(e))
+        finally:
+            logger.info("RTCP send loop stopped", session_id=self.session_id)
+
+    async def _on_rtcp_received(self, data: bytes, addr: tuple):
+        """
+        Handle incoming RTCP packet
+
+        Args:
+            data: RTCP packet bytes
+            addr: Source address (ip, port)
+        """
+        import time
+
+        # Parse RTCP packet
+        result = parse_rtcp_packet(data)
+        if not result:
+            logger.warn("Failed to parse RTCP packet",
+                       session_id=self.session_id,
+                       size=len(data))
+            return
+
+        packet_type, packet = result
+
+        if packet_type == RTCP_SR:
+            # Sender Report received
+            sr: RTCPSenderReport = packet
+
+            # Extract middle 32 bits of NTP timestamp from SR
+            # This is used for RTT calculation
+            ntp_timestamp = (sr.sender_info.ntp_timestamp_msw << 16) | (sr.sender_info.ntp_timestamp_lsw >> 16)
+            ntp_middle_32 = ntp_timestamp & 0xFFFFFFFF
+
+            # Store for later use in RR generation
+            self.last_sr_ntp_timestamp = ntp_middle_32
+            self.last_sr_received_time = time.time()
+
+            # Check if SR contains RR about us (for RTT calculation)
+            for report in sr.reception_reports:
+                if report.ssrc == self.local_ssrc:
+                    # This is a reception report about our transmitted RTP
+                    # Calculate RTT using LSR and DLSR fields
+
+                    # LSR: Last SR timestamp (middle 32 bits of NTP) that we sent
+                    # DLSR: Delay since last SR (in units of 1/65536 seconds)
+                    lsr = report.last_sr_timestamp
+                    dlsr = report.delay_since_last_sr
+
+                    if lsr != 0:  # Valid LSR
+                        # Current time in NTP format (middle 32 bits)
+                        current_time = time.time()
+                        NTP_EPOCH_OFFSET = 2208988800
+                        ntp_now = current_time + NTP_EPOCH_OFFSET
+                        ntp_now_middle_32 = int((ntp_now * 65536)) & 0xFFFFFFFF
+
+                        # RTT = (current_time - LSR) - DLSR
+                        # All in units of 1/65536 seconds
+                        rtt_ntp_units = ntp_now_middle_32 - lsr - dlsr
+
+                        # Convert to seconds
+                        rtt_seconds = rtt_ntp_units / 65536.0
+
+                        # Convert to milliseconds
+                        self.rtt_ms = rtt_seconds * 1000.0
+
+                        logger.info("📊 RTT measured",
+                                   session_id=self.session_id,
+                                   rtt_ms=f"{self.rtt_ms:.2f}",
+                                   fraction_lost=report.fraction_lost,
+                                   cumulative_lost=report.cumulative_lost,
+                                   jitter=report.jitter)
+
+            logger.debug("RTCP SR received",
+                        session_id=self.session_id,
+                        sender_packets=sr.sender_info.sender_packet_count,
+                        sender_bytes=sr.sender_info.sender_octet_count,
+                        reports=len(sr.reception_reports))
+
+        else:
+            logger.debug("RTCP packet received",
+                        session_id=self.session_id,
+                        packet_type=packet_type,
+                        size=len(data))
+
+    async def stop_rtcp(self):
+        """Stop RTCP socket and send loop"""
+        self.rtcp_running = False
+
+        # Stop send loop
+        if self.rtcp_task:
+            self.rtcp_task.cancel()
+            try:
+                await self.rtcp_task
+            except asyncio.CancelledError:
+                pass
+
+        # Close socket
+        if self.rtcp_transport:
+            self.rtcp_transport.close()
+
+        logger.info("RTCP stopped", session_id=self.session_id)
+
     def get_stats(self) -> dict:
         """Get session statistics with performance metrics"""
         # Update metrics from latest stats
         jb_stats = self.jitter_buffer.get_stats()
         conn_stats = self.connection.get_stats()
+        dtmf_stats = self.dtmf_detector.get_stats()
+        rtcp_stats = {
+            'rtcp_running': self.rtcp_running,
+            'rtcp_local_port': self.rtcp_local_port,
+            'rtcp_remote_addr': self.rtcp_remote_addr
+        }
 
         self.metrics_collector.update_from_jitter_buffer(jb_stats)
         self.metrics_collector.update_from_connection(conn_stats)
+        self.metrics_collector.update_from_dtmf(dtmf_stats)
+        self.metrics_collector.update_from_rtcp(rtcp_stats, self.rtt_ms)
 
         # Get comprehensive metrics
         metrics = self.metrics_collector.get_detailed_metrics()
@@ -217,6 +525,14 @@ class RTPSession:
             'bytes_sent': self.bytes_sent,
             'audio_in_queue_size': self.audio_in_queue.qsize(),
             'audio_out_queue_size': self.audio_out_queue.qsize(),
+            'dtmf_queue_size': self.dtmf_queue.qsize(),
+            'dtmf': self.dtmf_detector.get_stats(),
+            'rtcp': {
+                'rtt_ms': round(self.rtt_ms, 2),
+                'rtcp_running': self.rtcp_running,
+                'rtcp_local_port': self.rtcp_local_port,
+                'rtcp_remote_addr': self.rtcp_remote_addr
+            },
             'jitter_buffer': jb_stats,
             'connection': conn_stats,
             'metrics': metrics  # Comprehensive performance metrics with MOS score
@@ -324,6 +640,9 @@ class RTPServer:
         # Start connection
         await connection.start()
 
+        # Start RTCP
+        await session.start_rtcp(local_port, remote_ip, remote_port)
+
         # Store session
         self.sessions[session_id] = session
 
@@ -354,6 +673,9 @@ class RTPServer:
                 await session.playout_task
             except asyncio.CancelledError:
                 pass
+
+        # Stop RTCP
+        await session.stop_rtcp()
 
         # Finalize metrics
         session.metrics_collector.finalize()

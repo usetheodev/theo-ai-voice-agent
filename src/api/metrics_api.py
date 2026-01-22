@@ -162,6 +162,8 @@ class MetricsAPIServer:
 
         mos_scores = []
         jitter_values = []
+        rtt_values = []
+        total_dtmf_events = 0
 
         for session_id, session_stats in stats.get('sessions', {}).items():
             metrics_data = session_stats.get('metrics', {})
@@ -187,6 +189,16 @@ class MetricsAPIServer:
             current_jitter = jitter.get('current_ms', 0)
             if current_jitter > 0:
                 jitter_values.append(current_jitter)
+
+            # DTMF metrics
+            dtmf = metrics_data.get('dtmf', {})
+            total_dtmf_events += dtmf.get('dtmf_events_detected', 0)
+
+            # RTCP metrics
+            rtcp = metrics_data.get('rtcp', {})
+            rtt = rtcp.get('rtt_ms')
+            if rtt is not None and rtt > 0:
+                rtt_values.append(rtt)
 
         # Aggregated packet metrics
         metrics_lines.append('# HELP rtp_packets_received_total Total RTP packets received')
@@ -235,6 +247,21 @@ class MetricsAPIServer:
         metrics_lines.append('# HELP rtp_jitter_ms Average jitter in milliseconds')
         metrics_lines.append('# TYPE rtp_jitter_ms gauge')
         metrics_lines.append(f'rtp_jitter_ms {avg_jitter:.2f}')
+
+        # RTT (average)
+        if rtt_values:
+            avg_rtt = sum(rtt_values) / len(rtt_values)
+        else:
+            avg_rtt = 0.0
+
+        metrics_lines.append('# HELP rtcp_rtt_ms Average Round-Trip Time in milliseconds')
+        metrics_lines.append('# TYPE rtcp_rtt_ms gauge')
+        metrics_lines.append(f'rtcp_rtt_ms {avg_rtt:.2f}')
+
+        # DTMF events (total)
+        metrics_lines.append('# HELP dtmf_events_total Total DTMF events detected')
+        metrics_lines.append('# TYPE dtmf_events_total counter')
+        metrics_lines.append(f'dtmf_events_total {total_dtmf_events}')
 
         # Join all metrics with newlines
         metrics_text = '\n'.join(metrics_lines) + '\n'
