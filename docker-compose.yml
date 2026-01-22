@@ -76,8 +76,8 @@ services:
       # Logging
       - LOG_LEVEL=INFO
 
-      # Metrics
-      - METRICS_PORT=8000
+      # Metrics API
+      - METRICS_PORT=8001
 
       # GPU (comentar se usar CPU-only)
       - CUDA_VISIBLE_DEVICES=0
@@ -91,8 +91,8 @@ services:
       # RTP range (voiceagent - range diferente do Asterisk)
       - "10200-10300:10200-10300/udp"
 
-      # Metrics (Prometheus)
-      - "8000:8000/tcp"
+      # Metrics API Server (Prometheus format)
+      - "8001:8001/tcp"
 
     networks:
       voip-net:
@@ -108,7 +108,7 @@ services:
       - .env
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/metrics"]
+      test: ["CMD", "curl", "-f", "http://localhost:8001/metrics"]
       interval: 30s
       timeout: 10s
       retries: 3

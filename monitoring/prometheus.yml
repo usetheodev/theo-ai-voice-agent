@@ -9,14 +9,11 @@ global:
 # Scrape configurations
 scrape_configs:
   # AI Voice Agent RTP Metrics
-  # NOTE: Using Docker gateway IP (172.20.0.1) to access host services
-  # This is the gateway of the voip-net network (172.20.0.0/16)
-  # Port 8001 is the Metrics API Server (custom Prometheus metrics)
-  # Port 8000 is the Prometheus Python client (default Python metrics)
-  # Change to 'voiceagent:8001' when running voice agent in container
+  # Scraping from voiceagent container on voip-net network
+  # Port 8001 is the Metrics API Server (custom Prometheus metrics in Prometheus format)
   - job_name: 'ai-voice-agent'
     static_configs:
-      - targets: ['172.20.0.1:8001']
+      - targets: ['voiceagent:8001']
         labels:
           service: 'rtp-server'
           component: 'voice-agent'

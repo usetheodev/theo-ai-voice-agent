@@ -14,8 +14,8 @@ authors = [
 ]
 
 dependencies = [
-    # SIP/RTP
-    "pjsua2>=2.13",  # SIP stack (compile from source if not available)
+    # SIP/RTP (pjsua2 must be compiled from source - see installation docs)
+    # "pjsua2>=2.12",  # Not available in PyPI, requires manual compilation
 
     # AI Models
     "transformers>=4.35.0",
@@ -27,8 +27,8 @@ dependencies = [
     # ASR (Whisper)
     "openai-whisper>=20231117",
 
-    # TTS (Kokoro)
-    "kokoro-onnx>=0.1.0",  # Adjust based on actual package
+    # TTS (Kokoro) - Install separately if needed
+    # "kokoro-onnx>=0.1.0",  # Not available in PyPI
 
     # Audio processing
     "numpy>=1.24.0",

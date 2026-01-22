@@ -4,24 +4,37 @@ FROM python:3.11-slim
 RUN apt-get update && apt-get install -y \
     build-essential \
     git \
+    wget \
+    curl \
     libsndfile1 \
     ffmpeg \
-    # PJSIP dependencies
+    # PJSIP build dependencies
     libasound2-dev \
     libssl-dev \
     libopus-dev \
+    libspeex-dev \
+    libsrtp2-dev \
+    libv4l-dev \
+    swig \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
 
-# Copy requirements first (for caching)
-COPY pyproject.toml ./
-COPY README.md ./
+# Copy installation scripts
+COPY scripts/install_pjsip.sh scripts/install_kokoro.sh ./scripts/
 
-# Install Python dependencies
+# Install PJSIP with Python bindings (pjsua2)
+RUN bash ./scripts/install_pjsip.sh
+
+# Copy requirements and install Python dependencies
+COPY requirements-docker.txt ./
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -e .
+    pip install --no-cache-dir -r requirements-docker.txt
+
+# Install Kokoro TTS (optional, from GitHub)
+RUN bash ./scripts/install_kokoro.sh || echo "Warning: Kokoro TTS installation failed, continuing without it"
 
 # Copy application code
 COPY src/ ./src/
@@ -33,12 +46,13 @@ RUN mkdir -p /app/logs /app/models
 # Expose ports
 # SIP signaling
 EXPOSE 5060/udp
+EXPOSE 5060/tcp
 
 # RTP media
 EXPOSE 10000-20000/udp
 
-# Metrics
-EXPOSE 8000
+# Metrics API (Prometheus format)
+EXPOSE 8001/tcp
 
 # Run application
 CMD ["python", "src/main.py", "--config", "config/default.yaml"]
