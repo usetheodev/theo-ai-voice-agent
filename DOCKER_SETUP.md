@@ -2,6 +2,38 @@
 
 Este guia explica como iniciar o AI Voice Agent usando Docker Compose para um setup completo em um único comando.
 
+## ⚡ ASR Provider (NOVO - Jan 2026)
+
+O sistema agora suporta **3 providers ASR**:
+
+### ✅ DEFAULT: Distil-Whisper (Recomendado)
+- **6x mais rápido** que Whisper (latência ~100ms)
+- **WER 8.22% PT-BR** (qualidade excelente)
+- **Instalação automática** via `faster-whisper`
+- **CPU-only** (não requer GPU)
+
+### 🚀 OPCIONAL: Parakeet TDT (Ultra-Fast GPU)
+- **Sub-25ms latency** em GPU
+- **WER 6.32%** (melhor accuracy)
+- **Requer GPU NVIDIA** + instalação complexa
+
+### 🔧 Configuração
+
+O Docker Compose já está configurado para usar **Distil-Whisper por padrão**:
+
+```yaml
+# docker-compose.yml (já configurado)
+environment:
+  - ASR_PROVIDER=distil-whisper  # ✅ DEFAULT
+```
+
+**Não precisa mudar nada!** O sistema irá:
+1. Instalar `faster-whisper` automaticamente
+2. Baixar modelo `distil-large-v3` na primeira execução
+3. Usar CPU (int8 quantization)
+
+---
+
 ## 🚀 Quick Start
 
 ### 1. Pré-requisitos

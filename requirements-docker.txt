@@ -1,35 +1,61 @@
-# Core Dependencies for Docker Build
-# Note: Some dependencies require manual installation (pjsua2, kokoro-onnx)
+# Core
+asyncio==3.4.3
+aiofiles==23.2.1
 
-# AI Models (install what's needed for your use case)
-transformers>=4.35.0
-torch>=2.1.0
-torchaudio>=2.1.0
-accelerate>=0.24.0
-sentencepiece>=0.1.99
+# SIP Stack (PJSIP - migração do LiveKit SIP)
+# Nota: PJSIP requer compilação (ver Dockerfile)
+# Alternativa: usar python-sipsimple
 
-# ASR (Whisper)
-openai-whisper>=20231117
+# RTP/Audio processing
+numpy>=1.21.6,<1.28.0      # Compatible with SciPy 1.11.4 and transformers
+scipy==1.11.4
+soundfile==0.12.1
+av>=12.0.0                 # Audio/Video codecs (para RTP) - PyAV package
 
-# Audio processing
-numpy>=1.24.0
-scipy>=1.11.0
-librosa>=0.10.0
-soundfile>=0.12.0
+# VAD (Voice Activity Detection)
+webrtcvad==2.0.10
 
-# Async
-aiofiles>=23.2.0
+# Asterisk ARI
+asyncari==0.20.6
 
-# Configuration
-pyyaml>=6.0
-python-dotenv>=1.0.0
+# ASR (Automatic Speech Recognition)
+pywhispercpp==1.2.0        # Original Whisper (baseline)
+faster-whisper>=1.0.0      # Distil-Whisper support (6x faster, CTranslate2 backend)
 
-# Monitoring
-prometheus-client>=0.19.0
+# Parakeet TDT (NVIDIA NeMo) - optional, complex installation
+# Recommended: Install in Docker with NVIDIA PyTorch base
+# nemo_toolkit[asr]>=2.0.0  # Uncomment for Parakeet support
+# See docs/PARAKEET_INSTALLATION.md for detailed setup
+
+# Streaming ASR (optional - for advanced streaming with UFAL wrapper)
+# whisper-streaming - requires manual installation:
+# git clone https://github.com/ufal/whisper_streaming && cd whisper_streaming && pip install -e .
+
+# LLM (Large Language Model)
+llama-cpp-python==0.2.90
+transformers>=4.40.0
+accelerate>=0.27.0  # For model loading optimization
+
+# TTS (Text-to-Speech)
+kokoro>=0.9.4
+torch>=2.5.0
+# pyaudio>=0.2.11  # Not used - removed (requires portaudio system library)
 
 # Logging
-structlog>=23.1.0
+structlog==23.3.0
 
-# Utils
-click>=8.1.7
-requests>=2.31.0
+# Config
+pyyaml==6.0.1
+python-dotenv==1.0.0
+click==8.1.7  # CLI framework
+
+# Monitoring (optional)
+prometheus-client==0.21.1  # Updated: CVE-2024-3217 fix
+
+# Testing
+pytest==8.4.2              # Latest pytest 8.x (pytest-asyncio 0.25.2 requires pytest<9)
+pytest-asyncio==0.25.2     # Updated: async test support
+pytest-cov==6.0.0          # NEW: coverage reporting (80%+ target)
+
+
+aiohttp==3.13.3

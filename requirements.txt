@@ -7,7 +7,7 @@ aiofiles==23.2.1
 # Alternativa: usar python-sipsimple
 
 # RTP/Audio processing
-numpy==1.26.3
+numpy>=1.21.6,<1.28.0      # Compatible with SciPy 1.11.4 and transformers
 scipy==1.11.4
 soundfile==0.12.1
 av>=12.0.0                 # Audio/Video codecs (para RTP) - PyAV package
@@ -21,6 +21,11 @@ asyncari==0.20.6
 # ASR (Automatic Speech Recognition)
 pywhispercpp==1.2.0        # Original Whisper (baseline)
 faster-whisper>=1.0.0      # Distil-Whisper support (6x faster, CTranslate2 backend)
+
+# Parakeet TDT (NVIDIA NeMo) - optional, complex installation
+# Recommended: Install in Docker with NVIDIA PyTorch base
+# nemo_toolkit[asr]>=2.0.0  # Uncomment for Parakeet support
+# See docs/PARAKEET_INSTALLATION.md for detailed setup
 
 # Streaming ASR (optional - for advanced streaming with UFAL wrapper)
 # whisper-streaming - requires manual installation:

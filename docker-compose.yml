@@ -68,7 +68,16 @@ services:
       - RTP_PORT_START=10200
       - RTP_PORT_END=10300
 
-      # AI Models
+      # ASR Provider (whisper, distil-whisper, parakeet)
+      - ASR_PROVIDER=distil-whisper
+
+      # Distil-Whisper Config (6x faster than Whisper)
+      - DISTIL_WHISPER_MODEL=distil-large-v3
+      - DISTIL_WHISPER_LANGUAGE=pt
+      - DISTIL_WHISPER_DEVICE=cpu
+      - DISTIL_WHISPER_COMPUTE_TYPE=int8
+
+      # AI Models (legacy)
       - ASR_MODEL=openai/whisper-large-v3
       - LLM_MODEL=Qwen/Qwen2.5-7B
       - TTS_MODEL=kokoro-tts

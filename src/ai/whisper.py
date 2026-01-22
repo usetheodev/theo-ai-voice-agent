@@ -9,7 +9,15 @@ import logging
 import numpy as np
 import re
 from typing import Optional
-from pywhispercpp.model import Model
+
+# Try to import pywhispercpp
+try:
+    from pywhispercpp.model import Model
+    PYWHISPERCPP_AVAILABLE = True
+except ImportError:
+    PYWHISPERCPP_AVAILABLE = False
+    Model = None
+    logging.warning("pywhispercpp not available. Install with: pip install pywhispercpp")
 
 
 # Common Whisper hallucination patterns to filter out
@@ -80,6 +88,12 @@ class WhisperASR:
             language: Language code (pt, en, es, etc.)
             n_threads: Number of CPU threads to use
         """
+        if not PYWHISPERCPP_AVAILABLE:
+            raise RuntimeError(
+                "pywhispercpp not installed. "
+                "Install with: pip install pywhispercpp"
+            )
+
         self.model_path = model_path
         self.language = language
         self.n_threads = n_threads

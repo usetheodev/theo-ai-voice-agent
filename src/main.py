@@ -17,7 +17,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.common.config import AppConfig
 from src.common.logging import get_logger, configure_logging
 from src.common.metrics import start_metrics_server
-from src.ai import WhisperASR, QwenLLM, ConversationManager
+from src.ai import QwenLLM, ConversationManager
+from src.ai import (
+    WhisperASR,
+    DistilWhisperASR,
+    is_distilwhisper_available,
+    ParakeetASR,
+    is_parakeet_available,
+)
 from src.ai.kokoro import KokoroTTS
 from src.api.metrics_api import MetricsAPIServer
 
@@ -100,23 +107,57 @@ class Application:
             buffer_target_rate=16000
         )
 
-        # Initialize Whisper ASR
+        # Initialize ASR (based on ASR_PROVIDER env var)
+        import os
+        asr_provider = os.getenv('ASR_PROVIDER', 'distil-whisper').lower()
+
         try:
-            whisper_asr = WhisperASR(
-                model_path=self.config.ai.asr_model_path,
-                language=self.config.ai.asr_language,
-                n_threads=self.config.ai.asr_threads
-            )
-            logger.info('Whisper ASR initialized',
-                       model=self.config.ai.asr_model,
-                       language=self.config.ai.asr_language,
-                       threads=self.config.ai.asr_threads)
+            if asr_provider == 'distil-whisper':
+                if not is_distilwhisper_available():
+                    raise RuntimeError("Distil-Whisper selected but faster-whisper not installed. Install with: pip install faster-whisper")
+
+                whisper_asr = DistilWhisperASR(
+                    model=os.getenv('DISTIL_WHISPER_MODEL', 'distil-large-v3'),
+                    language=os.getenv('DISTIL_WHISPER_LANGUAGE', 'pt'),
+                    device=os.getenv('DISTIL_WHISPER_DEVICE', 'cpu'),
+                    compute_type=os.getenv('DISTIL_WHISPER_COMPUTE_TYPE', 'int8'),
+                )
+                logger.info('✅ Distil-Whisper ASR initialized (6x faster than Whisper)',
+                           model=os.getenv('DISTIL_WHISPER_MODEL'),
+                           language=os.getenv('DISTIL_WHISPER_LANGUAGE'))
+
+            elif asr_provider == 'parakeet':
+                if not is_parakeet_available():
+                    raise RuntimeError("Parakeet selected but nemo_toolkit not installed. Install with: pip install nemo_toolkit[asr]")
+
+                whisper_asr = ParakeetASR(
+                    model=os.getenv('PARAKEET_MODEL', 'nvidia/parakeet-tdt-0.6b-v3'),
+                    device=os.getenv('PARAKEET_DEVICE', 'auto'),
+                )
+                logger.info('✅ Parakeet TDT ASR initialized (sub-25ms GPU, 6.32% WER)',
+                           model=os.getenv('PARAKEET_MODEL'))
+
+            elif asr_provider == 'whisper':
+                whisper_asr = WhisperASR(
+                    model_path=self.config.ai.asr_model_path,
+                    language=self.config.ai.asr_language,
+                    n_threads=self.config.ai.asr_threads
+                )
+                logger.info('Whisper ASR initialized (legacy)',
+                           model=self.config.ai.asr_model,
+                           language=self.config.ai.asr_language)
+
+            else:
+                logger.error(f'Unknown ASR_PROVIDER: {asr_provider}')
+                logger.error('Valid options: whisper, distil-whisper, parakeet')
+                sys.exit(1)
+
         except FileNotFoundError:
             logger.error('Whisper model file not found', path=self.config.ai.asr_model_path)
             logger.error('Download: wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin -O models/whisper/ggml-base.bin')
             sys.exit(1)
         except Exception as e:
-            logger.error('Failed to initialize Whisper ASR', error=str(e), exc_info=True)
+            logger.error('Failed to initialize ASR', provider=asr_provider, error=str(e), exc_info=True)
             sys.exit(1)
 
         # Initialize Qwen LLM
