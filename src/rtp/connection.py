@@ -22,6 +22,7 @@ class RTPConnectionConfig:
     media_timeout: float = 15.0  # seconds
     media_timeout_initial: float = 30.0  # seconds
     mtu_size: int = 1500
+    ip_validation_enabled: bool = True  # Enable IP validation for security
 
 
 class RTPConnection:
@@ -43,6 +44,15 @@ class RTPConnection:
         self.running = False
         self.packet_count = 0
         self.first_packet_received = False
+
+        # IP Validation (Security)
+        self.expected_remote_ip: Optional[str] = None
+        self.ip_validation_enabled: bool = self.config.ip_validation_enabled
+
+        # Statistics
+        self.packets_accepted = 0
+        self.packets_rejected_invalid_ip = 0
+        self.hijacking_attempts = 0
 
         # Callbacks
         self.on_rtp_callback: Optional[Callable[[RTPHeader, bytes], None]] = None
@@ -133,6 +143,51 @@ class RTPConnection:
         self.remote_addr = addr
         logger.debug("Remote RTP address set", addr=f"{addr[0]}:{addr[1]}")
 
+    def set_expected_remote_ip(self, ip: str):
+        """
+        Set expected remote IP from SIP SDP (security)
+
+        Args:
+            ip: Expected IP address from SIP negotiation
+        """
+        self.expected_remote_ip = ip
+        logger.info("Expected remote IP set for validation",
+                   ip=ip,
+                   validation_enabled=self.ip_validation_enabled)
+
+    def _validate_remote_ip(self, addr: Tuple[str, int]) -> bool:
+        """
+        Validate if packet is from expected source (anti-hijacking)
+
+        Args:
+            addr: Source address of incoming packet
+
+        Returns:
+            True if packet is from valid source, False otherwise
+        """
+        # Validation disabled - accept all
+        if not self.ip_validation_enabled:
+            return True
+
+        # No expected IP set - log warning and accept first packet
+        if not self.expected_remote_ip:
+            logger.warn("No expected IP set - accepting first packet",
+                       remote_ip=addr[0],
+                       help="Set expected IP via set_expected_remote_ip()")
+            return True
+
+        # Validate IP matches expected
+        if addr[0] != self.expected_remote_ip:
+            logger.error("🚨 RTP HIJACKING ATTEMPT DETECTED",
+                        expected_ip=self.expected_remote_ip,
+                        actual_ip=addr[0],
+                        action="PACKET_DROPPED",
+                        severity="CRITICAL")
+            self.hijacking_attempts += 1
+            return False
+
+        return True
+
     def on_rtp(self, callback: Callable[[RTPHeader, bytes], None]):
         """Register callback for incoming RTP packets"""
         self.on_rtp_callback = callback
@@ -170,6 +225,11 @@ class RTPConnection:
                         # No data available yet, wait for next signal
                         continue
 
+                    # Validate IP source (security check)
+                    if not self._validate_remote_ip(addr):
+                        self.packets_rejected_invalid_ip += 1
+                        continue  # Drop packet from invalid source
+
                     # Update remote address from first packet
                     if not self.first_packet_received:
                         self.set_remote_addr(addr)
@@ -189,6 +249,7 @@ class RTPConnection:
 
                     # Update stats
                     self.packet_count += 1
+                    self.packets_accepted += 1
                     self.last_packet_time = time.time()
 
                     # Call handler
@@ -268,8 +329,13 @@ class RTPConnection:
         return {
             'local_addr': self.local_addr,
             'remote_addr': self.remote_addr,
+            'expected_remote_ip': self.expected_remote_ip,
             'packet_count': self.packet_count,
+            'packets_accepted': self.packets_accepted,
+            'packets_rejected_invalid_ip': self.packets_rejected_invalid_ip,
+            'hijacking_attempts': self.hijacking_attempts,
             'first_packet_received': self.first_packet_received,
             'last_packet_time': self.last_packet_time,
+            'ip_validation_enabled': self.ip_validation_enabled,
             'running': self.running
         }

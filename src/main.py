@@ -72,7 +72,8 @@ class Application:
             port_start=self.config.rtp.port_start,
             port_end=self.config.rtp.port_end,
             listen_addr="0.0.0.0",
-            media_timeout=self.config.rtp.rtp_timeout_ms / 1000.0
+            media_timeout=self.config.rtp.rtp_timeout_ms / 1000.0,
+            ip_validation_enabled=getattr(self.config.rtp, 'ip_validation_enabled', True)
         )
         rtp_server = RTPServer(config=rtp_config, event_bus=event_bus)
         await rtp_server.start()

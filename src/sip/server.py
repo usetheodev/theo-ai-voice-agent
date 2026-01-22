@@ -434,6 +434,9 @@ class SIPServer:
                     remote_ip=remote_ip,
                     remote_port=remote_port
                 )
+                # Set expected remote IP for security validation
+                rtp_session.connection.set_expected_remote_ip(remote_ip)
+
                 # Update local port with actual RTP port
                 session.local_port = rtp_session.connection.local_addr[1]
                 logger.info("RTP session created", session_id=session_id, port=session.local_port)

@@ -24,6 +24,7 @@ class RTPServerConfig:
     listen_addr: str = "0.0.0.0"
     media_timeout: float = 15.0
     media_timeout_initial: float = 30.0
+    ip_validation_enabled: bool = True  # Enable IP validation for security
 
 
 class RTPSession:
@@ -167,7 +168,8 @@ class RTPServer:
         # Create RTP connection
         conn_config = RTPConnectionConfig(
             media_timeout=self.config.media_timeout,
-            media_timeout_initial=self.config.media_timeout_initial
+            media_timeout_initial=self.config.media_timeout_initial,
+            ip_validation_enabled=self.config.ip_validation_enabled
         )
         connection = RTPConnection(config=conn_config)
 

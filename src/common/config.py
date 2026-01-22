@@ -50,6 +50,7 @@ class RTPConfig:
     dtmf_detection: bool = True
     dtmf_min_duration_ms: int = 40
     rtp_timeout_ms: int = 5000
+    ip_validation_enabled: bool = True  # Enable IP validation for security
 
 
 @dataclass

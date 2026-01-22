@@ -64,6 +64,9 @@ rtp:
     - PCMA    # G.711 A-law (standard Europe)
     # - opus  # TODO: Implement Opus codec
 
+  # Security
+  ip_validation_enabled: true  # Validate RTP packets are from expected IP (anti-hijacking)
+
   # Jitter buffer
   jitter_buffer_ms: 60          # Target delay
   jitter_buffer_max_ms: 200     # Max delay before dropping packets
