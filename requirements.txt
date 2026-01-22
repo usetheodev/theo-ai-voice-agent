@@ -46,3 +46,6 @@ prometheus-client==0.21.1  # Updated: CVE-2024-3217 fix
 pytest==8.4.2              # Latest pytest 8.x (pytest-asyncio 0.25.2 requires pytest<9)
 pytest-asyncio==0.25.2     # Updated: async test support
 pytest-cov==6.0.0          # NEW: coverage reporting (80%+ target)
+
+
+aiohttp==3.13.3

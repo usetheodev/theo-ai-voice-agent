@@ -19,6 +19,7 @@ from src.common.logging import get_logger, configure_logging
 from src.common.metrics import start_metrics_server
 from src.ai import WhisperASR, QwenLLM, ConversationManager
 from src.ai.kokoro import KokoroTTS
+from src.api.metrics_api import MetricsAPIServer
 
 # Logger will be configured after loading config
 logger = None
@@ -33,6 +34,7 @@ class Application:
         self.sip_server = None
         self.rtp_server = None
         self.event_bus = None
+        self.metrics_api_server = None
         self.shutdown_event = asyncio.Event()
 
     async def start(self):
@@ -81,6 +83,11 @@ class Application:
         )
         rtp_server = RTPServer(config=rtp_config, event_bus=event_bus)
         await rtp_server.start()
+
+        # Start Metrics API Server
+        metrics_api_server = MetricsAPIServer(rtp_server=rtp_server, host='0.0.0.0', port=8001)
+        await metrics_api_server.start()
+        self.metrics_api_server = metrics_api_server
 
         # Initialize Audio Pipeline Config
         audio_config = AudioPipelineConfig(
@@ -459,6 +466,9 @@ class Application:
 
         if self.rtp_server:
             await self.rtp_server.stop()
+
+        if self.metrics_api_server:
+            await self.metrics_api_server.stop()
 
         if self.orchestrator:
             await self.orchestrator.stop()

@@ -13,6 +13,7 @@ from ..orchestrator.events import EventBus
 from .connection import RTPConnection, RTPConnectionConfig
 from .packet import RTPHeader
 from .jitter_buffer import AdaptiveJitterBuffer, JitterBufferConfig
+from .metrics import RTPMetricsCollector
 
 logger = get_logger('rtp.server')
 
@@ -57,6 +58,9 @@ class RTPSession:
         self.packets_sent = 0
         self.bytes_received = 0
         self.bytes_sent = 0
+
+        # Metrics Collector
+        self.metrics_collector = RTPMetricsCollector(session_id=session_id)
 
         # Playout task
         self.playout_task: Optional[asyncio.Task] = None
@@ -122,9 +126,18 @@ class RTPSession:
                     logger.warn("Audio input queue full - dropping packet",
                               session_id=self.session_id)
 
-                # Log periodically
+                # Update metrics and log periodically
                 if packets_output % 50 == 0:
+                    # Collect metrics from jitter buffer and connection
                     jb_stats = self.jitter_buffer.get_stats()
+                    conn_stats = self.connection.get_stats()
+
+                    self.metrics_collector.update_from_jitter_buffer(jb_stats)
+                    self.metrics_collector.update_from_connection(conn_stats)
+
+                    # Get metrics summary with MOS score
+                    metrics_summary = self.metrics_collector.get_summary()
+
                     plc_stats = jb_stats.get('plc', {})
                     logger.info("Playout progress",
                                session_id=self.session_id,
@@ -132,7 +145,9 @@ class RTPSession:
                                jitter_ms=jb_stats['current_jitter_ms'],
                                buffer_depth_ms=jb_stats['current_depth_ms'],
                                packets_lost=jb_stats['packets_lost'],
-                               plc_concealed=plc_stats.get('packets_concealed', 0))
+                               plc_concealed=plc_stats.get('packets_concealed', 0),
+                               mos_score=metrics_summary['audio_quality']['mos_score'],
+                               quality=metrics_summary['audio_quality']['quality_rating'])
 
                 # Sleep for packet interval (20ms timing)
                 await asyncio.sleep(packet_interval)
@@ -183,7 +198,17 @@ class RTPSession:
             logger.error("Failed to send RTP", session_id=self.session_id, error=str(e))
 
     def get_stats(self) -> dict:
-        """Get session statistics"""
+        """Get session statistics with performance metrics"""
+        # Update metrics from latest stats
+        jb_stats = self.jitter_buffer.get_stats()
+        conn_stats = self.connection.get_stats()
+
+        self.metrics_collector.update_from_jitter_buffer(jb_stats)
+        self.metrics_collector.update_from_connection(conn_stats)
+
+        # Get comprehensive metrics
+        metrics = self.metrics_collector.get_detailed_metrics()
+
         return {
             'session_id': self.session_id,
             'packets_received': self.packets_received,
@@ -192,8 +217,9 @@ class RTPSession:
             'bytes_sent': self.bytes_sent,
             'audio_in_queue_size': self.audio_in_queue.qsize(),
             'audio_out_queue_size': self.audio_out_queue.qsize(),
-            'jitter_buffer': self.jitter_buffer.get_stats(),
-            'connection': self.connection.get_stats()
+            'jitter_buffer': jb_stats,
+            'connection': conn_stats,
+            'metrics': metrics  # Comprehensive performance metrics with MOS score
         }
 
 
@@ -328,6 +354,9 @@ class RTPServer:
                 await session.playout_task
             except asyncio.CancelledError:
                 pass
+
+        # Finalize metrics
+        session.metrics_collector.finalize()
 
         # Stop connection
         await session.connection.stop()
