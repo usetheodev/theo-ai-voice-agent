@@ -9,7 +9,7 @@ import asyncio
 import time
 from typing import Optional, Tuple, Dict
 from dataclasses import dataclass
-from collections import OrderedDict
+from collections import OrderedDict, deque
 
 from ..common.logging import get_logger
 from .packet import RTPHeader
@@ -34,12 +34,14 @@ class JitterBufferStats:
     packets_received: int = 0
     packets_dropped_duplicate: int = 0
     packets_dropped_late: int = 0
+    packets_dropped_replay: int = 0      # Replay attack protection
     packets_output: int = 0
     packets_lost: int = 0
     current_depth_ms: int = 0
     current_jitter_ms: float = 0.0
     buffer_underruns: int = 0
     buffer_overruns: int = 0
+    sequence_jumps_detected: int = 0     # Abnormal sequence jumps
 
 
 class AdaptiveJitterBuffer:
@@ -79,6 +81,10 @@ class AdaptiveJitterBuffer:
         # Packet Loss Concealment
         self.plc = PacketLossConcealment(codec="PCMU")
 
+        # Replay Protection (RFC 3711 recommends window of 64)
+        self.replay_window_size = 64
+        self.seen_sequences: deque = deque(maxlen=self.replay_window_size)
+
         # Asyncio
         self.ready_event = asyncio.Event()
 
@@ -91,12 +97,17 @@ class AdaptiveJitterBuffer:
             payload: RTP payload
 
         Returns:
-            True if packet accepted, False if rejected (duplicate/late)
+            True if packet accepted, False if rejected (duplicate/late/replay)
         """
         seq = header.sequence_number
         arrival_time = time.time()
 
         self.stats.packets_received += 1
+
+        # Check for replay attack
+        if self._is_replay(seq):
+            self.stats.packets_dropped_replay += 1
+            return False
 
         # Check for duplicate
         if seq in self.buffer:
@@ -118,6 +129,18 @@ class AdaptiveJitterBuffer:
         # Update highest sequence
         if self.highest_seq_received is None or self._seq_diff(seq, self.highest_seq_received) > 0:
             self.highest_seq_received = seq
+
+        # Detect abnormal sequence jumps
+        if self.last_seq_received is not None:
+            seq_jump = abs(self._seq_diff(seq, self.last_seq_received))
+            # Threshold: jumps > 100 packets are suspicious
+            if seq_jump > 100:
+                self.stats.sequence_jumps_detected += 1
+                logger.warn("⚠️  ABNORMAL SEQUENCE JUMP DETECTED",
+                           seq=seq,
+                           last_seq=self.last_seq_received,
+                           jump_size=seq_jump,
+                           action="LOGGED")
 
         # Update jitter calculation (RFC 3550)
         self._update_jitter(header.timestamp, arrival_time)
@@ -281,6 +304,30 @@ class AdaptiveJitterBuffer:
             diff += 65536
         return diff
 
+    def _is_replay(self, seq: int) -> bool:
+        """
+        Check if sequence number is replayed (replay attack detection)
+
+        Uses a sliding window of recent sequence numbers to detect
+        replay attacks per RFC 3711 recommendations.
+
+        Args:
+            seq: Sequence number to check
+
+        Returns:
+            True if replay detected, False if new packet
+        """
+        # Check if already seen in window
+        if seq in self.seen_sequences:
+            logger.warn("🚨 REPLAY ATTACK DETECTED",
+                       seq=seq,
+                       action="PACKET_DROPPED")
+            return True
+
+        # Add to window
+        self.seen_sequences.append(seq)
+        return False
+
     def get_stats(self) -> dict:
         """Get buffer statistics"""
         plc_stats = self.plc.get_stats()
@@ -291,6 +338,8 @@ class AdaptiveJitterBuffer:
             'packets_lost': self.stats.packets_lost,
             'packets_dropped_duplicate': self.stats.packets_dropped_duplicate,
             'packets_dropped_late': self.stats.packets_dropped_late,
+            'packets_dropped_replay': self.stats.packets_dropped_replay,
+            'sequence_jumps_detected': self.stats.sequence_jumps_detected,
             'buffer_size': len(self.buffer),
             'current_depth_ms': self.stats.current_depth_ms,
             'current_jitter_ms': round(self.stats.current_jitter_ms, 2),
@@ -311,5 +360,6 @@ class AdaptiveJitterBuffer:
         self.playout_timestamp = None
         self.stats = JitterBufferStats()
         self.stats.current_depth_ms = self.config.initial_depth_ms
+        self.seen_sequences.clear()
         self.plc.reset()
         logger.info("Jitter buffer reset")
