@@ -19,7 +19,12 @@ webrtcvad==2.0.10
 asyncari==0.20.6
 
 # ASR (Automatic Speech Recognition)
-pywhispercpp==1.2.0
+pywhispercpp==1.2.0        # Original Whisper (baseline)
+faster-whisper>=1.0.0      # Distil-Whisper support (6x faster, CTranslate2 backend)
+
+# Streaming ASR (optional - for advanced streaming with UFAL wrapper)
+# whisper-streaming - requires manual installation:
+# git clone https://github.com/ufal/whisper_streaming && cd whisper_streaming && pip install -e .
 
 # LLM (Large Language Model)
 llama-cpp-python==0.2.90
