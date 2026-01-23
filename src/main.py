@@ -26,7 +26,9 @@ from src.ai import (
     ParakeetASR,
     is_parakeet_available,
 )
+from src.ai.asr_sherpa import SherpaONNXASR, SHERPA_ONNX_AVAILABLE
 from src.ai.kokoro import KokoroTTS
+from src.ai.tts_piper import PiperTTS, is_piper_available
 from src.api.metrics_api import MetricsAPIServer
 
 # Logger will be configured after loading config
@@ -153,6 +155,19 @@ class Application:
                 logger.info('✅ Parakeet TDT ASR initialized (sub-25ms GPU, 6.32% WER)',
                            model=os.getenv('PARAKEET_MODEL'))
 
+            elif asr_provider == 'sherpa-onnx':
+                if not SHERPA_ONNX_AVAILABLE:
+                    raise RuntimeError("Sherpa-ONNX selected but sherpa-onnx not installed. Install with: pip install sherpa-onnx")
+
+                whisper_asr = SherpaONNXASR(
+                    model_dir=os.getenv('SHERPA_ONNX_MODEL_DIR', 'models/sherpa-onnx/sherpa-onnx-whisper-large-v3'),
+                    language=os.getenv('SHERPA_ONNX_LANGUAGE', 'pt'),
+                    num_threads=int(os.getenv('SHERPA_ONNX_NUM_THREADS', '4')),
+                )
+                logger.info('✅ Sherpa-ONNX ASR initialized (10x faster, RTF < 0.3)',
+                           model_dir=os.getenv('SHERPA_ONNX_MODEL_DIR', 'models/sherpa-onnx/sherpa-onnx-whisper-large-v3'),
+                           language=os.getenv('SHERPA_ONNX_LANGUAGE'))
+
             elif asr_provider == 'whisper':
                 whisper_asr = WhisperASR(
                     model_path=self.config.ai.asr_model_path,
@@ -165,7 +180,7 @@ class Application:
 
             else:
                 logger.error(f'Unknown ASR_PROVIDER: {asr_provider}')
-                logger.error('Valid options: funasr, whisper, distil-whisper, parakeet')
+                logger.error('Valid options: sherpa-onnx, whisper, distil-whisper, parakeet')
                 sys.exit(1)
 
         except FileNotFoundError:
@@ -204,20 +219,53 @@ class Application:
         conversation_manager = ConversationManager(max_history_turns=10)
         logger.info('Conversation Manager initialized')
 
-        # Initialize Kokoro TTS
-        try:
-            logger.info('Initializing Kokoro TTS...')
-            kokoro_tts = KokoroTTS(
-                lang_code='p',  # Brazilian Portuguese
-                voice=self.config.ai.tts_voice,
-                sample_rate=24000  # Kokoro native rate
-            )
-            logger.info('Kokoro TTS initialized',
-                       voice=self.config.ai.tts_voice,
-                       sample_rate=24000)
-        except Exception as e:
-            logger.error('Failed to initialize Kokoro TTS', error=str(e), exc_info=True)
-            sys.exit(1)
+        # Initialize TTS (Piper or Kokoro)
+        tts_provider = os.getenv('TTS_PROVIDER', 'kokoro').lower()
+
+        if tts_provider == 'piper':
+            if not is_piper_available():
+                logger.error('Piper TTS selected but not installed. Install: pip install piper-tts')
+                sys.exit(1)
+
+            try:
+                logger.info('Initializing Piper TTS (5x faster, CPU-only)...')
+                piper_model = os.getenv('PIPER_MODEL', 'pt_BR-faber-medium')
+                piper_quality = os.getenv('PIPER_QUALITY', 'medium')
+                piper_length_scale = float(os.getenv('PIPER_LENGTH_SCALE', '1.0'))
+
+                tts_engine = PiperTTS(
+                    model=piper_model,
+                    sample_rate=22050,  # Piper native rate
+                    quality=piper_quality,
+                )
+                tts_sample_rate = 22050
+                logger.info('✅ Piper TTS initialized',
+                           model=piper_model,
+                           quality=piper_quality,
+                           sample_rate=22050)
+            except Exception as e:
+                logger.error('Failed to initialize Piper TTS', error=str(e), exc_info=True)
+                sys.exit(1)
+
+        else:  # kokoro (default)
+            try:
+                logger.info('Initializing Kokoro TTS...')
+                tts_engine = KokoroTTS(
+                    lang_code='p',  # Brazilian Portuguese
+                    voice=self.config.ai.tts_voice,
+                    sample_rate=24000  # Kokoro native rate
+                )
+                tts_sample_rate = 24000
+                logger.info('✅ Kokoro TTS initialized',
+                           voice=self.config.ai.tts_voice,
+                           sample_rate=24000)
+            except Exception as e:
+                logger.error('Failed to initialize Kokoro TTS', error=str(e), exc_info=True)
+                sys.exit(1)
+
+        # Store TTS engine and config
+        kokoro_tts = tts_engine  # Keep variable name for compatibility
+        self.tts_sample_rate = tts_sample_rate
 
         # Store audio pipelines (one per call)
         self.audio_pipelines = {}
@@ -347,8 +395,8 @@ class Application:
                 # Reset cancellation flag for this session
                 tts_cancellation_flags[session_id] = False
 
-                # Step 1: Resample 24kHz → 8kHz (telephony rate)
-                logger.debug('Resampling TTS audio: 24kHz → 8kHz', session_id=session_id)
+                # Step 1: Resample TTS_RATE → 8kHz (telephony rate)
+                logger.debug(f'Resampling TTS audio: {self.tts_sample_rate}Hz → 8kHz', session_id=session_id)
 
                 # Convert float32 [-1, 1] → int16
                 tts_int16 = (tts_audio * 32767).astype(np.int16)
@@ -358,7 +406,7 @@ class Application:
                     tts_int16.tobytes(),
                     2,  # 2 bytes per sample (16-bit)
                     1,  # mono
-                    24000,  # input rate
+                    self.tts_sample_rate,  # input rate (22050 for Piper, 24000 for Kokoro)
                     8000,   # output rate
                     None    # no state
                 )

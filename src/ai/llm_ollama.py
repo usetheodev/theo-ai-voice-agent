@@ -53,8 +53,8 @@ class OllamaLLM:
         self.ollama_config = OllamaConfig(
             host=os.getenv('OLLAMA_HOST', getattr(config.ai, 'ollama_host', 'http://ollama:11434')),
             model=os.getenv('OLLAMA_MODEL', getattr(config.ai, 'ollama_model', 'llama3.2:1b')),
-            max_tokens=config.ai.llm_max_tokens,
-            temperature=config.ai.llm_temperature,
+            max_tokens=int(os.getenv('LLM_MAX_TOKENS', str(config.ai.llm_max_tokens))),
+            temperature=float(os.getenv('LLM_TEMPERATURE', str(config.ai.llm_temperature))),
         )
 
         self.system_prompt = config.ai.system_prompt

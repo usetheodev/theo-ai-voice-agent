@@ -92,14 +92,13 @@ services:
       - RTP_PORT_START=10200
       - RTP_PORT_END=10300
 
-      # ASR Provider (whisper, distil-whisper, parakeet)
-      - ASR_PROVIDER=distil-whisper
+      # ASR Provider (sherpa-onnx, whisper, distil-whisper, parakeet)
+      - ASR_PROVIDER=sherpa-onnx
 
-      # Distil-Whisper Config (6x faster than Whisper)
-      - DISTIL_WHISPER_MODEL=distil-large-v3
-      - DISTIL_WHISPER_LANGUAGE=pt
-      - DISTIL_WHISPER_DEVICE=cpu
-      - DISTIL_WHISPER_COMPUTE_TYPE=int8
+      # Sherpa-ONNX Config (Whisper Tiny: RTF < 0.25, 25x faster than Large-v3)
+      - SHERPA_ONNX_MODEL_DIR=models/sherpa-onnx/sherpa-onnx-whisper-tiny
+      - SHERPA_ONNX_LANGUAGE=pt
+      - SHERPA_ONNX_NUM_THREADS=8
 
       # Full-Duplex Hybrid VAD Config
       - VAD_ENABLED=true                    # Enable Hybrid VAD (Energy + Silero + WebRTC)
@@ -116,16 +115,24 @@ services:
       - BARGE_IN_ENABLED=true               # Enable barge-in (user interruption)
       - BARGE_IN_MIN_CONFIDENCE=0.7         # Minimum VAD confidence to trigger (0.0-1.0)
 
-      # LLM Config (Ollama)
+      # LLM Config (Ollama) - Optimized for low latency
       - LLM_PROVIDER=ollama
       - OLLAMA_HOST=http://192.168.2.113:11434
       - OLLAMA_MODEL=llama3.2:1b
-      - LLM_MAX_TOKENS=128
-      - LLM_TEMPERATURE=0.7
+      - LLM_MAX_TOKENS=48        # Reduced from 128 → 48 (shorter, faster responses)
+      - LLM_TEMPERATURE=0.3      # Reduced from 0.7 → 0.3 (less creative, faster generation)
+
+      # TTS Provider (piper, kokoro)
+      - TTS_PROVIDER=piper
+
+      # Piper TTS Config (RTF ~0.15, 5x faster than Kokoro)
+      - PIPER_MODEL=pt_BR-faber-medium    # Options: pt_BR-faber-medium, pt_BR-edresson-medium
+      - PIPER_QUALITY=medium              # Options: low, medium, high
+      - PIPER_LENGTH_SCALE=1.0            # Speech speed (1.0=normal, <1.0=faster, >1.0=slower)
 
       # AI Models (legacy)
       - ASR_MODEL=openai/whisper-large-v3
-      - TTS_MODEL=kokoro-tts
+      - TTS_MODEL=kokoro-tts              # Fallback for kokoro provider
 
       # Logging
       - LOG_LEVEL=INFO

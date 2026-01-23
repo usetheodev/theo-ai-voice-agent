@@ -74,25 +74,33 @@ class SherpaONNXASR:
         self.language = language
         self.num_threads = num_threads
 
-        # Validate model files exist
-        encoder_path = self.model_dir / "large-v3-encoder.int8.onnx"
-        decoder_path = self.model_dir / "large-v3-decoder.int8.onnx"
-        tokens_path = self.model_dir / "large-v3-tokens.txt"
+        # Auto-detect model files (supports tiny, base, small, medium, large-v3)
+        encoder_int8 = list(self.model_dir.glob("*-encoder.int8.onnx"))
+        decoder_int8 = list(self.model_dir.glob("*-decoder.int8.onnx"))
+        tokens_file = list(self.model_dir.glob("*-tokens.txt"))
 
-        if not encoder_path.exists():
+        if not encoder_int8:
             raise FileNotFoundError(
-                f"Encoder not found: {encoder_path}\n"
+                f"Encoder not found in {self.model_dir}\n"
+                f"Expected: *-encoder.int8.onnx\n"
                 f"Download from: https://github.com/k2-fsa/sherpa-onnx/releases"
             )
 
-        if not decoder_path.exists():
-            raise FileNotFoundError(f"Decoder not found: {decoder_path}")
+        if not decoder_int8:
+            raise FileNotFoundError(f"Decoder not found in {self.model_dir}")
 
-        if not tokens_path.exists():
-            raise FileNotFoundError(f"Tokens not found: {tokens_path}")
+        if not tokens_file:
+            raise FileNotFoundError(f"Tokens not found in {self.model_dir}")
+
+        encoder_path = encoder_int8[0]
+        decoder_path = decoder_int8[0]
+        tokens_path = tokens_file[0]
+
+        # Detect model name from file prefix
+        model_name = encoder_path.stem.replace("-encoder.int8", "")
 
         # Initialize recognizer
-        logger.info(f"🔧 Loading Sherpa-ONNX Whisper large-v3 ({language})...")
+        logger.info(f"🔧 Loading Sherpa-ONNX Whisper {model_name} ({language})...")
 
         self.recognizer = sherpa_onnx.OfflineRecognizer.from_whisper(
             encoder=str(encoder_path),
@@ -106,10 +114,11 @@ class SherpaONNXASR:
         self.total_audio_duration = 0.0
         self.total_processing_time = 0.0
         self.transcription_count = 0
+        self.model_name = model_name
 
         logger.info(
             f"✅ Sherpa-ONNX ASR initialized: "
-            f"lang={language}, threads={num_threads}"
+            f"model={model_name}, lang={language}, threads={num_threads}"
         )
 
     def transcribe(
@@ -177,6 +186,29 @@ class SherpaONNXASR:
         )
 
         return result, rtf
+
+    def transcribe_array(
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 16000,
+    ) -> str:
+        """
+        Transcribe audio array (compatibility wrapper for main.py).
+
+        This method provides API compatibility with other ASR implementations
+        (DistilWhisperASR, WhisperASR) which use transcribe_array().
+
+        Args:
+            audio: Audio samples (float32, mono, 16kHz)
+            sample_rate: Sample rate (must be 16000 Hz)
+
+        Returns:
+            Transcribed text (str)
+
+        Note: This is a wrapper around transcribe() that discards RTF metric.
+        """
+        result, rtf = self.transcribe(audio, sample_rate)
+        return result
 
     def transcribe_streaming(
         self,

@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     libsndfile1 \
     ffmpeg \
+    espeak-ng \
     # PJSIP build dependencies
     libasound2-dev \
     libssl-dev \
