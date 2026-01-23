@@ -45,6 +45,30 @@ services:
       retries: 3
       start_period: 40s
 
+  # ===== OLLAMA (LLM Server) =====
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    hostname: ollama
+    restart: unless-stopped
+
+    ports:
+      - "11434:11434"
+
+    volumes:
+      - ollama-data:/root/.ollama
+
+    networks:
+      voip-net:
+        ipv4_address: 172.20.0.30
+
+    healthcheck:
+      test: ["CMD", "/bin/ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
   # ===== AI VOICE AGENT (Nosso sistema SIP Server) =====
   voiceagent:
     build:
@@ -77,9 +101,30 @@ services:
       - DISTIL_WHISPER_DEVICE=cpu
       - DISTIL_WHISPER_COMPUTE_TYPE=int8
 
+      # Full-Duplex Hybrid VAD Config
+      - VAD_ENABLED=true                    # Enable Hybrid VAD (Energy + Silero + WebRTC)
+      - VAD_ENABLE_AEC=true                 # Enable Acoustic Echo Cancellation (WebRTC AEC)
+      - VAD_ENABLE_SILERO=true              # Enable Silero VAD (ML-based, high precision)
+      - VAD_ENERGY_THRESHOLD_DB=-40.0       # Energy threshold in dBFS (-60 to 0)
+      - VAD_SILERO_THRESHOLD=0.5            # Silero VAD threshold (0.0 to 1.0)
+      - VAD_WEBRTC_AGGRESSIVENESS=2         # WebRTC VAD aggressiveness (0-3)
+      - VAD_GRACE_PERIOD_MS=200             # Grace period before barge-in (ms)
+      - VAD_MIN_SPEECH_DURATION_MS=250      # Minimum speech duration (ms)
+      - VAD_MIN_SILENCE_DURATION_MS=100     # Minimum silence duration (ms)
+
+      # Barge-In Config
+      - BARGE_IN_ENABLED=true               # Enable barge-in (user interruption)
+      - BARGE_IN_MIN_CONFIDENCE=0.7         # Minimum VAD confidence to trigger (0.0-1.0)
+
+      # LLM Config (Ollama)
+      - LLM_PROVIDER=ollama
+      - OLLAMA_HOST=http://192.168.2.113:11434
+      - OLLAMA_MODEL=llama3.2:1b
+      - LLM_MAX_TOKENS=128
+      - LLM_TEMPERATURE=0.7
+
       # AI Models (legacy)
       - ASR_MODEL=openai/whisper-large-v3
-      - LLM_MODEL=TinyLlama/TinyLlama-1.1B-Chat-v1.0
       - TTS_MODEL=kokoro-tts
 
       # Logging
@@ -186,6 +231,9 @@ volumes:
   asterisk-logs:
   asterisk-lib:
   asterisk-spool:
+
+  # Ollama volume
+  ollama-data:
 
   # Monitoring volumes
   prometheus-data:

@@ -18,6 +18,7 @@ from src.common.config import AppConfig
 from src.common.logging import get_logger, configure_logging
 from src.common.metrics import start_metrics_server
 from src.ai import QwenLLM, ConversationManager
+from src.ai.llm_ollama import OllamaLLM
 from src.ai import (
     WhisperASR,
     DistilWhisperASR,
@@ -96,13 +97,28 @@ class Application:
         await metrics_api_server.start()
         self.metrics_api_server = metrics_api_server
 
-        # Initialize Audio Pipeline Config
+        # Initialize Audio Pipeline Config (with Full-Duplex Hybrid VAD)
+        import os
         audio_config = AudioPipelineConfig(
             codec_law='ulaw',
-            vad_energy_threshold_start=self.config.ai.vad_threshold * 1000,  # Convert to RMS
+            # Legacy VAD (fallback)
+            vad_energy_threshold_start=self.config.ai.vad_threshold * 1000,
             vad_energy_threshold_end=self.config.ai.vad_threshold * 600,
             vad_silence_duration_ms=500,
             vad_min_speech_duration_ms=self.config.ai.vad_min_speech_duration_ms,
+            vad_webrtc_aggressiveness=int(os.getenv('VAD_WEBRTC_AGGRESSIVENESS', '2')),
+            # Hybrid VAD (Full-Duplex)
+            use_hybrid_vad=os.getenv('VAD_ENABLED', 'true').lower() == 'true',
+            vad_enable_aec=os.getenv('VAD_ENABLE_AEC', 'true').lower() == 'true',
+            vad_enable_silero=os.getenv('VAD_ENABLE_SILERO', 'true').lower() == 'true',
+            vad_energy_threshold_db=float(os.getenv('VAD_ENERGY_THRESHOLD_DB', '-40.0')),
+            vad_silero_threshold=float(os.getenv('VAD_SILERO_THRESHOLD', '0.5')),
+            vad_grace_period_ms=int(os.getenv('VAD_GRACE_PERIOD_MS', '200')),
+            vad_min_silence_duration_ms=int(os.getenv('VAD_MIN_SILENCE_DURATION_MS', '100')),
+            # Barge-in
+            barge_in_enabled=os.getenv('BARGE_IN_ENABLED', 'true').lower() == 'true',
+            barge_in_min_confidence=float(os.getenv('BARGE_IN_MIN_CONFIDENCE', '0.7')),
+            # Buffer
             buffer_sample_rate=8000,
             buffer_target_rate=16000
         )
@@ -160,16 +176,28 @@ class Application:
             logger.error('Failed to initialize ASR', provider=asr_provider, error=str(e), exc_info=True)
             sys.exit(1)
 
-        # Initialize Qwen LLM
+        # Initialize LLM (Ollama or Qwen based on LLM_PROVIDER)
+        llm_provider = os.getenv('LLM_PROVIDER', 'qwen').lower()
+
         try:
-            logger.info('Initializing Qwen LLM (this may take 30-120 seconds)...')
-            qwen_llm = QwenLLM(config=self.config)
-            await qwen_llm.initialize()
-            logger.info('Qwen LLM initialized',
-                       model=self.config.ai.llm_model,
-                       max_tokens=self.config.ai.llm_max_tokens)
+            if llm_provider == 'ollama':
+                logger.info('Initializing Ollama LLM (fast startup <10s)...')
+                llm = OllamaLLM(config=self.config)
+                await llm.initialize()
+                logger.info('✅ Ollama LLM initialized',
+                           host=os.getenv('OLLAMA_HOST', 'http://ollama:11434'),
+                           model=os.getenv('OLLAMA_MODEL', 'llama3.2:1b'),
+                           max_tokens=self.config.ai.llm_max_tokens)
+            else:
+                # Fallback to QwenLLM (legacy TinyLlama)
+                logger.info('Initializing Qwen LLM (this may take 30-120 seconds)...')
+                llm = QwenLLM(config=self.config)
+                await llm.initialize()
+                logger.info('Qwen LLM initialized',
+                           model=self.config.ai.llm_model,
+                           max_tokens=self.config.ai.llm_max_tokens)
         except Exception as e:
-            logger.error('Failed to initialize Qwen LLM', error=str(e), exc_info=True)
+            logger.error('Failed to initialize LLM', provider=llm_provider, error=str(e), exc_info=True)
             sys.exit(1)
 
         # Initialize Conversation Manager
@@ -237,7 +265,7 @@ class Application:
 
                             # Generate LLM response
                             logger.info('Generating LLM response', session_id=session_id)
-                            response_text = await qwen_llm.generate_response(
+                            response_text = await llm.generate_response(
                                 user_text=text,
                                 conversation_history=history_for_llm
                             )
@@ -298,10 +326,13 @@ class Application:
                                 error=str(e),
                                 exc_info=True)
 
-        # Function to send TTS audio via RTP
+        # TTS cancellation flags (per session)
+        tts_cancellation_flags = {}
+
+        # Function to send TTS audio via RTP (with barge-in support)
         async def send_tts_audio(session_id: str, tts_audio: np.ndarray, rtp_session):
             """
-            Process TTS audio and send via RTP
+            Process TTS audio and send via RTP (with barge-in cancellation)
 
             Args:
                 session_id: Session ID
@@ -313,14 +344,16 @@ class Application:
                 import time
                 import audioop
 
+                # Reset cancellation flag for this session
+                tts_cancellation_flags[session_id] = False
+
                 # Step 1: Resample 24kHz → 8kHz (telephony rate)
                 logger.debug('Resampling TTS audio: 24kHz → 8kHz', session_id=session_id)
 
                 # Convert float32 [-1, 1] → int16
                 tts_int16 = (tts_audio * 32767).astype(np.int16)
 
-                # Resample using audioop (simple but effective)
-                # audioop.ratecv(fragment, width, nchannels, inrate, outrate, state)
+                # Resample using audioop
                 tts_8khz_bytes, _ = audioop.ratecv(
                     tts_int16.tobytes(),
                     2,  # 2 bytes per sample (16-bit)
@@ -330,6 +363,16 @@ class Application:
                     None    # no state
                 )
 
+                # Convert to numpy for AEC reference
+                tts_8khz_int16 = np.frombuffer(tts_8khz_bytes, dtype=np.int16)
+                tts_8khz_float32 = tts_8khz_int16.astype(np.float32) / 32768.0
+
+                # Set AI reference audio for AEC (Acoustic Echo Cancellation)
+                if session_id in self.audio_pipelines:
+                    pipeline = self.audio_pipelines[session_id]
+                    pipeline.set_ai_reference_audio(tts_8khz_float32)
+                    pipeline.set_ai_speaking(True)
+
                 # Step 2: Encode PCM → G.711 μ-law
                 logger.debug('Encoding PCM → G.711 μ-law', session_id=session_id)
                 g711_data = audioop.lin2ulaw(tts_8khz_bytes, 2)
@@ -337,6 +380,7 @@ class Application:
                 # Step 3: Split into RTP packets (160 bytes = 20ms @ 8kHz)
                 PACKET_SIZE = 160  # 20ms of audio
                 num_packets = (len(g711_data) + PACKET_SIZE - 1) // PACKET_SIZE
+                audio_duration_ms = (len(g711_data) / 8000) * 1000
 
                 logger.info('Sending TTS audio via RTP',
                            session_id=session_id,
@@ -347,8 +391,17 @@ class Application:
                 base_timestamp = int(time.time() * 8000) & 0xFFFFFFFF
                 sequence_start = rtp_session.packets_sent & 0xFFFF
 
-                # Send packets with proper timing
+                # Send packets with proper timing (supports barge-in cancellation)
+                packets_sent = 0
                 for i in range(num_packets):
+                    # Check for barge-in cancellation
+                    if tts_cancellation_flags.get(session_id, False):
+                        logger.warning('🔴 TTS cancelled due to barge-in',
+                                     session_id=session_id,
+                                     packets_sent=packets_sent,
+                                     packets_cancelled=num_packets - packets_sent)
+                        break
+
                     start_idx = i * PACKET_SIZE
                     end_idx = min(start_idx + PACKET_SIZE, len(g711_data))
                     payload = g711_data[start_idx:end_idx]
@@ -371,14 +424,26 @@ class Application:
 
                     # Send RTP packet
                     await rtp_session.send_rtp(header, payload)
+                    packets_sent += 1
 
                     # Pace packets (20ms per packet = 50 packets/sec)
-                    # This prevents network congestion
-                    await asyncio.sleep(0.020)  # 20ms
+                    await asyncio.sleep(0.020)
 
-                logger.info('TTS audio sent successfully',
-                           session_id=session_id,
-                           packets_sent=num_packets)
+                # Mark AI as stopped speaking
+                if session_id in self.audio_pipelines:
+                    pipeline = self.audio_pipelines[session_id]
+                    pipeline.set_ai_speaking(False, audio_duration_ms)
+                    pipeline.set_ai_reference_audio(None)  # Clear reference
+
+                if packets_sent == num_packets:
+                    logger.info('TTS audio sent successfully',
+                               session_id=session_id,
+                               packets_sent=packets_sent)
+                else:
+                    logger.info('TTS audio partially sent (barge-in)',
+                               session_id=session_id,
+                               packets_sent=packets_sent,
+                               total_packets=num_packets)
 
             except Exception as e:
                 logger.error('Failed to send TTS audio',
@@ -397,6 +462,17 @@ class Application:
             # Schedule async transcription (non-blocking)
             asyncio.create_task(transcribe_audio(session_id, audio_bytes))
 
+        # Barge-in callback (cancel TTS when user interrupts)
+        def on_barge_in_detected(event, session_id: str):
+            """Handle barge-in event (user interrupted AI)"""
+            logger.warning(
+                "🔴 Barge-in detected - cancelling TTS for session %s (event_id=%d)",
+                session_id,
+                event.event_id
+            )
+            # Set cancellation flag to stop TTS transmission
+            tts_cancellation_flags[session_id] = True
+
         # Monitor RTP sessions and start audio pipelines
         async def monitor_rtp_sessions():
             """Monitor RTP sessions and start audio pipelines automatically"""
@@ -413,8 +489,11 @@ class Application:
                             # Create pipeline for this session
                             pipeline = AudioPipeline(config=audio_config)
 
-                            # Set callback with session_id
+                            # Set callbacks with session_id
                             pipeline.on_speech_ready = lambda audio_bytes, sid=session_id: on_speech_ready(sid, audio_bytes)
+
+                            # Set barge-in callback (with closure to capture session_id)
+                            pipeline.on_barge_in_detected = lambda event, sid=session_id: on_barge_in_detected(event, sid)
 
                             # Store pipeline
                             self.audio_pipelines[session_id] = pipeline
@@ -464,6 +543,7 @@ class Application:
         self.sip_server = sip_server
         self.rtp_server = rtp_server
         self.event_bus = event_bus
+        self.llm = llm  # Store LLM for cleanup
 
         # TODO: Initialize RTP Server and AI Pipeline when ready
         # rtp_server = RTPServer(config=self.config.rtp, event_bus=event_bus)
@@ -505,6 +585,11 @@ class Application:
                 logger.info('Stopping audio pipeline', session_id=session_id)
                 await pipeline.stop()
             self.audio_pipelines.clear()
+
+        # Cleanup LLM
+        if hasattr(self, 'llm') and self.llm:
+            logger.info('Shutting down LLM')
+            await self.llm.shutdown()
 
         if self.sip_server:
             await self.sip_server.stop()

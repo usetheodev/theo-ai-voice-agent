@@ -11,9 +11,12 @@ numpy>=1.21.6,<1.28.0      # Compatible with SciPy 1.11.4 and transformers
 scipy==1.11.4
 soundfile==0.12.1
 av>=12.0.0                 # Audio/Video codecs (para RTP) - PyAV package
+librosa>=0.10.0            # Audio resampling (8kHz→16kHz for VAD/ASR)
 
-# VAD (Voice Activity Detection)
-webrtcvad==2.0.10
+# VAD (Voice Activity Detection) - Full-Duplex Hybrid VAD
+webrtcvad==2.0.10          # Energy-based VAD (primary, fast)
+sherpa-onnx>=1.10.0        # Silero VAD v5 (ML-based, high precision)
+webrtc-noise-gain>=1.2.5   # WebRTC AEC + Noise Suppression + AGC (replaces speexdsp)
 
 # Asterisk ARI
 asyncari==0.20.6

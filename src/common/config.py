@@ -71,6 +71,9 @@ class AIConfig:
     llm_model: str = "Qwen/Qwen2.5-7B"
     llm_max_tokens: int = 256
     llm_temperature: float = 0.7
+    # Ollama-specific config
+    ollama_host: str = "http://ollama:11434"
+    ollama_model: str = "llama3.2:1b"
     tts_model: str = "kokoro-tts"
     tts_voice: str = "af_bella"
     tts_speed: float = 1.0
