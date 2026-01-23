@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  coturn:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-inference-coturn
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./turnserver.conf:/etc/turnserver.conf:ro
+      - coturn-logs:/var/log
+    environment:
+      - DETECT_EXTERNAL_IP=yes
+    healthcheck:
+      test: ["CMD", "turnadmin", "-l"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  coturn-logs:

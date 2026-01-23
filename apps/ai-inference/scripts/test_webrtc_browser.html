@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Inference - Teste WebRTC</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        h1 {
+            color: #00d4ff;
+            border-bottom: 2px solid #00d4ff;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #ff6b6b;
+            margin-top: 30px;
+        }
+        .config {
+            background: #16213e;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        .config label {
+            display: block;
+            margin-bottom: 5px;
+            color: #aaa;
+        }
+        .config input {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #333;
+            border-radius: 5px;
+            background: #0f0f23;
+            color: #fff;
+        }
+        button {
+            padding: 12px 24px;
+            margin: 5px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        .btn-primary {
+            background: #00d4ff;
+            color: #000;
+        }
+        .btn-primary:hover {
+            background: #00a8cc;
+        }
+        .btn-danger {
+            background: #ff6b6b;
+            color: #fff;
+        }
+        .btn-danger:hover {
+            background: #ee5a5a;
+        }
+        .btn-success {
+            background: #4ecdc4;
+            color: #000;
+        }
+        .btn-success:hover {
+            background: #3db8b0;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .status {
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-family: monospace;
+        }
+        .status-info {
+            background: #1e3a5f;
+            border-left: 4px solid #00d4ff;
+        }
+        .status-success {
+            background: #1e5f3a;
+            border-left: 4px solid #4ecdc4;
+        }
+        .status-error {
+            background: #5f1e1e;
+            border-left: 4px solid #ff6b6b;
+        }
+        #log {
+            background: #0f0f23;
+            padding: 15px;
+            border-radius: 5px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .log-entry {
+            margin: 2px 0;
+        }
+        .log-info { color: #00d4ff; }
+        .log-success { color: #4ecdc4; }
+        .log-error { color: #ff6b6b; }
+        .log-event { color: #ffd93d; }
+        .log-audio { color: #c792ea; }
+
+        .audio-controls {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin: 15px 0;
+        }
+        .audio-indicator {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #333;
+        }
+        .audio-indicator.active {
+            background: #4ecdc4;
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .session-info {
+            background: #16213e;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+        }
+        .session-info code {
+            background: #0f0f23;
+            padding: 2px 6px;
+            border-radius: 3px;
+            color: #ffd93d;
+        }
+
+        .events-panel {
+            background: #16213e;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .event-item {
+            padding: 8px;
+            margin: 5px 0;
+            background: #0f0f23;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        .event-type {
+            color: #ffd93d;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>🎙️ AI Inference - Teste WebRTC</h1>
+
+    <div class="config">
+        <label for="serverUrl">URL do Servidor:</label>
+        <input type="text" id="serverUrl" value="http://localhost:8080" placeholder="http://localhost:8080">
+
+        <label for="instructions">Instruções do Assistente:</label>
+        <input type="text" id="instructions" value="Você é um assistente de voz amigável e prestativo." placeholder="Instruções...">
+    </div>
+
+    <h2>1. Conexão</h2>
+    <div>
+        <button id="btnConnect" class="btn-primary" onclick="createSession()">🔗 Criar Sessão</button>
+        <button id="btnSdp" class="btn-success" onclick="doSdpExchange()" disabled>📡 SDP Exchange</button>
+        <button id="btnDisconnect" class="btn-danger" onclick="closeSession()" disabled>❌ Desconectar</button>
+    </div>
+
+    <div id="sessionInfo" class="session-info" style="display: none;">
+        <strong>Sessão:</strong> <code id="sessionId">-</code><br>
+        <strong>Estado:</strong> <span id="sessionState">-</span><br>
+        <strong>WebRTC:</strong> <span id="rtcState">-</span>
+    </div>
+
+    <h2>2. Áudio</h2>
+    <div class="audio-controls">
+        <button id="btnStartAudio" class="btn-success" onclick="startAudio()" disabled>🎤 Iniciar Microfone</button>
+        <button id="btnStopAudio" class="btn-danger" onclick="stopAudio()" disabled>⏹️ Parar</button>
+        <div id="audioIndicator" class="audio-indicator"></div>
+        <span id="audioStatus">Microfone desligado</span>
+    </div>
+
+    <h2>3. Eventos</h2>
+    <div>
+        <button class="btn-primary" onclick="sendTestEvent()">📤 Enviar session.update</button>
+        <button class="btn-primary" onclick="sendResponseCreate()">🤖 Criar Resposta</button>
+    </div>
+
+    <div class="events-panel" id="eventsPanel">
+        <em style="color: #666;">Eventos aparecerão aqui...</em>
+    </div>
+
+    <h2>4. Log</h2>
+    <div id="log"></div>
+    <button onclick="clearLog()" style="margin-top: 10px;">🗑️ Limpar Log</button>
+
+    <script>
+        // State
+        let session = null;
+        let pc = null;
+        let dc = null;
+        let localStream = null;
+
+        // DOM Elements
+        const logEl = document.getElementById('log');
+        const eventsPanel = document.getElementById('eventsPanel');
+
+        // Logging
+        function log(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            const timestamp = new Date().toLocaleTimeString();
+            entry.textContent = `[${timestamp}] ${message}`;
+            logEl.appendChild(entry);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function clearLog() {
+            logEl.innerHTML = '';
+        }
+
+        function addEvent(event) {
+            const item = document.createElement('div');
+            item.className = 'event-item';
+            item.innerHTML = `<span class="event-type">${event.type}</span>: ${JSON.stringify(event).substring(0, 100)}...`;
+
+            // Remove placeholder
+            if (eventsPanel.querySelector('em')) {
+                eventsPanel.innerHTML = '';
+            }
+
+            eventsPanel.insertBefore(item, eventsPanel.firstChild);
+        }
+
+        function updateUI() {
+            const connected = session !== null;
+            const rtcConnected = pc && pc.connectionState === 'connected';
+
+            document.getElementById('btnConnect').disabled = connected;
+            document.getElementById('btnSdp').disabled = !connected || rtcConnected;
+            document.getElementById('btnDisconnect').disabled = !connected;
+            document.getElementById('btnStartAudio').disabled = !rtcConnected;
+            document.getElementById('btnStopAudio').disabled = !localStream;
+
+            const sessionInfo = document.getElementById('sessionInfo');
+            if (connected) {
+                sessionInfo.style.display = 'block';
+                document.getElementById('sessionId').textContent = session.id;
+                document.getElementById('sessionState').textContent = 'Ativa';
+                document.getElementById('rtcState').textContent = pc ? pc.connectionState : 'Não conectado';
+            } else {
+                sessionInfo.style.display = 'none';
+            }
+        }
+
+        // API Functions
+        async function createSession() {
+            const serverUrl = document.getElementById('serverUrl').value;
+            const instructions = document.getElementById('instructions').value;
+
+            log('Criando sessão...', 'info');
+
+            try {
+                const response = await fetch(`${serverUrl}/v1/realtime/sessions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ instructions })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+                }
+
+                session = await response.json();
+                log(`Sessão criada: ${session.id}`, 'success');
+                log(`Token expira em: ${new Date(session.client_secret.expires_at * 1000).toLocaleString()}`, 'info');
+
+                updateUI();
+            } catch (error) {
+                log(`Erro ao criar sessão: ${error.message}`, 'error');
+            }
+        }
+
+        async function doSdpExchange() {
+            if (!session) {
+                log('Crie uma sessão primeiro!', 'error');
+                return;
+            }
+
+            const serverUrl = document.getElementById('serverUrl').value;
+
+            log('Iniciando WebRTC...', 'info');
+
+            try {
+                // Create peer connection
+                pc = new RTCPeerConnection({
+                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                });
+
+                pc.onconnectionstatechange = () => {
+                    log(`Estado da conexão: ${pc.connectionState}`, 'info');
+                    updateUI();
+                };
+
+                pc.oniceconnectionstatechange = () => {
+                    log(`Estado ICE: ${pc.iceConnectionState}`, 'info');
+                };
+
+                pc.ontrack = (event) => {
+                    log(`Track recebido: ${event.track.kind}`, 'audio');
+                    // Aqui você pode conectar o áudio a um elemento <audio>
+                };
+
+                // Create data channel
+                dc = pc.createDataChannel('oai-events');
+
+                dc.onopen = () => {
+                    log('DataChannel aberto!', 'success');
+                };
+
+                dc.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    log(`Evento: ${data.type}`, 'event');
+                    addEvent(data);
+                };
+
+                dc.onerror = (error) => {
+                    log(`Erro no DataChannel: ${error}`, 'error');
+                };
+
+                // Create offer
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+
+                log(`SDP Offer criado (${offer.sdp.length} bytes)`, 'info');
+
+                // Send to server
+                const response = await fetch(`${serverUrl}/v1/realtime/sessions/${session.id}/sdp`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/sdp',
+                        'Authorization': `Bearer ${session.client_secret.value}`
+                    },
+                    body: offer.sdp
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+                }
+
+                const answerSdp = await response.text();
+                log(`SDP Answer recebido (${answerSdp.length} bytes)`, 'success');
+
+                // Set remote description
+                await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+
+                log('WebRTC conectado!', 'success');
+                updateUI();
+
+            } catch (error) {
+                log(`Erro no SDP exchange: ${error.message}`, 'error');
+                if (pc) {
+                    pc.close();
+                    pc = null;
+                }
+            }
+        }
+
+        async function startAudio() {
+            try {
+                log('Solicitando acesso ao microfone...', 'info');
+
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        sampleRate: 24000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true
+                    }
+                });
+
+                // Add track to peer connection
+                localStream.getAudioTracks().forEach(track => {
+                    pc.addTrack(track, localStream);
+                    log(`Track adicionado: ${track.label}`, 'audio');
+                });
+
+                document.getElementById('audioIndicator').classList.add('active');
+                document.getElementById('audioStatus').textContent = 'Microfone ativo';
+
+                log('Microfone iniciado!', 'success');
+                updateUI();
+
+            } catch (error) {
+                log(`Erro ao acessar microfone: ${error.message}`, 'error');
+            }
+        }
+
+        function stopAudio() {
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+
+                document.getElementById('audioIndicator').classList.remove('active');
+                document.getElementById('audioStatus').textContent = 'Microfone desligado';
+
+                log('Microfone parado', 'info');
+                updateUI();
+            }
+        }
+
+        function sendTestEvent() {
+            if (!dc || dc.readyState !== 'open') {
+                log('DataChannel não está aberto!', 'error');
+                return;
+            }
+
+            const event = {
+                type: 'session.update',
+                session: {
+                    instructions: 'Você foi atualizado via WebRTC!',
+                    voice: 'nova'
+                }
+            };
+
+            dc.send(JSON.stringify(event));
+            log('Evento session.update enviado', 'info');
+        }
+
+        function sendResponseCreate() {
+            if (!dc || dc.readyState !== 'open') {
+                log('DataChannel não está aberto!', 'error');
+                return;
+            }
+
+            const event = {
+                type: 'response.create',
+                response: {}
+            };
+
+            dc.send(JSON.stringify(event));
+            log('Evento response.create enviado', 'info');
+        }
+
+        async function closeSession() {
+            const serverUrl = document.getElementById('serverUrl').value;
+
+            // Stop audio
+            stopAudio();
+
+            // Close WebRTC
+            if (dc) {
+                dc.close();
+                dc = null;
+            }
+            if (pc) {
+                pc.close();
+                pc = null;
+            }
+
+            // Close session on server
+            if (session) {
+                try {
+                    await fetch(`${serverUrl}/v1/realtime/sessions/${session.id}`, {
+                        method: 'DELETE'
+                    });
+                    log(`Sessão ${session.id} fechada`, 'success');
+                } catch (error) {
+                    log(`Erro ao fechar sessão: ${error.message}`, 'error');
+                }
+                session = null;
+            }
+
+            eventsPanel.innerHTML = '<em style="color: #666;">Eventos aparecerão aqui...</em>';
+            updateUI();
+        }
+
+        // Initialize
+        log('Pronto para conectar!', 'success');
+        updateUI();
+    </script>
+</body>
+</html>
