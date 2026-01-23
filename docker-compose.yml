@@ -79,7 +79,7 @@ services:
 
       # AI Models (legacy)
       - ASR_MODEL=openai/whisper-large-v3
-      - LLM_MODEL=Qwen/Qwen2.5-7B
+      - LLM_MODEL=TinyLlama/TinyLlama-1.1B-Chat-v1.0
       - TTS_MODEL=kokoro-tts
 
       # Logging

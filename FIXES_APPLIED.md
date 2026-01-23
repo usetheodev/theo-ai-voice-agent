@@ -1,7 +1,9 @@
 # Correções Aplicadas - Docker Setup
 
 **Data:** 2026-01-22
-**Status:** ✅ PRONTO PARA DEPLOY
+**Status:** ✅ **RESOLVIDO E TESTADO**
+**Build:** ✅ Sucesso (imagem SHA: 029e0aa61aef)
+**Runtime:** ✅ Sem erros de NumPy/SciPy/transformers
 
 ---
 
@@ -28,8 +30,11 @@
 
 **Causa:** NumPy 2.4.1 incompatível com SciPy 1.11.4 e transformers
 
+**Root Cause Descoberta:** Kokoro-ONNX (instalado via GitHub) requer `numpy>=2.0.2` e sobrescreve o NumPy 1.26.4 instalado anteriormente
+
 **Solução:**
-- ✅ NumPy fixado: `numpy>=1.21.6,<1.28.0`
+- ✅ NumPy fixado: `numpy>=1.21.6,<1.28.0` em requirements
+- ✅ **FIX CRÍTICO:** Adicionar `RUN pip install "numpy>=1.21.6,<1.28.0" --force-reinstall` no Dockerfile APÓS instalação do Kokoro
 - ✅ Garante compatibilidade com SciPy e transformers
 
 ---
@@ -53,8 +58,14 @@
    - ✅ Sincronizado com `requirements.txt`
    - ✅ Inclui `faster-whisper>=1.0.0`
    - ✅ Inclui `aiohttp==3.13.3`
+   - ✅ NumPy fixado: `numpy>=1.21.6,<1.28.0`
 
-5. **`DOCKER_SETUP.md`**
+5. **`Dockerfile`** ⭐ **CRITICAL FIX**
+   - ✅ Adicionada linha: `RUN pip install "numpy>=1.21.6,<1.28.0" --force-reinstall`
+   - ✅ Executada APÓS `install_kokoro.sh` para corrigir conflito
+   - ✅ Evita que Kokoro-ONNX sobrescreva numpy com versão 2.4.1
+
+6. **`DOCKER_SETUP.md`**
    - Seção sobre ASR providers
    - Instruções atualizadas
 

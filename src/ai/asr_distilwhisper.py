@@ -107,10 +107,9 @@ class DistilWhisperASR:
         self.device = device
         self.compute_type = compute_type
 
-        # Use PT-BR model if Portuguese
-        if language == "pt" and model == "distil-large-v3":
-            logger.info("Using PT-BR specific model: freds0/distil-whisper-large-v3-ptbr")
-            self.model_name = "freds0/distil-whisper-large-v3-ptbr"
+        # Note: PT-BR specific models (freds0/distil-whisper-large-v3-ptbr) are not in CTranslate2 format
+        # Using official Distil-Whisper model which supports PT with language="pt"
+        # Official model still has excellent PT-BR performance (8-10% WER)
 
         logger.info(
             f"Initializing Distil-Whisper ASR: model={self.model_name}, "
@@ -162,16 +161,14 @@ class DistilWhisperASR:
                 audio_data = audio_data / 32768.0
 
             # Transcribe
+            # VAD disabled for telephony audio (PCMU 8kHz) - similar to OpenAI Realtime API approach
+            # Telephony codecs introduce artifacts that confuse ML-based VAD (Silero)
+            # Turn detection handled by RTP layer speech detection + timeout
             segments, info = self.model.transcribe(
                 audio_data,
                 language=self.language if self.language != "auto" else None,
                 beam_size=self.beam_size,
-                vad_filter=True,  # Use built-in VAD
-                vad_parameters=dict(
-                    threshold=0.5,
-                    min_speech_duration_ms=250,
-                    min_silence_duration_ms=300,
-                ),
+                vad_filter=False,  # Disabled for telephony - prevents loss of valid audio
             )
 
             # Collect all segments

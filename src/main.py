@@ -149,7 +149,7 @@ class Application:
 
             else:
                 logger.error(f'Unknown ASR_PROVIDER: {asr_provider}')
-                logger.error('Valid options: whisper, distil-whisper, parakeet')
+                logger.error('Valid options: funasr, whisper, distil-whisper, parakeet')
                 sys.exit(1)
 
         except FileNotFoundError:
@@ -207,13 +207,17 @@ class Application:
                     audio_int16 = np.frombuffer(audio_bytes, dtype=np.int16)
                     audio_float32 = audio_int16.astype(np.float32) / 32768.0
 
-                    # Run Whisper in thread pool (non-blocking) with timeout
+                    # Run ASR in thread pool (non-blocking) with adaptive timeout
+                    # Timeout = 3x audio duration or 20s minimum (for first model load)
+                    audio_duration = len(audio_float32) / 16000  # seconds
+                    timeout_seconds = max(20.0, audio_duration * 3)
+
                     text = await asyncio.wait_for(
                         asyncio.to_thread(
                             whisper_asr.transcribe_array,
                             audio_float32
                         ),
-                        timeout=10.0
+                        timeout=timeout_seconds
                     )
 
                     if text:

@@ -4,7 +4,7 @@
 sip:
   # Network
   host: 0.0.0.0
-  port: 5061  # Using 5061 (Asterisk is using 5060)
+  port: 5060  # Changed to 5060 to match Asterisk expectations
   external_ip: null  # Auto-detect if null, or set to public IP
 
   # Codecs (in priority order)
@@ -90,7 +90,7 @@ ai:
   asr_threads: 4  # CPU threads for inference (tune based on hardware: 2-8)
 
   # LLM (Large Language Model)
-  llm_model: Qwen/Qwen2.5-1.5B-Instruct  # Options: Qwen2.5-1.5B-Instruct (CPU-friendly), Qwen2.5-3B, Qwen2.5-7B
+  llm_model: TinyLlama/TinyLlama-1.1B-Chat-v1.0  # Ultra-lightweight model (~1GB RAM, very fast)
   llm_max_tokens: 128         # Max response length (reduced for faster inference)
   llm_temperature: 0.7        # 0.0 = deterministic, 1.0 = creative
 
@@ -100,8 +100,8 @@ ai:
   tts_speed: 1.0      # 0.5-2.0
 
   # VAD (Voice Activity Detection)
-  vad_threshold: 0.5             # 0.0 = very sensitive, 1.0 = not sensitive
-  vad_min_speech_duration_ms: 300  # Minimum 300ms to consider speech
+  vad_threshold: 0.2             # 0.0 = very sensitive, 1.0 = not sensitive (lowered for telephone audio)
+  vad_min_speech_duration_ms: 200  # Minimum 200ms to consider speech (reduced for better detection)
 
   # System prompt
   system_prompt: |

@@ -36,6 +36,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Install Kokoro TTS (optional, from GitHub)
 RUN bash ./scripts/install_kokoro.sh || echo "Warning: Kokoro TTS installation failed, continuing without it"
 
+# CRITICAL FIX: Kokoro-ONNX installs numpy>=2.0.2, which breaks scipy 1.11.4
+# Reinstall correct numpy version after Kokoro installation
+RUN pip install --no-cache-dir "numpy>=1.21.6,<1.28.0" --force-reinstall
+
 # Copy application code
 COPY src/ ./src/
 COPY config/ ./config/
