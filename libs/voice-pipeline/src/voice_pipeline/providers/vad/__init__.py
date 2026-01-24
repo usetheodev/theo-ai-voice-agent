@@ -9,8 +9,14 @@ from voice_pipeline.providers.vad.silero import (
     SileroVADProvider,
     SileroVADConfig,
 )
+from voice_pipeline.providers.vad.webrtc import (
+    WebRTCVADProvider,
+    WebRTCVADConfig,
+)
 
 __all__ = [
     "SileroVADProvider",
     "SileroVADConfig",
+    "WebRTCVADProvider",
+    "WebRTCVADConfig",
 ]

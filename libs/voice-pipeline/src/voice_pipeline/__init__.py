@@ -45,6 +45,21 @@ from .interfaces.asr import ASRInput, ASRInterface, TranscriptionResult
 from .interfaces.llm import LLMChunk, LLMInput, LLMInterface, LLMResponse
 from .interfaces.tts import AudioChunk, TTSInput, TTSInterface
 from .interfaces.vad import SpeechState, VADEvent, VADInput, VADInterface
+from .interfaces.transport import (
+    AudioConfig,
+    AudioFrame,
+    AudioTransportInterface,
+    TransportConfig,
+    TransportInput,
+    TransportState,
+)
+from .interfaces.realtime import (
+    RealtimeEvent,
+    RealtimeEventType,
+    RealtimeInput,
+    RealtimeInterface,
+    RealtimeSessionConfig,
+)
 
 # Streaming
 from .streaming.buffer import AsyncQueue, AudioBuffer, TextBuffer
@@ -182,6 +197,16 @@ from .multi_agent import (
     create_collaboration,
 )
 
+# Transport
+from .transport import (
+    FileAudioConfig,
+    FileAudioTransport,
+    LocalAudioConfig,
+    LocalAudioTransport,
+    create_silence,
+    create_test_audio,
+)
+
 # MCP (Model Context Protocol)
 from .mcp import (
     # Types
@@ -258,6 +283,19 @@ __all__ = [
     "VADInput",
     "VADEvent",
     "SpeechState",
+    # Transport Interface
+    "AudioTransportInterface",
+    "TransportInput",
+    "TransportConfig",
+    "TransportState",
+    "AudioConfig",
+    "AudioFrame",
+    # Realtime Interface
+    "RealtimeInterface",
+    "RealtimeInput",
+    "RealtimeEvent",
+    "RealtimeEventType",
+    "RealtimeSessionConfig",
     # Streaming
     "SentenceStreamer",
     "SentenceStreamerConfig",
@@ -391,4 +429,11 @@ __all__ = [
     "MCPEnabledAgent",
     "create_mcp_agent",
     "load_mcp_tools",
+    # Transport
+    "LocalAudioTransport",
+    "LocalAudioConfig",
+    "FileAudioTransport",
+    "FileAudioConfig",
+    "create_test_audio",
+    "create_silence",
 ]

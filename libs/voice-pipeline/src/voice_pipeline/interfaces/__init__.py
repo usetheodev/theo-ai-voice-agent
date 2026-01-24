@@ -15,6 +15,21 @@ from .asr import ASRInput, ASRInterface, TranscriptionResult
 from .llm import LLMChunk, LLMInput, LLMInterface, LLMResponse
 from .tts import AudioChunk, TTSInput, TTSInterface
 from .vad import SpeechState, VADEvent, VADInput, VADInterface
+from .realtime import (
+    RealtimeEvent,
+    RealtimeEventType,
+    RealtimeInput,
+    RealtimeInterface,
+    RealtimeSessionConfig,
+)
+from .transport import (
+    AudioConfig,
+    AudioFrame,
+    AudioTransportInterface,
+    TransportConfig,
+    TransportInput,
+    TransportState,
+)
 
 __all__ = [
     # ASR
@@ -35,4 +50,17 @@ __all__ = [
     "VADInput",
     "VADEvent",
     "SpeechState",
+    # Realtime
+    "RealtimeInterface",
+    "RealtimeInput",
+    "RealtimeEvent",
+    "RealtimeEventType",
+    "RealtimeSessionConfig",
+    # Transport
+    "AudioTransportInterface",
+    "TransportInput",
+    "TransportConfig",
+    "TransportState",
+    "AudioConfig",
+    "AudioFrame",
 ]
