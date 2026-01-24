@@ -1,6 +1,20 @@
 """Models for the AI Inference service."""
 
 from .audio import AudioBuffer, AudioChunk, AudioFormat
+from .agent_config import (
+    VoiceAgentConfig,
+    LLMConfig,
+    TTSConfig,
+    ASRConfig,
+    VADConfig,
+    LLMProvider,
+    TTSProvider,
+    ASRProvider,
+    VADProvider,
+    create_local_agent_config,
+    create_low_latency_agent_config,
+    create_high_quality_agent_config,
+)
 from .conversation import (
     Conversation,
     ConversationItem,
@@ -34,6 +48,19 @@ __all__ = [
     "AudioBuffer",
     "AudioChunk",
     "AudioFormat",
+    # Agent Config
+    "VoiceAgentConfig",
+    "LLMConfig",
+    "TTSConfig",
+    "ASRConfig",
+    "VADConfig",
+    "LLMProvider",
+    "TTSProvider",
+    "ASRProvider",
+    "VADProvider",
+    "create_local_agent_config",
+    "create_low_latency_agent_config",
+    "create_high_quality_agent_config",
     # Conversation
     "Conversation",
     "ConversationItem",

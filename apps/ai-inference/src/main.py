@@ -7,7 +7,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import rest_router, signaling_router, websocket_router
+from .api import rest_router, signaling_router, websocket_router, agents_router
 from .core.config import get_settings
 from .core.session_manager import init_session_manager, shutdown_session_manager
 
@@ -92,6 +92,7 @@ def create_app() -> FastAPI:
     app.include_router(rest_router, tags=["REST"])
     app.include_router(websocket_router, tags=["WebSocket"])
     app.include_router(signaling_router, tags=["WebRTC"])
+    app.include_router(agents_router, tags=["Voice Agents"])
 
     return app
 
