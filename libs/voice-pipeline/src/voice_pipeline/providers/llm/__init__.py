@@ -3,6 +3,7 @@
 Available providers:
 - OpenAILLMProvider: OpenAI GPT models (GPT-4, GPT-3.5, etc.)
 - OllamaLLMProvider: Ollama local models (Llama, Mistral, Gemma, etc.)
+- HuggingFaceLLMProvider: HuggingFace Transformers with BitsAndBytes quantization
 """
 
 from voice_pipeline.providers.llm.openai import (
@@ -13,10 +14,18 @@ from voice_pipeline.providers.llm.ollama import (
     OllamaLLMProvider,
     OllamaLLMConfig,
 )
+from voice_pipeline.providers.llm.huggingface import (
+    HuggingFaceLLMProvider,
+    HuggingFaceLLMConfig,
+    QuantizationType,
+)
 
 __all__ = [
     "OpenAILLMProvider",
     "OpenAILLMConfig",
     "OllamaLLMProvider",
     "OllamaLLMConfig",
+    "HuggingFaceLLMProvider",
+    "HuggingFaceLLMConfig",
+    "QuantizationType",
 ]
