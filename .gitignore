@@ -1,7 +1,8 @@
 # Environment
 .env
 .env.local
-
+*.onnx
+*.bin
 # AI Models (large binary files - download with scripts/download_models.sh)
 models/*
 !models/README.md

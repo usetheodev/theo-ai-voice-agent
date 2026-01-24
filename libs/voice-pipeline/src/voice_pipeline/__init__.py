@@ -68,6 +68,7 @@ from .streaming.sentence_streamer import SentenceStreamer, SentenceStreamerConfi
 
 # Providers
 from .providers import (
+    # Registry and types
     ASRCapabilities,
     LLMCapabilities,
     ProviderInfo,
@@ -81,6 +82,29 @@ from .providers import (
     register_tts,
     register_vad,
     reset_registry,
+    # ASR Providers (with friendly aliases)
+    WhisperCppASRProvider,
+    WhisperASR,  # alias
+    OpenAIASRProvider,
+    OpenAIASR,  # alias
+    # LLM Providers (with friendly aliases)
+    OllamaLLMProvider,
+    OllamaLLM,  # alias
+    OpenAILLMProvider,
+    OpenAILLM,  # alias
+    # TTS Providers (with friendly aliases)
+    KokoroTTSProvider,
+    KokoroTTS,  # alias
+    OpenAITTSProvider,
+    OpenAITTS,  # alias
+    # VAD Providers (with friendly aliases)
+    SileroVADProvider,
+    SileroVAD,  # alias
+    WebRTCVADProvider,
+    WebRTCVAD,  # alias
+    # Realtime Providers
+    OpenAIRealtimeProvider,
+    OpenAIRealtime,  # alias
 )
 
 # Callbacks
@@ -98,6 +122,7 @@ from .callbacks import (
 # Chains
 from .chains import (
     ConversationChain,
+    ConversationState as ChainConversationState,
     ParallelStreamingChain,
     SimpleVoiceChain,
     StreamingVoiceChain,
@@ -105,6 +130,10 @@ from .chains import (
     VoiceChainBuilder,
     voice_chain,
 )
+
+# Re-export ConversationState from chains for convenience
+# (this shadows the one from core.state_machine which is identical)
+from .chains.conversation import ConversationState
 
 # Memory
 from .memory import (
@@ -305,7 +334,7 @@ __all__ = [
     "AudioBuffer",
     "TextBuffer",
     "AsyncQueue",
-    # Providers
+    # Providers - Registry and types
     "ProviderRegistry",
     "ProviderType",
     "ProviderInfo",
@@ -319,6 +348,29 @@ __all__ = [
     "register_llm",
     "register_tts",
     "register_vad",
+    # Providers - ASR
+    "WhisperCppASRProvider",
+    "WhisperASR",
+    "OpenAIASRProvider",
+    "OpenAIASR",
+    # Providers - LLM
+    "OllamaLLMProvider",
+    "OllamaLLM",
+    "OpenAILLMProvider",
+    "OpenAILLM",
+    # Providers - TTS
+    "KokoroTTSProvider",
+    "KokoroTTS",
+    "OpenAITTSProvider",
+    "OpenAITTS",
+    # Providers - VAD
+    "SileroVADProvider",
+    "SileroVAD",
+    "WebRTCVADProvider",
+    "WebRTCVAD",
+    # Providers - Realtime
+    "OpenAIRealtimeProvider",
+    "OpenAIRealtime",
     # Callbacks
     "VoiceCallbackHandler",
     "CallbackManager",

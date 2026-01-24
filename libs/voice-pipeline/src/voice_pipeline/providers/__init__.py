@@ -32,7 +32,77 @@ Manual Registration:
 Auto-discovery:
     >>> # Discover providers from installed packages
     >>> registry.auto_discover()
+
+Simple Usage with Aliases:
+    >>> from voice_pipeline.providers import WhisperASR, OllamaLLM, KokoroTTS
+    >>> chain = WhisperASR() | OllamaLLM() | KokoroTTS()
 """
+
+# ============================================================================
+# Provider Implementations (with friendly aliases)
+# ============================================================================
+
+# ASR Providers
+from voice_pipeline.providers.asr import (
+    WhisperCppASRProvider,
+    WhisperCppASRConfig,
+    OpenAIASRProvider,
+    OpenAIASRConfig,
+)
+
+# Friendly aliases for ASR
+WhisperASR = WhisperCppASRProvider
+WhisperASRConfig = WhisperCppASRConfig
+OpenAIASR = OpenAIASRProvider
+
+# LLM Providers
+from voice_pipeline.providers.llm import (
+    OllamaLLMProvider,
+    OllamaLLMConfig,
+    OpenAILLMProvider,
+    OpenAILLMConfig,
+)
+
+# Friendly aliases for LLM
+OllamaLLM = OllamaLLMProvider
+OpenAILLM = OpenAILLMProvider
+
+# TTS Providers
+from voice_pipeline.providers.tts import (
+    KokoroTTSProvider,
+    KokoroTTSConfig,
+    OpenAITTSProvider,
+    OpenAITTSConfig,
+)
+
+# Friendly aliases for TTS
+KokoroTTS = KokoroTTSProvider
+OpenAITTS = OpenAITTSProvider
+
+# VAD Providers
+from voice_pipeline.providers.vad import (
+    SileroVADProvider,
+    SileroVADConfig,
+    WebRTCVADProvider,
+    WebRTCVADConfig,
+)
+
+# Friendly aliases for VAD
+SileroVAD = SileroVADProvider
+WebRTCVAD = WebRTCVADProvider
+
+# Realtime Providers
+from voice_pipeline.providers.realtime import (
+    OpenAIRealtimeProvider,
+    OpenAIRealtimeConfig,
+)
+
+# Friendly alias for Realtime
+OpenAIRealtime = OpenAIRealtimeProvider
+
+# ============================================================================
+# Base classes and utilities
+# ============================================================================
 
 from voice_pipeline.providers.base import (
     BaseProvider,
@@ -74,6 +144,53 @@ from voice_pipeline.providers.types import (
 )
 
 __all__ = [
+    # ========================================================================
+    # Provider Classes (full names)
+    # ========================================================================
+    # ASR
+    "WhisperCppASRProvider",
+    "WhisperCppASRConfig",
+    "OpenAIASRProvider",
+    "OpenAIASRConfig",
+    # LLM
+    "OllamaLLMProvider",
+    "OllamaLLMConfig",
+    "OpenAILLMProvider",
+    "OpenAILLMConfig",
+    # TTS
+    "KokoroTTSProvider",
+    "KokoroTTSConfig",
+    "OpenAITTSProvider",
+    "OpenAITTSConfig",
+    # VAD
+    "SileroVADProvider",
+    "SileroVADConfig",
+    "WebRTCVADProvider",
+    "WebRTCVADConfig",
+    # Realtime
+    "OpenAIRealtimeProvider",
+    "OpenAIRealtimeConfig",
+    # ========================================================================
+    # Friendly Aliases (recommended for simple usage)
+    # ========================================================================
+    # ASR aliases
+    "WhisperASR",
+    "WhisperASRConfig",
+    "OpenAIASR",
+    # LLM aliases
+    "OllamaLLM",
+    "OpenAILLM",
+    # TTS aliases
+    "KokoroTTS",
+    "OpenAITTS",
+    # VAD aliases
+    "SileroVAD",
+    "WebRTCVAD",
+    # Realtime aliases
+    "OpenAIRealtime",
+    # ========================================================================
+    # Base classes and utilities
+    # ========================================================================
     # Base
     "BaseProvider",
     "ProviderConfig",

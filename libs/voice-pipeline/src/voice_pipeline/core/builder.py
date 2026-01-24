@@ -346,18 +346,18 @@ class QuickPipeline:
             PipelineBuilder configured for local providers.
         """
         # Import local providers
-        from ..providers.asr_whisper import WhisperASR
-        from ..providers.llm_ollama import OllamaLLM
-        from ..providers.tts_kokoro import KokoroTTS
-        from ..providers.vad_silero import SileroVAD
+        from ..providers.asr import WhisperCppASRProvider
+        from ..providers.llm import OllamaLLMProvider
+        from ..providers.tts import KokoroTTSProvider
+        from ..providers.vad import SileroVADProvider
 
         return (
             PipelineBuilder()
             .with_config(system_prompt=system_prompt)
-            .with_asr(WhisperASR, model=asr_model)
-            .with_llm(OllamaLLM, model=llm_model)
-            .with_tts(KokoroTTS, voice=tts_voice)
-            .with_vad(SileroVAD)
+            .with_asr(WhisperCppASRProvider, model=asr_model)
+            .with_llm(OllamaLLMProvider, model=llm_model)
+            .with_tts(KokoroTTSProvider, voice=tts_voice)
+            .with_vad(SileroVADProvider)
         )
 
     @staticmethod
@@ -378,14 +378,14 @@ class QuickPipeline:
         Returns:
             PipelineBuilder configured for OpenAI providers.
         """
-        from ..providers.tts_openai import OpenAITTS
-        from ..providers.vad_silero import SileroVAD
+        from ..providers.tts import OpenAITTSProvider
+        from ..providers.vad import SileroVADProvider
 
         return (
             PipelineBuilder()
             .with_config(system_prompt=system_prompt)
-            .with_tts(OpenAITTS, api_key=api_key, voice=voice)
-            .with_vad(SileroVAD)
+            .with_tts(OpenAITTSProvider, api_key=api_key, voice=voice)
+            .with_vad(SileroVADProvider)
         )
 
     @staticmethod
@@ -404,7 +404,7 @@ class QuickPipeline:
         Returns:
             PipelineBuilder configured for OpenAI Realtime.
         """
-        from ..providers.realtime_openai import OpenAIRealtimeProvider
+        from ..providers.realtime import OpenAIRealtimeProvider
 
         return (
             PipelineBuilder()
