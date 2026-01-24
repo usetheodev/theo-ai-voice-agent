@@ -1,4 +1,7 @@
-"""Voice Agent Session - WebSocket handler usando voice-pipeline."""
+"""Voice Agent Session - WebSocket handler usando voice-pipeline.
+
+Usa streaming sentence-level para baixa latência (TTFA ~0.6-0.8s).
+"""
 
 import asyncio
 import logging
@@ -7,7 +10,8 @@ from typing import Optional, Union
 
 from fastapi import WebSocket
 
-from voice_pipeline import VoiceAgent, ConversationChain
+from voice_pipeline import VoiceAgent
+from voice_pipeline.chains import StreamingVoiceChain
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +19,14 @@ logger = logging.getLogger(__name__)
 class VoiceAgentSession:
     """Sessão WebSocket para conversação de voz em tempo real.
 
-    Usa VoiceAgent.builder() para criar pipeline de voz completo.
+    Usa VoiceAgent.builder() com streaming=True para baixa latência.
+
+    Arquitetura:
+        Audio → ASR → LLM (streaming) → SentenceStreamer → TTS → Audio
+                            ↓
+                    [sentença pronta]
+                            ↓
+                      TTS começa
     """
 
     def __init__(self, websocket: WebSocket):
@@ -23,7 +34,7 @@ class VoiceAgentSession:
         self.sample_rate = 16000
 
         # Pipeline será criado no initialize()
-        self._chain: Optional[ConversationChain] = None
+        self._chain: Optional[StreamingVoiceChain] = None
         self._vad = None
         self._is_listening = False
         self._audio_buffer: asyncio.Queue[bytes] = asyncio.Queue()
@@ -32,10 +43,10 @@ class VoiceAgentSession:
         self._silence_threshold_ms = 800
 
     async def initialize(self):
-        """Inicializa voice agent usando builder."""
-        logger.info("Inicializando voice agent...")
+        """Inicializa voice agent com streaming de baixa latência."""
+        logger.info("Inicializando voice agent (streaming mode)...")
 
-        # Criar pipeline completo com builder
+        # Criar pipeline com STREAMING para baixa latência
         builder = (
             VoiceAgent.builder()
             .asr("whisper", model="base", language="pt")
@@ -46,8 +57,7 @@ class VoiceAgentSession:
                 "Você é um assistente de voz prestativo. "
                 "Responda de forma concisa em português brasileiro."
             )
-            .memory(max_messages=20)
-            .barge_in(True)
+            .streaming(True)  # Baixa latência!
         )
 
         # Build e conecta todos os providers
@@ -56,7 +66,7 @@ class VoiceAgentSession:
         # Guardar referência ao VAD para detecção de fala
         self._vad = builder._vad
 
-        logger.info("Voice agent pronto")
+        logger.info("Voice agent pronto (StreamingVoiceChain)")
 
     async def configure(self, sample_rate: int = 16000, language: str = "pt"):
         """Atualiza configuração."""
@@ -96,7 +106,7 @@ class VoiceAgentSession:
                 self._speech_started = False
 
     async def _process_speech(self):
-        """Processa fala coletada."""
+        """Processa fala coletada com streaming de baixa latência."""
         await self._send_status("processing")
 
         try:
@@ -111,25 +121,37 @@ class VoiceAgentSession:
 
             audio_data = b"".join(chunks)
 
-            # Transcrever
-            transcription = await self._chain.asr.ainvoke(audio_data)
-            if not transcription.text.strip():
-                await self._send_status("listening")
-                return
-
-            await self.websocket.send_json({
-                "type": "transcript",
-                "text": transcription.text,
-                "is_final": True
-            })
-
-            # Gerar resposta
+            # Stream áudio de resposta (baixa latência)
             await self._send_status("speaking")
+            first_audio = True
 
             async for audio_chunk in self._chain.astream(audio_data):
+                # Notificar primeiro áudio
+                if first_audio:
+                    first_audio = False
+                    # Enviar métricas parciais
+                    if self._chain.metrics and self._chain.metrics.ttfa:
+                        await self.websocket.send_json({
+                            "type": "metrics",
+                            "ttfa": round(self._chain.metrics.ttfa, 3),
+                        })
+
                 await self.websocket.send_bytes(audio_chunk.data)
 
-            # Resposta final
+            # Enviar métricas finais
+            if self._chain.metrics:
+                metrics = self._chain.metrics
+                await self.websocket.send_json({
+                    "type": "metrics",
+                    "ttft": round(metrics.ttft, 3) if metrics.ttft else None,
+                    "ttfa": round(metrics.ttfa, 3) if metrics.ttfa else None,
+                    "total": round(metrics.total_time, 3) if metrics.total_time else None,
+                    "sentences": metrics.sentences_count,
+                    "tokens": metrics.tokens_count,
+                    "rtf": round(metrics.rtf, 2) if metrics.rtf else None,
+                })
+
+            # Resposta de texto
             if self._chain.messages:
                 last = self._chain.messages[-1]
                 if last.get("role") == "assistant":
@@ -139,7 +161,7 @@ class VoiceAgentSession:
                     })
 
         except Exception as e:
-            logger.error(f"Erro: {e}")
+            logger.error(f"Erro: {e}", exc_info=True)
             await self.websocket.send_json({"type": "error", "message": str(e)})
 
         finally:
