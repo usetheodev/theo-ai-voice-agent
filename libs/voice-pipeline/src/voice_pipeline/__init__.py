@@ -39,6 +39,7 @@ from .core.config import PipelineConfig
 from .core.events import EventEmitter, PipelineEvent, PipelineEventType
 from .core.pipeline import Pipeline
 from .core.state_machine import ConversationState, ConversationStateMachine
+from .core.builder import PipelineBuilder, QuickPipeline
 
 # Interfaces
 from .interfaces.asr import ASRInput, ASRInterface, TranscriptionResult
@@ -263,6 +264,8 @@ __all__ = [
     # Core
     "Pipeline",
     "PipelineConfig",
+    "PipelineBuilder",
+    "QuickPipeline",
     "ConversationState",
     "ConversationStateMachine",
     "EventEmitter",

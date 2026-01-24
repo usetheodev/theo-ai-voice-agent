@@ -238,3 +238,268 @@ class TestMockProviders:
         # Last 2 should be silence
         assert not events[3].is_speech
         assert not events[4].is_speech
+
+
+# ==============================================================================
+# PipelineBuilder Integration Tests
+# ==============================================================================
+
+
+class TestPipelineBuilderIntegration:
+    """Tests for PipelineBuilder integration."""
+
+    def test_build_pipeline_with_builder(self):
+        """Test building pipeline with builder."""
+        from voice_pipeline import PipelineBuilder
+
+        pipeline = (
+            PipelineBuilder()
+            .with_config(system_prompt="Builder test")
+            .with_asr(MockASR())
+            .with_llm(MockLLM())
+            .with_tts(MockTTS())
+            .with_vad(MockVAD())
+            .build()
+        )
+
+        assert pipeline.config.system_prompt == "Builder test"
+
+    def test_build_chain_with_builder(self):
+        """Test building chain with builder."""
+        from voice_pipeline import PipelineBuilder
+
+        chain = (
+            PipelineBuilder()
+            .with_asr(MockASR())
+            .with_llm(MockLLM())
+            .with_tts(MockTTS())
+            .build_chain()
+        )
+
+        assert chain is not None
+
+
+# ==============================================================================
+# Sentence Extraction Tests
+# ==============================================================================
+
+
+class TestSentenceExtraction:
+    """Tests for sentence extraction in pipeline.
+
+    Note: _extract_sentences always returns a list where the last element
+    is the incomplete/remaining text (which may be empty).
+    """
+
+    def test_extract_sentences_basic(self):
+        """Test basic sentence extraction (min_tts_chars=5 for testing)."""
+        pipeline = Pipeline(
+            config=PipelineConfig(min_tts_chars=5),
+            asr=MockASR(),
+            llm=MockLLM(),
+            tts=MockTTS(),
+            vad=MockVAD(),
+        )
+
+        sentences = pipeline._extract_sentences("Hello. World.")
+        # Last element is the remaining text (empty in this case)
+        assert len(sentences) >= 2
+        assert sentences[0] == "Hello."
+        assert sentences[1] == "World."
+
+    def test_extract_sentences_question(self):
+        """Test sentence extraction with question mark."""
+        pipeline = Pipeline(
+            config=PipelineConfig(min_tts_chars=5),
+            asr=MockASR(),
+            llm=MockLLM(),
+            tts=MockTTS(),
+            vad=MockVAD(),
+        )
+
+        sentences = pipeline._extract_sentences("How are you? I am fine.")
+        # Complete sentences are extracted, last may be empty
+        assert sentences[0] == "How are you?"
+        assert sentences[1] == "I am fine."
+
+    def test_extract_sentences_incomplete(self):
+        """Test sentence extraction with incomplete sentence."""
+        pipeline = Pipeline(
+            config=PipelineConfig(min_tts_chars=5),
+            asr=MockASR(),
+            llm=MockLLM(),
+            tts=MockTTS(),
+            vad=MockVAD(),
+        )
+
+        sentences = pipeline._extract_sentences("Hello. This is")
+        assert len(sentences) == 2
+        assert sentences[0] == "Hello."
+        assert "This is" in sentences[1]
+
+    def test_extract_sentences_long_text(self):
+        """Test sentence extraction with longer text (default min_tts_chars)."""
+        pipeline = Pipeline(
+            config=PipelineConfig(),
+            asr=MockASR(),
+            llm=MockLLM(),
+            tts=MockTTS(),
+            vad=MockVAD(),
+        )
+
+        text = "This is a longer sentence. And this is another one."
+        sentences = pipeline._extract_sentences(text)
+        # Should have complete sentences plus remaining (empty)
+        assert sentences[0] == "This is a longer sentence."
+        assert sentences[1] == "And this is another one."
+
+
+# ==============================================================================
+# Pipeline Configuration Tests
+# ==============================================================================
+
+
+class TestPipelineConfiguration:
+    """Tests for pipeline configuration options."""
+
+    def test_barge_in_configuration(self):
+        """Test barge-in configuration."""
+        pipeline = Pipeline(
+            config=PipelineConfig(
+                enable_barge_in=True,
+                barge_in_threshold_ms=200,
+                barge_in_backoff_ms=100,
+            ),
+            asr=MockASR(),
+            llm=MockLLM(),
+            tts=MockTTS(),
+            vad=MockVAD(),
+        )
+
+        assert pipeline.config.enable_barge_in is True
+        assert pipeline.config.barge_in_threshold_ms == 200
+        assert pipeline.config.barge_in_backoff_ms == 100
+
+    def test_vad_configuration(self):
+        """Test VAD configuration."""
+        pipeline = Pipeline(
+            config=PipelineConfig(
+                vad_silence_ms=500,
+            ),
+            asr=MockASR(),
+            llm=MockLLM(),
+            tts=MockTTS(),
+            vad=MockVAD(),
+        )
+
+        assert pipeline.config.vad_silence_ms == 500
+
+    def test_llm_configuration(self):
+        """Test LLM configuration."""
+        pipeline = Pipeline(
+            config=PipelineConfig(
+                llm_temperature=0.3,
+                llm_max_tokens=1000,
+            ),
+            asr=MockASR(),
+            llm=MockLLM(),
+            tts=MockTTS(),
+            vad=MockVAD(),
+        )
+
+        assert pipeline.config.llm_temperature == 0.3
+        assert pipeline.config.llm_max_tokens == 1000
+
+
+# ==============================================================================
+# State Machine Integration Tests
+# ==============================================================================
+
+
+class TestStateMachineIntegration:
+    """Tests for state machine integration in pipeline."""
+
+    def test_initial_state(self):
+        """Test pipeline starts in IDLE state."""
+        from voice_pipeline.core.state_machine import ConversationState
+
+        pipeline = Pipeline(
+            config=PipelineConfig(),
+            asr=MockASR(),
+            llm=MockLLM(),
+            tts=MockTTS(),
+            vad=MockVAD(),
+        )
+
+        assert pipeline.state_machine.state == ConversationState.IDLE
+
+    def test_transition_to_listening(self):
+        """Test manual transition to LISTENING."""
+        from voice_pipeline.core.state_machine import ConversationState
+
+        pipeline = Pipeline(
+            config=PipelineConfig(),
+            asr=MockASR(),
+            llm=MockLLM(),
+            tts=MockTTS(),
+            vad=MockVAD(),
+        )
+
+        pipeline.state_machine.transition_to(ConversationState.LISTENING)
+        assert pipeline.state_machine.state == ConversationState.LISTENING
+
+    def test_reset_to_idle(self):
+        """Test reset returns to IDLE."""
+        from voice_pipeline.core.state_machine import ConversationState
+
+        pipeline = Pipeline(
+            config=PipelineConfig(),
+            asr=MockASR(),
+            llm=MockLLM(),
+            tts=MockTTS(),
+            vad=MockVAD(),
+        )
+
+        pipeline.state_machine.transition_to(ConversationState.PROCESSING)
+        pipeline.reset()
+        assert pipeline.state_machine.state == ConversationState.IDLE
+
+
+# ==============================================================================
+# Context Management Tests
+# ==============================================================================
+
+
+class TestContextManagement:
+    """Tests for conversation context management."""
+
+    def test_empty_context(self):
+        """Test context starts empty."""
+        pipeline = Pipeline(
+            config=PipelineConfig(),
+            asr=MockASR(),
+            llm=MockLLM(),
+            tts=MockTTS(),
+            vad=MockVAD(),
+        )
+
+        assert len(pipeline.context.messages) == 0
+        assert pipeline.context.current_transcription == ""
+
+    def test_context_cleared_on_reset(self):
+        """Test context is cleared on reset."""
+        pipeline = Pipeline(
+            config=PipelineConfig(),
+            asr=MockASR(),
+            llm=MockLLM(),
+            tts=MockTTS(),
+            vad=MockVAD(),
+        )
+
+        pipeline.context.messages.append({"role": "user", "content": "Hi"})
+        pipeline.context.current_transcription = "Hi"
+
+        pipeline.reset()
+
+        assert len(pipeline.context.messages) == 0
+        assert pipeline.context.current_transcription == ""

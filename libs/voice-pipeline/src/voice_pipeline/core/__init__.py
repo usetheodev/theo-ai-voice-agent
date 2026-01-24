@@ -4,6 +4,7 @@ from .pipeline import Pipeline
 from .config import PipelineConfig
 from .state_machine import ConversationState, ConversationStateMachine
 from .events import EventEmitter, PipelineEvent, PipelineEventType
+from .builder import PipelineBuilder, QuickPipeline
 
 __all__ = [
     "Pipeline",
@@ -13,4 +14,6 @@ __all__ = [
     "EventEmitter",
     "PipelineEvent",
     "PipelineEventType",
+    "PipelineBuilder",
+    "QuickPipeline",
 ]
