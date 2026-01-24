@@ -34,6 +34,16 @@ Auto-discovery:
     >>> registry.auto_discover()
 """
 
+from voice_pipeline.providers.base import (
+    BaseProvider,
+    HealthCheckResult,
+    NonRetryableError,
+    ProviderConfig,
+    ProviderHealth,
+    ProviderMetrics,
+    RetryableError,
+    config_from_env,
+)
 from voice_pipeline.providers.decorators import (
     register_asr,
     register_llm,
@@ -64,6 +74,15 @@ from voice_pipeline.providers.types import (
 )
 
 __all__ = [
+    # Base
+    "BaseProvider",
+    "ProviderConfig",
+    "ProviderHealth",
+    "ProviderMetrics",
+    "HealthCheckResult",
+    "RetryableError",
+    "NonRetryableError",
+    "config_from_env",
     # Registry
     "ProviderRegistry",
     "get_registry",
