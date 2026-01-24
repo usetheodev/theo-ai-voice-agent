@@ -1,0 +1,15 @@
+# Voice Agent Web App Dependencies
+
+# Backend (required)
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+websockets>=11.0
+
+# Voice Pipeline (install from parent)
+# pip install -e ../..
+
+# Optional: Real Providers
+# openai-whisper      # Whisper ASR
+# ollama              # Ollama LLM
+# kokoro-onnx         # Kokoro TTS
+# torch               # PyTorch (for Silero VAD)
