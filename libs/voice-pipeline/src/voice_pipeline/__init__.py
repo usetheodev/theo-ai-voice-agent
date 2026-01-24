@@ -182,6 +182,39 @@ from .multi_agent import (
     create_collaboration,
 )
 
+# MCP (Model Context Protocol)
+from .mcp import (
+    # Types
+    MCPTool,
+    MCPToolCall,
+    MCPResult,
+    MCPResource,
+    MCPPrompt,
+    MCPCapabilities,
+    MCPError,
+    MCPErrorCode,
+    TransportType,
+    # Client
+    MCPClient,
+    MCPClientConfig,
+    MCPConnection,
+    # Server
+    MCPServer,
+    MCPServerConfig,
+    VoiceMCP,
+    # Tools
+    MCPToolAdapter,
+    MCPToolExecutor,
+    mcp_tool_to_voice_tool,
+    mcp_tools_to_voice_tools,
+    voice_tool_to_mcp,
+    voice_tools_to_mcp,
+    # Agent
+    MCPEnabledAgent,
+    create_mcp_agent,
+    load_mcp_tools,
+)
+
 __version__ = "0.1.0"
 
 __all__ = [
@@ -333,4 +366,29 @@ __all__ = [
     "CollaborativeAgents",
     "SharedScratchpad",
     "create_collaboration",
+    # MCP
+    "MCPTool",
+    "MCPToolCall",
+    "MCPResult",
+    "MCPResource",
+    "MCPPrompt",
+    "MCPCapabilities",
+    "MCPError",
+    "MCPErrorCode",
+    "TransportType",
+    "MCPClient",
+    "MCPClientConfig",
+    "MCPConnection",
+    "MCPServer",
+    "MCPServerConfig",
+    "VoiceMCP",
+    "MCPToolAdapter",
+    "MCPToolExecutor",
+    "mcp_tool_to_voice_tool",
+    "mcp_tools_to_voice_tools",
+    "voice_tool_to_mcp",
+    "voice_tools_to_mcp",
+    "MCPEnabledAgent",
+    "create_mcp_agent",
+    "load_mcp_tools",
 ]
