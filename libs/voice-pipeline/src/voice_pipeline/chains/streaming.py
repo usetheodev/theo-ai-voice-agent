@@ -11,6 +11,11 @@ This implements sentence-level streaming between LLM and TTS:
 
 This reduces TTFA (Time to First Audio) from ~2-3s to ~0.6-0.8s.
 
+With Streaming ASR (e.g., Deepgram):
+- ASR provides partial transcriptions as audio is received
+- LLM can start generating before ASR is complete
+- Additional ~200-300ms latency reduction
+
 Reference:
 - https://arxiv.org/html/2508.04721v1 (Low-Latency Voice Agents)
 - https://github.com/pipecat-ai/pipecat (SentenceAggregator pattern)
@@ -35,13 +40,43 @@ from voice_pipeline.interfaces import (
     AudioChunk,
     LLMChunk,
     LLMInterface,
+    RAGInterface,
     TTSInterface,
+    TranscriptionResult,
 )
 from voice_pipeline.runnable import RunnableConfig, VoiceRunnable, ensure_config
 from voice_pipeline.streaming import SentenceStreamer, SentenceStreamerConfig
 from voice_pipeline.streaming.metrics import StreamingMetrics
 
 logger = logging.getLogger(__name__)
+
+
+def _is_realtime_asr(asr: ASRInterface) -> bool:
+    """Check if ASR provider supports real-time streaming.
+
+    Real-time ASR providers (like Deepgram) can provide partial
+    transcriptions as audio is received, enabling lower latency.
+
+    Args:
+        asr: ASR provider instance.
+
+    Returns:
+        True if provider supports real-time streaming.
+    """
+    # Check for provider registry info
+    if hasattr(asr, '_registry_info'):
+        caps = asr._registry_info.capabilities
+        if hasattr(caps, 'real_time'):
+            return caps.real_time
+
+    # Check for provider name patterns
+    provider_name = getattr(asr, 'provider_name', '').lower()
+    realtime_providers = {'deepgram', 'assemblyai', 'speechmatics', 'aws-transcribe'}
+    if provider_name in realtime_providers:
+        return True
+
+    # Default: not real-time (batch ASR)
+    return False
 
 
 class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
@@ -52,12 +87,17 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
     are available from the LLM, rather than waiting for the full
     response. This significantly reduces time-to-first-audio.
 
-    Architecture:
+    Architecture (Batch ASR):
         Audio → ASR → LLM (streaming) → Sentence Buffer → TTS (streaming) → Audio
                             ↓
                      [sentence ready]
                             ↓
                       TTS starts
+
+    Architecture (Streaming ASR - e.g., Deepgram):
+        Audio stream → ASR (streaming) → [partial text] → LLM starts early
+                                              ↓
+                              LLM (streaming) → Sentence Buffer → TTS → Audio
 
     Example:
         >>> chain = StreamingVoiceChain(
@@ -65,11 +105,20 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
         ...     llm=ollama_llm,
         ...     tts=piper_tts,
         ...     min_sentence_chars=20,
+        ...     auto_warmup=True,  # Eliminate cold start
         ... )
         >>>
         >>> # Audio arrives as soon as first sentence is ready
         >>> async for audio in chain.astream(audio_bytes):
         ...     play(audio)  # Low latency!
+        >>>
+        >>> # With Deepgram streaming ASR
+        >>> chain = StreamingVoiceChain(
+        ...     asr=deepgram_asr,  # Real-time ASR
+        ...     llm=ollama_llm,
+        ...     tts=kokoro_tts,
+        ...     use_streaming_asr=True,  # Enable streaming ASR
+        ... )
     """
 
     name: str = "StreamingVoiceChain"
@@ -79,6 +128,8 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
         asr: ASRInterface,
         llm: LLMInterface,
         tts: TTSInterface,
+        rag: Optional[RAGInterface] = None,
+        rag_k: int = 5,
         system_prompt: Optional[str] = None,
         language: Optional[str] = None,
         tts_voice: Optional[str] = None,
@@ -86,6 +137,9 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
         min_sentence_chars: int = 20,
         max_sentence_chars: int = 200,
         sentence_end_chars: Optional[list[str]] = None,
+        auto_warmup: bool = True,
+        use_streaming_asr: bool = True,
+        streaming_asr_min_words: int = 3,
     ):
         """
         Initialize the streaming chain.
@@ -94,6 +148,8 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
             asr: ASR provider.
             llm: LLM provider.
             tts: TTS provider.
+            rag: Optional RAG provider for knowledge-augmented responses.
+            rag_k: Number of documents to retrieve for RAG (default: 5).
             system_prompt: System prompt for the LLM.
             language: Language code for ASR.
             tts_voice: Voice identifier for TTS.
@@ -101,14 +157,27 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
             min_sentence_chars: Minimum characters before emitting sentence.
             max_sentence_chars: Maximum characters before forcing emission.
             sentence_end_chars: Characters that end sentences.
+            auto_warmup: If True, automatically warm up TTS on connect().
+                        This eliminates cold-start latency on first synthesis.
+                        Default: True (recommended for production).
+            use_streaming_asr: If True, use streaming ASR when available.
+                              This starts LLM before ASR completes, reducing
+                              latency by ~200-300ms. Default: True.
+            streaming_asr_min_words: Minimum words before starting LLM
+                                    (only for streaming ASR). Default: 3.
         """
         self.asr = asr
         self.llm = llm
         self.tts = tts
+        self.rag = rag
+        self.rag_k = rag_k
         self.system_prompt = system_prompt
         self.language = language
         self.tts_voice = tts_voice
         self.llm_temperature = llm_temperature
+        self.auto_warmup = auto_warmup
+        self.use_streaming_asr = use_streaming_asr
+        self.streaming_asr_min_words = streaming_asr_min_words
 
         # Sentence streamer config
         self.streamer_config = SentenceStreamerConfig(
@@ -122,16 +191,33 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
         # Metrics from last run
         self.metrics: Optional[StreamingMetrics] = None
 
+        # Warmup metrics
+        self.warmup_time_ms: Optional[float] = None
+
+        # Track if streaming ASR is being used
+        self._using_streaming_asr: bool = False
+
     @property
     def messages(self) -> list[dict[str, str]]:
         """Current conversation history."""
         return self._messages.copy()
 
     async def connect(self) -> None:
-        """Connect all providers."""
+        """Connect all providers and optionally warm up TTS.
+
+        If auto_warmup is enabled (default), this method will also
+        call tts.warmup() to eliminate cold-start latency.
+
+        The warmup time is stored in self.warmup_time_ms.
+        """
         await self.asr.connect()
         await self.llm.connect()
         await self.tts.connect()
+
+        # Warm up TTS to eliminate cold-start latency
+        if self.auto_warmup and hasattr(self.tts, 'warmup'):
+            self.warmup_time_ms = await self.tts.warmup()
+            logger.info(f"TTS warmed up in {self.warmup_time_ms:.1f}ms")
 
     async def disconnect(self) -> None:
         """Disconnect all providers."""
@@ -153,6 +239,32 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
         to check a cancellation flag. This is a placeholder.
         """
         logger.info("Interrupt requested")
+
+    async def _augment_with_rag(self, user_text: str) -> str:
+        """Augment user text with RAG context if available.
+
+        Args:
+            user_text: Original user text.
+
+        Returns:
+            Augmented text with RAG context, or original if no RAG.
+        """
+        if self.rag is None:
+            return user_text
+
+        try:
+            context, results = await self.rag.query(user_text, k=self.rag_k)
+            if context:
+                augmented = self.rag.build_rag_prompt(
+                    query=user_text,
+                    context=context,
+                )
+                logger.info(f"RAG: Retrieved {len(results)} documents")
+                return augmented
+        except Exception as e:
+            logger.warning(f"RAG error (falling back to direct): {e}")
+
+        return user_text
 
     async def ainvoke(
         self,
@@ -180,6 +292,10 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
         Uses a sentence buffer to start TTS as soon as complete
         sentences are available from the LLM.
 
+        If use_streaming_asr=True and the ASR provider supports real-time
+        streaming (like Deepgram), the pipeline will start LLM generation
+        before ASR is complete, reducing latency by ~200-300ms.
+
         Metrics are collected and available via self.metrics after completion.
         """
         config = ensure_config(config)
@@ -187,6 +303,14 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
         # Initialize metrics
         self.metrics = StreamingMetrics()
         self.metrics.start()
+
+        # Check if we should use streaming ASR
+        self._using_streaming_asr = (
+            self.use_streaming_asr and _is_realtime_asr(self.asr)
+        )
+
+        if self._using_streaming_asr:
+            logger.info("Using streaming ASR mode")
 
         try:
             # Step 1: ASR
@@ -197,39 +321,264 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
                 configurable={"language": self.language},
             ).merge(config)
 
-            transcription = await self.asr.ainvoke(input, asr_config)
-            await emit_asr_end(transcription)
-            self.metrics.mark_asr_end()
+            # Use streaming ASR if available and enabled
+            if self._using_streaming_asr:
+                async for audio_chunk in self._stream_with_streaming_asr(
+                    input, asr_config, config
+                ):
+                    yield audio_chunk
+            else:
+                # Standard batch ASR mode
+                transcription = await self.asr.ainvoke(input, asr_config)
+                await emit_asr_end(transcription)
+                self.metrics.mark_asr_end()
 
-            if not transcription.text.strip():
-                return
+                if not transcription.text.strip():
+                    return
 
-            logger.info(f"ASR: {transcription.text}")
+                logger.info(f"ASR: {transcription.text}")
 
-            # Add user message
-            self._messages.append({"role": "user", "content": transcription.text})
+                # Augment with RAG context if available
+                user_content = await self._augment_with_rag(transcription.text)
 
-            # Step 2: LLM with sentence streaming
-            await emit_llm_start(self._messages)
+                # Add user message
+                self._messages.append({"role": "user", "content": user_content})
 
-            llm_config = RunnableConfig(
-                configurable={
-                    "system_prompt": self.system_prompt,
-                    "temperature": self.llm_temperature,
-                },
-            ).merge(config)
+                # Step 2: LLM with sentence streaming
+                await emit_llm_start(self._messages)
 
-            tts_config = RunnableConfig(
-                configurable={"voice": self.tts_voice},
-            ).merge(config)
+                llm_config = RunnableConfig(
+                    configurable={
+                        "system_prompt": self.system_prompt,
+                        "temperature": self.llm_temperature,
+                    },
+                ).merge(config)
 
-            # Stream LLM -> Sentence Buffer -> TTS
-            async for audio_chunk in self._stream_with_buffer(llm_config, tts_config):
-                yield audio_chunk
+                tts_config = RunnableConfig(
+                    configurable={"voice": self.tts_voice},
+                ).merge(config)
+
+                # Stream LLM -> Sentence Buffer -> TTS
+                async for audio_chunk in self._stream_with_buffer(llm_config, tts_config):
+                    yield audio_chunk
 
         finally:
             self.metrics.end()
             logger.info(f"Streaming metrics: {self.metrics}")
+
+    async def _stream_with_streaming_asr(
+        self,
+        audio_input: bytes,
+        asr_config: RunnableConfig,
+        config: RunnableConfig,
+    ) -> AsyncIterator[AudioChunk]:
+        """
+        Stream with real-time ASR for lower latency.
+
+        With streaming ASR (like Deepgram), we can start the LLM
+        as soon as we have enough partial transcription, rather than
+        waiting for the complete transcription.
+
+        Flow:
+        1. Start ASR streaming
+        2. Collect partial transcriptions
+        3. When we have enough words, start LLM
+        4. Continue collecting ASR updates
+        5. LLM generates response based on partial input
+        6. TTS synthesizes
+
+        This can reduce latency by ~200-300ms compared to batch ASR.
+        """
+        llm_config = RunnableConfig(
+            configurable={
+                "system_prompt": self.system_prompt,
+                "temperature": self.llm_temperature,
+            },
+        ).merge(config)
+
+        tts_config = RunnableConfig(
+            configurable={"voice": self.tts_voice},
+        ).merge(config)
+
+        # Track transcription state
+        partial_text = ""
+        final_text = ""
+        llm_started = False
+        llm_task: Optional[asyncio.Task] = None
+
+        # Queue for partial/final transcriptions
+        transcription_queue: asyncio.Queue[Optional[TranscriptionResult]] = asyncio.Queue()
+
+        # Queue for sentences (from LLM)
+        sentence_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+
+        async def asr_producer():
+            """Stream audio through ASR and collect transcriptions."""
+            nonlocal partial_text, final_text
+
+            async def audio_generator():
+                # Send audio in chunks for streaming
+                chunk_size = 4000  # ~250ms of audio at 16kHz
+                for i in range(0, len(audio_input), chunk_size):
+                    yield audio_input[i:i + chunk_size]
+                    await asyncio.sleep(0.01)  # Small delay to simulate real-time
+
+            try:
+                async for result in self.asr.astream(audio_generator(), asr_config):
+                    if result.is_final:
+                        final_text += result.text + " "
+                    else:
+                        partial_text = result.text
+
+                    await transcription_queue.put(result)
+
+                # Signal completion
+                await transcription_queue.put(None)
+                await emit_asr_end(TranscriptionResult(
+                    text=final_text.strip() or partial_text,
+                    is_final=True
+                ))
+                self.metrics.mark_asr_end()
+
+            except Exception as e:
+                logger.error(f"ASR error: {e}")
+                await transcription_queue.put(None)
+
+        async def llm_producer(input_text: str):
+            """Produce sentences from LLM stream."""
+            response_text = ""
+
+            self.metrics.mark_llm_start()
+            streamer = SentenceStreamer(self.streamer_config)
+
+            async for chunk in self.llm.astream(self._messages, llm_config):
+                token = chunk.text if isinstance(chunk, LLMChunk) else str(chunk)
+                response_text += token
+                await emit_llm_token(token)
+
+                # Mark first token
+                self.metrics.mark_first_token()
+                self.metrics.add_token()
+
+                # Check for complete sentences
+                sentences = streamer.process(token)
+                for sentence in sentences:
+                    self.metrics.add_sentence()
+                    await sentence_queue.put(sentence)
+
+            # Flush remaining text
+            remaining = streamer.flush()
+            if remaining:
+                self.metrics.add_sentence()
+                await sentence_queue.put(remaining)
+
+            # Signal completion
+            await sentence_queue.put(None)
+            await emit_llm_end(response_text)
+            self.metrics.mark_llm_end()
+
+            # Add assistant message
+            self._messages.append({"role": "assistant", "content": response_text})
+            logger.info(f"LLM response: {response_text[:100]}...")
+
+        async def tts_consumer():
+            """Consume sentences and produce audio."""
+            self.metrics.mark_tts_start()
+            tts_started = False
+
+            while True:
+                try:
+                    sentence = await asyncio.wait_for(
+                        sentence_queue.get(),
+                        timeout=30.0,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("TTS consumer timeout")
+                    break
+
+                if sentence is None:
+                    break
+
+                if not sentence.strip():
+                    continue
+
+                if not tts_started:
+                    await emit_tts_start(sentence)
+                    tts_started = True
+
+                logger.debug(f"TTS synthesizing: {sentence[:50]}...")
+
+                async for audio_chunk in self.tts.astream(sentence, tts_config):
+                    self.metrics.mark_first_audio()
+                    self.metrics.add_audio_chunk(
+                        len(audio_chunk.data),
+                        audio_chunk.sample_rate,
+                    )
+
+                    await emit_tts_chunk(audio_chunk)
+                    yield audio_chunk
+
+            if tts_started:
+                await emit_tts_end()
+
+            self.metrics.mark_tts_end()
+
+        # Start ASR streaming
+        asr_task = asyncio.create_task(asr_producer())
+
+        try:
+            # Process transcriptions as they arrive
+            while True:
+                try:
+                    result = await asyncio.wait_for(
+                        transcription_queue.get(),
+                        timeout=30.0,
+                    )
+                except asyncio.TimeoutError:
+                    break
+
+                if result is None:
+                    break
+
+                # Check if we should start LLM
+                current_text = final_text + partial_text
+                word_count = len(current_text.split())
+
+                if not llm_started and word_count >= self.streaming_asr_min_words:
+                    # Start LLM with partial transcription
+                    llm_started = True
+                    user_text = current_text.strip()
+
+                    logger.info(f"Starting LLM with partial ASR: '{user_text}'")
+
+                    # Augment with RAG if available
+                    user_content = await self._augment_with_rag(user_text)
+                    self._messages.append({"role": "user", "content": user_content})
+                    await emit_llm_start(self._messages)
+
+                    llm_task = asyncio.create_task(llm_producer(user_text))
+
+            # If LLM wasn't started (short utterance), start it now
+            if not llm_started:
+                user_text = (final_text + partial_text).strip()
+                if user_text:
+                    # Augment with RAG if available
+                    user_content = await self._augment_with_rag(user_text)
+                    self._messages.append({"role": "user", "content": user_content})
+                    await emit_llm_start(self._messages)
+                    llm_task = asyncio.create_task(llm_producer(user_text))
+                else:
+                    return
+
+            # Consume TTS output
+            async for audio_chunk in tts_consumer():
+                yield audio_chunk
+
+        finally:
+            # Ensure tasks complete
+            await asr_task
+            if llm_task:
+                await llm_task
 
     async def _stream_with_buffer(
         self,

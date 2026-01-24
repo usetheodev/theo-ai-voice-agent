@@ -32,18 +32,19 @@ class TestSentenceStreamer:
     @pytest.mark.asyncio
     async def test_min_chars(self):
         """Test minimum character threshold."""
-        config = SentenceStreamerConfig(min_chars=10)
+        # Disable quick phrases to test pure min_chars behavior
+        config = SentenceStreamerConfig(min_chars=10, enable_quick_phrases=False)
         streamer = SentenceStreamer(config)
 
         async def token_stream():
-            yield "Hi. "  # Too short
+            yield "Ab. "  # Too short (not a quick phrase)
             yield "This is longer."
 
         sentences = []
         async for sentence in streamer.process_stream(token_stream()):
             sentences.append(sentence)
 
-        # "Hi." is too short, gets combined
+        # "Ab." is too short (4 chars < 10), gets combined
         assert len(sentences) == 1
 
     @pytest.mark.asyncio
@@ -101,7 +102,13 @@ class TestSentenceStreamer:
     @pytest.mark.asyncio
     async def test_multiple_sentence_endings(self):
         """Test different sentence ending characters."""
-        config = SentenceStreamerConfig(min_chars=1)  # Allow short sentences
+        # Disable quick phrases to test pure punctuation detection
+        config = SentenceStreamerConfig(
+            min_chars=1,
+            min_chars_exclamation=1,
+            min_chars_question=1,
+            enable_quick_phrases=False,
+        )
         streamer = SentenceStreamer(config)
 
         async def token_stream():

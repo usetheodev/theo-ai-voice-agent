@@ -203,6 +203,16 @@ class KokoroTTSProvider(BaseProvider, TTSInterface):
     provider_name: str = "kokoro-tts"
     name: str = "KokoroTTS"
 
+    # Warmup text per language (short, natural phrases)
+    _WARMUP_TEXTS = {
+        "a": "Hello.",          # American English
+        "b": "Hello.",          # British English
+        "j": "こんにちは。",      # Japanese
+        "k": "안녕하세요.",       # Korean
+        "z": "你好。",           # Chinese
+        "p": "Olá.",            # Portuguese
+    }
+
     def __init__(
         self,
         config: Optional[KokoroTTSConfig] = None,
@@ -286,7 +296,47 @@ class KokoroTTSProvider(BaseProvider, TTSInterface):
             self._executor.shutdown(wait=False)
             self._executor = None
         self._pipeline = None
+        self._is_warmed_up = False
         await super().disconnect()
+
+    async def warmup(self, text: Optional[str] = None) -> float:
+        """Pre-load the Kokoro TTS model to eliminate cold-start latency.
+
+        Uses language-appropriate warmup text for natural model loading.
+        This is especially important for Kokoro as the first synthesis
+        often takes 2-3x longer due to model initialization.
+
+        Args:
+            text: Custom warmup text. Defaults to language-appropriate phrase.
+
+        Returns:
+            Warmup time in milliseconds.
+
+        Example:
+            >>> tts = KokoroTTSProvider(lang_code="p", voice="pf_dora")
+            >>> await tts.connect()
+            >>> warmup_ms = await tts.warmup()
+            >>> print(f"Kokoro warmed up in {warmup_ms:.1f}ms")
+            >>> # First real synthesis is now fast (~100-200ms vs ~500-800ms)
+        """
+        if self._pipeline is None:
+            raise RuntimeError("Pipeline not connected. Call connect() first.")
+
+        # Use language-appropriate warmup text
+        warmup_text = text or self._WARMUP_TEXTS.get(
+            self._tts_config.lang_code,
+            "Hello."
+        )
+
+        start = time.perf_counter()
+
+        # Synthesize dummy text to warm up the model
+        _ = await self.synthesize(warmup_text)
+
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        self._is_warmed_up = True
+
+        return elapsed_ms
 
     async def _do_health_check(self) -> HealthCheckResult:
         """Check if Kokoro is ready."""

@@ -30,6 +30,14 @@ from .transport import (
     TransportInput,
     TransportState,
 )
+from .rag import (
+    Document,
+    RetrievalResult,
+    EmbeddingInterface,
+    VectorStoreInterface,
+    RAGInterface,
+    SimpleRAG,
+)
 
 __all__ = [
     # ASR
@@ -63,4 +71,11 @@ __all__ = [
     "TransportState",
     "AudioConfig",
     "AudioFrame",
+    # RAG
+    "Document",
+    "RetrievalResult",
+    "EmbeddingInterface",
+    "VectorStoreInterface",
+    "RAGInterface",
+    "SimpleRAG",
 ]

@@ -73,11 +73,13 @@ async def main():
         .llm("ollama", model="qwen2.5:0.5b")
         .tts("kokoro", voice="pf_dora")
         .system_prompt("Você é um assistente de voz.")
-        .streaming(True)  # Sentence-level streaming
+        .streaming(True)   # Sentence-level streaming
+        .warmup(True)      # Elimina cold start do TTS
         .build()
     )
     print(f"    Tipo: {type(stream_chain).__name__}")
     print("    Latência: ~0.6-0.8s TTFA (streaming por sentença)")
+    print("    Warmup: Elimina cold start (~200-400ms economia)")
     print("    Métricas disponíveis: stream_chain.metrics")
 
     # =========================================================

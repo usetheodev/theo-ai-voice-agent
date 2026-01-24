@@ -198,7 +198,42 @@ class OpenAITTSProvider(BaseProvider, TTSInterface):
             await self._async_client.close()
         self._async_client = None
         self._client = None
+        self._is_warmed_up = False
         await super().disconnect()
+
+    async def warmup(self, text: Optional[str] = None) -> float:
+        """Pre-warm the OpenAI TTS connection.
+
+        For cloud APIs like OpenAI, warmup primarily ensures the connection
+        is established and the first request is complete. This can help
+        reduce latency on subsequent requests due to connection reuse.
+
+        Args:
+            text: Custom warmup text. Defaults to "Hello."
+
+        Returns:
+            Warmup time in milliseconds.
+
+        Example:
+            >>> tts = OpenAITTSProvider(voice="nova", api_key="sk-...")
+            >>> await tts.connect()
+            >>> warmup_ms = await tts.warmup()
+            >>> print(f"OpenAI TTS warmed up in {warmup_ms:.1f}ms")
+        """
+        if self._async_client is None:
+            raise RuntimeError("Client not connected. Call connect() first.")
+
+        warmup_text = text or "Hello."
+
+        start = time.perf_counter()
+
+        # Make a minimal synthesis request to warm up the connection
+        _ = await self.synthesize(warmup_text)
+
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        self._is_warmed_up = True
+
+        return elapsed_ms
 
     async def _do_health_check(self) -> HealthCheckResult:
         """Check if OpenAI TTS API is accessible."""

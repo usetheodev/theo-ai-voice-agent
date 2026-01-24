@@ -100,6 +100,18 @@ from voice_pipeline.providers.realtime import (
 # Friendly alias for Realtime
 OpenAIRealtime = OpenAIRealtimeProvider
 
+# Embedding Providers
+from voice_pipeline.providers.embedding import (
+    SentenceTransformerEmbedding,
+    SentenceTransformerEmbeddingConfig,
+)
+
+# Vector Store Providers
+from voice_pipeline.providers.vectorstore import (
+    FAISSVectorStore,
+    FAISSVectorStoreConfig,
+)
+
 # ============================================================================
 # Base classes and utilities
 # ============================================================================
@@ -188,6 +200,12 @@ __all__ = [
     "WebRTCVAD",
     # Realtime aliases
     "OpenAIRealtime",
+    # Embedding
+    "SentenceTransformerEmbedding",
+    "SentenceTransformerEmbeddingConfig",
+    # Vector Store
+    "FAISSVectorStore",
+    "FAISSVectorStoreConfig",
     # ========================================================================
     # Base classes and utilities
     # ========================================================================

@@ -52,9 +52,66 @@ class TTSInterface(VoiceRunnable[TTSInput, AudioChunk]):
                 async for sentence in text_stream:
                     audio = await tts_api(sentence)
                     yield AudioChunk(data=audio, sample_rate=24000)
+
+    Warmup:
+        TTS models often have significant cold-start latency on the
+        first synthesis call. Use warmup() to pre-load the model:
+
+        >>> tts = MyTTS()
+        >>> await tts.connect()
+        >>> await tts.warmup()  # Pre-load model, eliminate cold start
+        >>> audio = await tts.synthesize("Hello!")  # Fast!
     """
 
     name: str = "TTS"
+
+    # Warmup configuration
+    _warmup_text: str = "Hello."
+    _is_warmed_up: bool = False
+
+    async def warmup(self, text: Optional[str] = None) -> float:
+        """Pre-load the TTS model to eliminate cold-start latency.
+
+        This method synthesizes a short dummy text to ensure the model
+        is fully loaded into memory. Call this after connect() and
+        before the first real synthesis to avoid latency spikes.
+
+        Args:
+            text: Custom warmup text. Defaults to "Hello."
+
+        Returns:
+            Warmup time in milliseconds.
+
+        Example:
+            >>> tts = KokoroTTS(voice="af_bella")
+            >>> await tts.connect()
+            >>> warmup_ms = await tts.warmup()
+            >>> print(f"Warmed up in {warmup_ms:.1f}ms")
+            >>> # First real synthesis is now fast
+            >>> audio = await tts.synthesize("How can I help?")
+        """
+        import time
+
+        warmup_text = text or self._warmup_text
+
+        start = time.perf_counter()
+
+        # Synthesize dummy text (discard result)
+        _ = await self.synthesize(warmup_text)
+
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        self._is_warmed_up = True
+
+        return elapsed_ms
+
+    @property
+    def is_warmed_up(self) -> bool:
+        """Check if the TTS model has been warmed up.
+
+        Returns:
+            True if warmup() has been called successfully.
+        """
+        return self._is_warmed_up
 
     @abstractmethod
     async def synthesize_stream(

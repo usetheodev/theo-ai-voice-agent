@@ -516,6 +516,7 @@ class VoiceAgentBuilder:
         self._asr = None
         self._tts = None
         self._vad = None
+        self._rag = None
         self._tools = []
         self._persona = None
         self._memory = None
@@ -525,6 +526,14 @@ class VoiceAgentBuilder:
         self._tts_voice = "pf_dora"
         self._enable_barge_in = True
         self._streaming = False  # Sentence-level streaming for low latency
+        self._auto_warmup = True  # Auto warmup TTS to eliminate cold start
+        # Sentence streamer config
+        self._min_sentence_chars = 20
+        self._max_sentence_chars = 200
+        self._sentence_timeout_ms = 500
+        self._enable_quick_phrases = True
+        # RAG config
+        self._rag_k = 5  # Number of documents to retrieve
 
     def asr(
         self,
@@ -536,17 +545,31 @@ class VoiceAgentBuilder:
         """Configura provider ASR (Speech-to-Text).
 
         Args:
-            provider: "whisper" ou "openai".
+            provider: "whisper", "openai", ou "deepgram".
             model: Modelo a usar.
             language: Código do idioma.
+            **kwargs: Argumentos adicionais para o provider.
+
+        Example:
+            >>> # Local Whisper
+            >>> builder.asr("whisper", model="base", language="pt")
+            >>>
+            >>> # Deepgram streaming (real-time)
+            >>> builder.asr("deepgram", api_key="...", language="pt-BR")
         """
         self._language = language
+        self._asr_provider = provider
+        self._asr_kwargs = {"model": model, "language": language, **kwargs}
+
         if provider == "whisper":
             from voice_pipeline.providers.asr import WhisperCppASRProvider
             self._asr = WhisperCppASRProvider(model=model, language=language, **kwargs)
         elif provider == "openai":
             from voice_pipeline.providers.asr import OpenAIASRProvider
             self._asr = OpenAIASRProvider(model=model, language=language, **kwargs)
+        elif provider == "deepgram":
+            from voice_pipeline.providers.asr import DeepgramASRProvider
+            self._asr = DeepgramASRProvider(language=language, **kwargs)
         else:
             raise ValueError(f"ASR provider desconhecido: {provider}")
         return self
@@ -653,6 +676,86 @@ class VoiceAgentBuilder:
         self._streaming = enabled
         return self
 
+    def warmup(self, enabled: bool = True) -> "VoiceAgentBuilder":
+        """Ativa warmup automático do TTS (elimina cold start).
+
+        Quando ativado (padrão), o TTS é pré-aquecido durante connect(),
+        eliminando a latência de cold start na primeira síntese.
+
+        Impacto típico:
+        - Kokoro: reduz primeira síntese de ~500-800ms para ~100-200ms
+        - OpenAI: reduz primeira síntese de ~300-500ms para ~150-250ms
+
+        Args:
+            enabled: True para ativar warmup automático (default).
+
+        Returns:
+            Self for chaining.
+
+        Example:
+            >>> agent = (
+            ...     VoiceAgent.builder()
+            ...     .asr("whisper")
+            ...     .llm("ollama")
+            ...     .tts("kokoro")
+            ...     .streaming(True)
+            ...     .warmup(True)  # Elimina cold start
+            ...     .build()
+            ... )
+        """
+        self._auto_warmup = enabled
+        return self
+
+    def sentence_config(
+        self,
+        min_chars: Optional[int] = None,
+        max_chars: Optional[int] = None,
+        timeout_ms: Optional[int] = None,
+        enable_quick_phrases: Optional[bool] = None,
+    ) -> "VoiceAgentBuilder":
+        """Configura o SentenceStreamer para baixa latência.
+
+        O SentenceStreamer bufferiza tokens do LLM e emite sentenças
+        completas para o TTS. Esta configuração controla quando as
+        sentenças são emitidas.
+
+        Args:
+            min_chars: Mínimo de caracteres antes de emitir (default 20).
+                       Sentenças curtas como "Olá!" usam min_chars menor.
+            max_chars: Máximo de caracteres antes de forçar emissão (default 200).
+            timeout_ms: Emite buffer após este tempo sem pontuação (default 500).
+                        Útil para quando o LLM pausa sem terminar a frase.
+            enable_quick_phrases: Emite frases comuns ("Olá!", "Sim.")
+                                  imediatamente (default True).
+
+        Returns:
+            Self for chaining.
+
+        Example:
+            >>> # Configuração agressiva para latência mínima
+            >>> agent = (
+            ...     VoiceAgent.builder()
+            ...     .asr("whisper")
+            ...     .llm("ollama")
+            ...     .tts("kokoro")
+            ...     .streaming(True)
+            ...     .sentence_config(
+            ...         min_chars=10,      # Emite sentenças menores
+            ...         timeout_ms=300,    # Timeout mais curto
+            ...     )
+            ...     .build()
+            ... )
+        """
+        if min_chars is not None:
+            self._min_sentence_chars = min_chars
+        if max_chars is not None:
+            self._max_sentence_chars = max_chars
+        if timeout_ms is not None:
+            self._sentence_timeout_ms = timeout_ms
+        if enable_quick_phrases is not None:
+            self._enable_quick_phrases = enable_quick_phrases
+        return self
+
     def tools(self, tools: list[VoiceTool]) -> "VoiceAgentBuilder":
         """Configura ferramentas."""
         self._tools = tools
@@ -684,6 +787,85 @@ class VoiceAgentBuilder:
         self._max_iterations = n
         return self
 
+    def rag(
+        self,
+        provider: str = "faiss",
+        embedding: str = "sentence-transformers",
+        documents: Optional[list] = None,
+        k: int = 5,
+        **kwargs,
+    ) -> "VoiceAgentBuilder":
+        """Configura RAG (Retrieval-Augmented Generation).
+
+        RAG permite que o agente responda perguntas usando uma base
+        de conhecimento de documentos.
+
+        Args:
+            provider: Vector store provider ("faiss").
+            embedding: Embedding provider ("sentence-transformers").
+            documents: Lista de documentos para indexar (opcional).
+                       Pode ser lista de strings ou Document objects.
+            k: Número de documentos a recuperar por query.
+            **kwargs: Argumentos adicionais para os providers.
+
+        Returns:
+            Self for chaining.
+
+        Example:
+            >>> # RAG com documentos simples
+            >>> agent = (
+            ...     VoiceAgent.builder()
+            ...     .asr("whisper")
+            ...     .llm("ollama")
+            ...     .tts("kokoro")
+            ...     .rag("faiss", documents=[
+            ...         "Voice Pipeline é um framework para agentes de voz.",
+            ...         "Suporta ASR streaming com Deepgram.",
+            ...     ])
+            ...     .build()
+            ... )
+            >>>
+            >>> # RAG com Document objects
+            >>> from voice_pipeline.interfaces import Document
+            >>> agent = (
+            ...     VoiceAgent.builder()
+            ...     .llm("ollama")
+            ...     .rag("faiss", documents=[
+            ...         Document(content="...", metadata={"source": "docs/intro.md"}),
+            ...     ])
+            ...     .build()
+            ... )
+        """
+        from voice_pipeline.interfaces.rag import Document, SimpleRAG
+
+        self._rag_k = k
+
+        # Create embedding provider
+        if embedding == "sentence-transformers":
+            from voice_pipeline.providers.embedding import SentenceTransformerEmbedding
+            embedding_model = kwargs.pop("embedding_model", "all-MiniLM-L6-v2")
+            embedding_provider = SentenceTransformerEmbedding(model_name=embedding_model)
+        else:
+            raise ValueError(f"Embedding provider desconhecido: {embedding}")
+
+        # Get embedding dimension (lazy load model)
+        dimension = embedding_provider.dimension
+
+        # Create vector store
+        if provider == "faiss":
+            from voice_pipeline.providers.vectorstore import FAISSVectorStore
+            vector_store = FAISSVectorStore(dimension=dimension, **kwargs)
+        else:
+            raise ValueError(f"Vector store provider desconhecido: {provider}")
+
+        # Create RAG
+        self._rag = SimpleRAG(vector_store, embedding_provider)
+
+        # Store documents for async indexing in build_async
+        self._rag_documents = documents
+
+        return self
+
     def build(self):
         """Constrói o VoiceAgent, ConversationChain ou StreamingVoiceChain.
 
@@ -708,9 +890,14 @@ class VoiceAgentBuilder:
                     asr=self._asr,
                     llm=self._llm,
                     tts=self._tts,
+                    rag=self._rag,
+                    rag_k=self._rag_k,
                     system_prompt=self._system_prompt or "Você é um assistente de voz.",
                     language=self._language,
                     tts_voice=self._tts_voice,
+                    auto_warmup=self._auto_warmup,
+                    min_sentence_chars=self._min_sentence_chars,
+                    max_sentence_chars=self._max_sentence_chars,
                 )
             else:
                 # Batch (padrão)
@@ -741,6 +928,8 @@ class VoiceAgentBuilder:
     async def build_async(self):
         """Constrói e conecta todos os providers.
 
+        Também indexa documentos RAG se configurados.
+
         Returns:
             VoiceAgent ou ConversationChain com providers conectados.
         """
@@ -755,5 +944,21 @@ class VoiceAgentBuilder:
             await self._tts.connect()
         if self._vad is not None:
             await self._vad.connect()
+
+        # Index RAG documents if provided
+        if self._rag is not None and hasattr(self, '_rag_documents') and self._rag_documents:
+            from voice_pipeline.interfaces.rag import Document
+
+            # Convert strings to Document objects if needed
+            docs = []
+            for doc in self._rag_documents:
+                if isinstance(doc, str):
+                    docs.append(Document(content=doc))
+                else:
+                    docs.append(doc)
+
+            # Index documents
+            await self._rag.add_documents(docs)
+            logger.info(f"Indexed {len(docs)} documents for RAG")
 
         return result
