@@ -22,7 +22,7 @@ class TestSentenceStreamer:
                 yield token
 
         sentences = []
-        async for sentence in streamer.process(token_stream()):
+        async for sentence in streamer.process_stream(token_stream()):
             sentences.append(sentence)
 
         assert len(sentences) == 2
@@ -40,7 +40,7 @@ class TestSentenceStreamer:
             yield "This is longer."
 
         sentences = []
-        async for sentence in streamer.process(token_stream()):
+        async for sentence in streamer.process_stream(token_stream()):
             sentences.append(sentence)
 
         # "Hi." is too short, gets combined
@@ -57,7 +57,7 @@ class TestSentenceStreamer:
             yield "This is a very long sentence without any punctuation marks"
 
         sentences = []
-        async for sentence in streamer.process(token_stream()):
+        async for sentence in streamer.process_stream(token_stream()):
             sentences.append(sentence)
 
         # Should have split
@@ -77,7 +77,7 @@ class TestSentenceStreamer:
             yield "Hello world, this is a test, more text here"
 
         sentences = []
-        async for sentence in streamer.process(token_stream()):
+        async for sentence in streamer.process_stream(token_stream()):
             sentences.append(sentence)
 
         # Should break at comma when exceeding max_chars
@@ -92,7 +92,7 @@ class TestSentenceStreamer:
             yield "The value is 3.14 units."
 
         sentences = []
-        async for sentence in streamer.process(token_stream()):
+        async for sentence in streamer.process_stream(token_stream()):
             sentences.append(sentence)
 
         assert len(sentences) == 1
@@ -108,7 +108,7 @@ class TestSentenceStreamer:
             yield "What? Yes! Done."
 
         sentences = []
-        async for sentence in streamer.process(token_stream()):
+        async for sentence in streamer.process_stream(token_stream()):
             sentences.append(sentence)
 
         assert len(sentences) == 3

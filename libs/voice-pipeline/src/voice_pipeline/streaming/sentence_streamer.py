@@ -38,12 +38,23 @@ class SentenceStreamer:
 
     This is the "PunctuatedBufferStreamer" pattern from the research paper.
 
-    Example:
+    Example (streaming):
         streamer = SentenceStreamer()
 
-        async for sentence in streamer.process(llm_token_stream):
+        async for sentence in streamer.process_stream(llm_token_stream):
             # Each sentence is ready for TTS
             audio = await tts.synthesize(sentence)
+
+    Example (token-by-token):
+        streamer = SentenceStreamer()
+
+        for token in tokens:
+            sentences = streamer.process(token)
+            for sentence in sentences:
+                # Process each complete sentence
+                pass
+        # Don't forget to flush at the end
+        remaining = streamer.flush()
 
     The streamer:
     1. Buffers incoming tokens
@@ -65,11 +76,28 @@ class SentenceStreamer:
         """Reset buffer state."""
         self._buffer = ""
 
-    async def process(
+    def process(self, token: str) -> list[str]:
+        """Process a single token and return any complete sentences.
+
+        This is the synchronous API for token-by-token processing,
+        useful when you're already iterating over tokens yourself.
+
+        Args:
+            token: A text token to add to the buffer.
+
+        Returns:
+            List of complete sentences ready for TTS (may be empty).
+        """
+        self._buffer += token
+        return self._extract_sentences()
+
+    async def process_stream(
         self,
         token_stream: AsyncIterator[str],
     ) -> AsyncIterator[str]:
-        """Process token stream and yield complete sentences.
+        """Process a token stream and yield complete sentences.
+
+        This is the async API for processing entire token streams.
 
         Args:
             token_stream: Async iterator of text tokens/chunks.

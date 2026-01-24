@@ -1,0 +1,17 @@
+# Voice Pipeline Framework - Extras
+# ==================================
+#
+# Instale com: pip install -r requirements-extras.txt
+# Ou use: pip install voice-pipeline[all]
+
+# Memory Stores
+redis>=4.5.0
+aiosqlite>=0.19.0
+
+# Tracing/Observabilidade
+opentelemetry-api>=1.20.0
+opentelemetry-sdk>=1.20.0
+
+# Audio Processing
+numpy>=1.24.0
+soundfile>=0.12.0
