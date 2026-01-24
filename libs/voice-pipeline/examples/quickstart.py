@@ -1,16 +1,27 @@
-"""Quickstart - Voice Pipeline em 30 linhas.
+"""Quickstart - Voice Pipeline em poucas linhas.
 
-Demonstra como criar um agente de voz completo usando o framework.
+Todos os modelos são baixados AUTOMATICAMENTE na primeira execução:
+- WhisperCpp: ~142MB (ASR)
+- Ollama LLM: ~379MB (qwen2.5:0.5b)
+- Kokoro TTS: ~82MB
 
 Requirements:
     pip install voice-pipeline pywhispercpp kokoro-onnx
-    ollama serve
+    ollama serve  # Apenas iniciar o servidor, modelo baixa automaticamente
 
 Usage:
     python quickstart.py
 """
 
 import asyncio
+import logging
+
+# Configura logging para ver progresso dos downloads
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+)
+
 from voice_pipeline import (
     WhisperASR, OllamaLLM, KokoroTTS,
     ConversationChain, ConversationBufferMemory,
@@ -18,11 +29,17 @@ from voice_pipeline import (
 
 
 async def main():
-    # Criar e conectar providers
+    print("=" * 50)
+    print("Voice Pipeline - Quickstart")
+    print("=" * 50)
+    print("\nCarregando providers (baixa modelos automaticamente)...\n")
+
+    # Criar providers - modelos baixam automaticamente!
     asr = WhisperASR(model="base", language="pt")
-    llm = OllamaLLM(model="llama3.2:1b")
+    llm = OllamaLLM(model="qwen2.5:0.5b")
     tts = KokoroTTS(voice="pf_dora")
 
+    # Conectar (aqui ocorre o download se necessário)
     await asr.connect()
     await llm.connect()
     await tts.connect()
@@ -36,7 +53,15 @@ async def main():
         memory=ConversationBufferMemory(max_messages=20),
     )
 
-    print(f"Voice Agent pronto: {chain.asr} | {chain.llm} | {chain.tts}")
+    print("\n" + "=" * 50)
+    print("Voice Agent PRONTO!")
+    print("=" * 50)
+    print(f"\n  ASR: {asr}")
+    print(f"  LLM: {llm}")
+    print(f"  TTS: {tts}")
+    print("\nUso:")
+    print("  result = await chain.ainvoke(audio_bytes)")
+    print("  async for chunk in chain.astream(audio_bytes): ...")
 
 
 if __name__ == "__main__":

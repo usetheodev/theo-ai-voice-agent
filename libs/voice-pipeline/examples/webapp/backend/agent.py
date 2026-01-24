@@ -41,7 +41,7 @@ class VoiceAgentSession:
 
         # Providers
         asr = WhisperASR(model="base", language=self.language)
-        llm = OllamaLLM(model="llama3.2:1b")
+        llm = OllamaLLM(model="qwen2.5:0.5b")
         tts = KokoroTTS(voice="pf_dora")
         self._vad = SileroVAD()
 

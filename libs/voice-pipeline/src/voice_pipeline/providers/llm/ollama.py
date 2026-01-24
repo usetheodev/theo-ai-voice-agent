@@ -6,12 +6,15 @@ Supports Llama 3.2, Mistral, Gemma, Qwen, and many other models.
 Reference: https://github.com/ollama/ollama/blob/main/docs/api.md
 """
 
+import logging
 import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Optional
 
 from voice_pipeline.interfaces.llm import LLMChunk, LLMInterface, LLMResponse
+
+logger = logging.getLogger(__name__)
 from voice_pipeline.providers.base import (
     BaseProvider,
     HealthCheckResult,
@@ -50,8 +53,8 @@ class OllamaLLMConfig(ProviderConfig):
         >>> llm = OllamaLLMProvider(config=config)
     """
 
-    model: str = "llama3.2"
-    """Model to use (llama3.2, mistral, gemma2, qwen2.5, codellama, etc.)."""
+    model: str = "qwen2.5:0.5b"
+    """Model to use (qwen2.5:0.5b, llama3.2, mistral, gemma2, etc.)."""
 
     base_url: str = "http://localhost:11434"
     """Ollama server URL. Defaults to localhost."""
@@ -120,7 +123,7 @@ class OllamaLLMConfig(ProviderConfig):
     aliases=["ollama-llm", "local-llm"],
     tags=["local", "offline", "llama", "mistral", "gemma", "qwen"],
     default_config={
-        "model": "llama3.2",
+        "model": "qwen2.5:0.5b",
         "base_url": "http://localhost:11434",
     },
 )
@@ -204,7 +207,14 @@ class OllamaLLMProvider(BaseProvider, LLMInterface):
         self._async_client = None
 
     async def connect(self) -> None:
-        """Initialize HTTP client for Ollama."""
+        """Initialize HTTP client and ensure model is available.
+
+        This method:
+        1. Creates HTTP clients
+        2. Checks if Ollama server is running
+        3. Checks if model exists locally
+        4. Downloads model automatically if not found
+        """
         await super().connect()
 
         try:
@@ -232,6 +242,9 @@ class OllamaLLMProvider(BaseProvider, LLMInterface):
             timeout=timeout,
         )
 
+        # Ensure Ollama server is running and model is available
+        await self._ensure_model_available()
+
     async def disconnect(self) -> None:
         """Close HTTP clients."""
         if self._async_client:
@@ -241,6 +254,85 @@ class OllamaLLMProvider(BaseProvider, LLMInterface):
         self._async_client = None
         self._client = None
         await super().disconnect()
+
+    async def _ensure_model_available(self) -> None:
+        """Ensure Ollama server is running and model is available.
+
+        Automatically downloads the model if not found locally.
+
+        Raises:
+            ConnectionError: If Ollama server is not running.
+        """
+        # Check if server is running
+        try:
+            response = await self._async_client.get("/api/tags")
+            response.raise_for_status()
+        except Exception as e:
+            raise ConnectionError(
+                f"Ollama server not running at {self._llm_config.base_url}. "
+                f"Start with: ollama serve\n"
+                f"Error: {e}"
+            ) from e
+
+        # Check if model exists
+        data = response.json()
+        models = [m.get("name", "") for m in data.get("models", [])]
+
+        model_exists = any(
+            self._llm_config.model in m or m.startswith(self._llm_config.model)
+            for m in models
+        )
+
+        if not model_exists:
+            logger.info(f"Model '{self._llm_config.model}' not found. Downloading...")
+            await self._pull_model_with_progress()
+            logger.info(f"Model '{self._llm_config.model}' ready!")
+
+    async def _pull_model_with_progress(self) -> None:
+        """Download model with progress logging."""
+        import json
+
+        try:
+            async with self._async_client.stream(
+                "POST",
+                "/api/pull",
+                json={"name": self._llm_config.model, "stream": True},
+                timeout=None,  # Download can take a long time
+            ) as response:
+                response.raise_for_status()
+
+                last_status = ""
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    status = data.get("status", "")
+
+                    # Log progress
+                    if status != last_status:
+                        if "pulling" in status:
+                            total = data.get("total", 0)
+                            completed = data.get("completed", 0)
+                            if total > 0:
+                                pct = (completed / total) * 100
+                                size_mb = total / (1024 * 1024)
+                                logger.info(
+                                    f"Downloading {self._llm_config.model}: "
+                                    f"{pct:.1f}% of {size_mb:.1f}MB"
+                                )
+                        elif status:
+                            logger.info(f"Ollama: {status}")
+                        last_status = status
+
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to download model '{self._llm_config.model}': {e}"
+            ) from e
 
     async def _do_health_check(self) -> HealthCheckResult:
         """Check if Ollama server is accessible and model is available."""

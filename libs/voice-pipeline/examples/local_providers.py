@@ -24,7 +24,7 @@ from voice_pipeline import (
 async def create_local_chain():
     """Cria chain usando ConversationChain do framework."""
     asr = WhisperASR(model="base", language="pt")
-    llm = OllamaLLM(model="llama3.2:1b")
+    llm = OllamaLLM(model="qwen2.5:0.5b")
     tts = KokoroTTS(voice="pf_dora")
 
     await asr.connect()
@@ -43,7 +43,7 @@ async def create_local_chain():
 async def create_simple_chain():
     """Cria chain simples usando operador |."""
     asr = WhisperASR(model="base")
-    llm = OllamaLLM(model="llama3.2:1b")
+    llm = OllamaLLM(model="qwen2.5:0.5b")
     tts = KokoroTTS(voice="af_bella")
 
     await asr.connect()
