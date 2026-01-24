@@ -3,32 +3,28 @@
 import asyncio
 import logging
 import time
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import WebSocket
 
-from voice_pipeline import (
-    WhisperASR, OllamaLLM, KokoroTTS, SileroVAD,
-    ConversationChain, ConversationBufferMemory,
-)
+from voice_pipeline import VoiceAgent, ConversationChain
 
 logger = logging.getLogger(__name__)
 
 
 class VoiceAgentSession:
-    """Sessão WebSocket para conversação de voz em tempo real."""
+    """Sessão WebSocket para conversação de voz em tempo real.
+
+    Usa VoiceAgent.builder() para criar pipeline de voz completo.
+    """
 
     def __init__(self, websocket: WebSocket):
         self.websocket = websocket
         self.sample_rate = 16000
-        self.language = "pt"
-        self.system_prompt = (
-            "Você é um assistente de voz prestativo. "
-            "Responda de forma concisa em português brasileiro."
-        )
 
+        # Pipeline será criado no initialize()
         self._chain: Optional[ConversationChain] = None
-        self._vad: Optional[SileroVAD] = None
+        self._vad = None
         self._is_listening = False
         self._audio_buffer: asyncio.Queue[bytes] = asyncio.Queue()
         self._speech_started = False
@@ -36,39 +32,35 @@ class VoiceAgentSession:
         self._silence_threshold_ms = 800
 
     async def initialize(self):
-        """Inicializa providers e chain."""
+        """Inicializa voice agent usando builder."""
         logger.info("Inicializando voice agent...")
 
-        # Providers
-        asr = WhisperASR(model="base", language=self.language)
-        llm = OllamaLLM(model="qwen2.5:0.5b")
-        tts = KokoroTTS(voice="pf_dora")
-        self._vad = SileroVAD()
-
-        await asr.connect()
-        await llm.connect()
-        await tts.connect()
-        await self._vad.connect()
-
-        # Chain
-        self._chain = ConversationChain(
-            asr=asr,
-            llm=llm,
-            tts=tts,
-            vad=self._vad,
-            system_prompt=self.system_prompt,
-            language=self.language,
-            tts_voice="pf_dora",
-            memory=ConversationBufferMemory(max_messages=20),
-            enable_barge_in=True,
+        # Criar pipeline completo com builder
+        builder = (
+            VoiceAgent.builder()
+            .asr("whisper", model="base", language="pt")
+            .llm("ollama", model="qwen2.5:0.5b")
+            .tts("kokoro", voice="pf_dora")
+            .vad("silero")
+            .system_prompt(
+                "Você é um assistente de voz prestativo. "
+                "Responda de forma concisa em português brasileiro."
+            )
+            .memory(max_messages=20)
+            .barge_in(True)
         )
+
+        # Build e conecta todos os providers
+        self._chain = await builder.build_async()
+
+        # Guardar referência ao VAD para detecção de fala
+        self._vad = builder._vad
 
         logger.info("Voice agent pronto")
 
     async def configure(self, sample_rate: int = 16000, language: str = "pt"):
         """Atualiza configuração."""
         self.sample_rate = sample_rate
-        self.language = language
 
     async def start_listening(self):
         """Inicia escuta."""

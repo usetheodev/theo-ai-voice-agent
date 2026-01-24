@@ -71,6 +71,7 @@ from voice_pipeline.agents.router import (
 from voice_pipeline.agents.base import (
     StreamingVoiceAgent,
     VoiceAgent,
+    VoiceAgentBuilder,
     create_voice_agent,
 )
 
@@ -93,6 +94,7 @@ __all__ = [
     "create_tool_router",
     # Agent
     "VoiceAgent",
+    "VoiceAgentBuilder",
     "StreamingVoiceAgent",
     "create_voice_agent",
 ]

@@ -2,9 +2,24 @@
 
 Provides a unified interface for building voice agents with
 LLM, tools, memory, and persona support.
+
+Quick Start:
+    >>> from voice_pipeline import VoiceAgent
+    >>> agent = VoiceAgent.local()
+    >>> await agent.connect()
+    >>> response = await agent.chat("Olá!")
+
+    >>> # Ou com builder
+    >>> agent = (
+    ...     VoiceAgent.builder()
+    ...     .llm("ollama", model="qwen2.5:0.5b")
+    ...     .system_prompt("Você é um assistente...")
+    ...     .build()
+    ... )
 """
 
-from typing import Any, AsyncIterator, Optional
+import logging
+from typing import Any, AsyncIterator, Optional, TYPE_CHECKING
 
 from voice_pipeline.agents.loop import AgentLoop
 from voice_pipeline.agents.state import AgentState, AgentStatus
@@ -13,6 +28,11 @@ from voice_pipeline.memory.base import VoiceMemory
 from voice_pipeline.prompts.persona import VoicePersona
 from voice_pipeline.runnable import RunnableConfig, VoiceRunnable
 from voice_pipeline.tools.base import VoiceTool
+
+if TYPE_CHECKING:
+    from voice_pipeline.interfaces import ASRInterface, TTSInterface, VADInterface
+
+logger = logging.getLogger(__name__)
 
 
 class VoiceAgent(VoiceRunnable[str, str]):
@@ -127,6 +147,90 @@ class VoiceAgent(VoiceRunnable[str, str]):
             system_prompt=self._system_prompt,
             max_iterations=max_iterations,
         )
+
+    # =========================================================================
+    # Factory Methods (Presets)
+    # =========================================================================
+
+    @classmethod
+    def local(
+        cls,
+        system_prompt: Optional[str] = None,
+        tools: Optional[list[VoiceTool]] = None,
+        llm_model: str = "qwen2.5:0.5b",
+        **kwargs,
+    ) -> "VoiceAgent":
+        """Cria agente com LLM local (Ollama).
+
+        Args:
+            system_prompt: Prompt do sistema.
+            tools: Lista de ferramentas.
+            llm_model: Modelo Ollama.
+
+        Returns:
+            VoiceAgent configurado com Ollama.
+
+        Example:
+            >>> agent = VoiceAgent.local()
+            >>> await agent.llm.connect()
+            >>> response = await agent.ainvoke("Olá!")
+        """
+        from voice_pipeline.providers.llm import OllamaLLMProvider
+
+        llm = OllamaLLMProvider(model=llm_model)
+
+        return cls(
+            llm=llm,
+            tools=tools,
+            system_prompt=system_prompt,
+            **kwargs,
+        )
+
+    @classmethod
+    def openai(
+        cls,
+        api_key: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        tools: Optional[list[VoiceTool]] = None,
+        llm_model: str = "gpt-4o-mini",
+        **kwargs,
+    ) -> "VoiceAgent":
+        """Cria agente com LLM OpenAI.
+
+        Args:
+            api_key: OpenAI API key.
+            system_prompt: Prompt do sistema.
+            tools: Lista de ferramentas.
+            llm_model: Modelo OpenAI.
+
+        Returns:
+            VoiceAgent configurado com OpenAI.
+        """
+        from voice_pipeline.providers.llm import OpenAILLMProvider
+
+        llm = OpenAILLMProvider(api_key=api_key, model=llm_model)
+
+        return cls(
+            llm=llm,
+            tools=tools,
+            system_prompt=system_prompt,
+            **kwargs,
+        )
+
+    @classmethod
+    def builder(cls) -> "VoiceAgentBuilder":
+        """Retorna builder para configuração fluente.
+
+        Example:
+            >>> agent = (
+            ...     VoiceAgent.builder()
+            ...     .llm("ollama", model="qwen2.5:0.5b")
+            ...     .tools([get_weather, search])
+            ...     .system_prompt("Você é um assistente...")
+            ...     .build()
+            ... )
+        """
+        return VoiceAgentBuilder()
 
     def _build_system_prompt(self, explicit_prompt: Optional[str] = None) -> str:
         """Build the system prompt for the agent.
@@ -379,3 +483,233 @@ def create_voice_agent(
         system_prompt=system_prompt,
         max_iterations=max_iterations,
     )
+
+
+class VoiceAgentBuilder:
+    """Builder fluente para VoiceAgent.
+
+    Example - Agente de texto:
+        >>> agent = (
+        ...     VoiceAgent.builder()
+        ...     .llm("ollama", model="qwen2.5:0.5b")
+        ...     .tools([get_weather])
+        ...     .system_prompt("Você é um assistente...")
+        ...     .memory(max_messages=20)
+        ...     .build()
+        ... )
+
+    Example - Pipeline de voz completo:
+        >>> agent = (
+        ...     VoiceAgent.builder()
+        ...     .asr("whisper", model="base", language="pt")
+        ...     .llm("ollama", model="qwen2.5:0.5b")
+        ...     .tts("kokoro", voice="pf_dora")
+        ...     .vad("silero")
+        ...     .system_prompt("Você é um assistente...")
+        ...     .memory(max_messages=20)
+        ...     .build()
+        ... )
+    """
+
+    def __init__(self):
+        self._llm = None
+        self._asr = None
+        self._tts = None
+        self._vad = None
+        self._tools = []
+        self._persona = None
+        self._memory = None
+        self._system_prompt = None
+        self._max_iterations = 10
+        self._language = "pt"
+        self._tts_voice = "pf_dora"
+        self._enable_barge_in = True
+
+    def asr(
+        self,
+        provider: str = "whisper",
+        model: str = "base",
+        language: str = "pt",
+        **kwargs,
+    ) -> "VoiceAgentBuilder":
+        """Configura provider ASR (Speech-to-Text).
+
+        Args:
+            provider: "whisper" ou "openai".
+            model: Modelo a usar.
+            language: Código do idioma.
+        """
+        self._language = language
+        if provider == "whisper":
+            from voice_pipeline.providers.asr import WhisperCppASRProvider
+            self._asr = WhisperCppASRProvider(model=model, language=language, **kwargs)
+        elif provider == "openai":
+            from voice_pipeline.providers.asr import OpenAIASRProvider
+            self._asr = OpenAIASRProvider(model=model, language=language, **kwargs)
+        else:
+            raise ValueError(f"ASR provider desconhecido: {provider}")
+        return self
+
+    def llm(
+        self,
+        provider: str = "ollama",
+        model: Optional[str] = None,
+        **kwargs,
+    ) -> "VoiceAgentBuilder":
+        """Configura provider LLM.
+
+        Args:
+            provider: "ollama" ou "openai".
+            model: Modelo a usar.
+        """
+        if provider == "ollama":
+            from voice_pipeline.providers.llm import OllamaLLMProvider
+            self._llm = OllamaLLMProvider(model=model or "qwen2.5:0.5b", **kwargs)
+        elif provider == "openai":
+            from voice_pipeline.providers.llm import OpenAILLMProvider
+            self._llm = OpenAILLMProvider(model=model or "gpt-4o-mini", **kwargs)
+        else:
+            raise ValueError(f"LLM provider desconhecido: {provider}")
+        return self
+
+    def tts(
+        self,
+        provider: str = "kokoro",
+        voice: str = "pf_dora",
+        **kwargs,
+    ) -> "VoiceAgentBuilder":
+        """Configura provider TTS (Text-to-Speech).
+
+        Args:
+            provider: "kokoro" ou "openai".
+            voice: Voz a usar.
+        """
+        self._tts_voice = voice
+        if provider == "kokoro":
+            from voice_pipeline.providers.tts import KokoroTTSProvider
+            self._tts = KokoroTTSProvider(voice=voice, **kwargs)
+        elif provider == "openai":
+            from voice_pipeline.providers.tts import OpenAITTSProvider
+            self._tts = OpenAITTSProvider(voice=voice, **kwargs)
+        else:
+            raise ValueError(f"TTS provider desconhecido: {provider}")
+        return self
+
+    def vad(
+        self,
+        provider: str = "silero",
+        **kwargs,
+    ) -> "VoiceAgentBuilder":
+        """Configura provider VAD (Voice Activity Detection).
+
+        Args:
+            provider: "silero" ou "webrtc".
+        """
+        if provider == "silero":
+            from voice_pipeline.providers.vad import SileroVADProvider
+            self._vad = SileroVADProvider(**kwargs)
+        elif provider == "webrtc":
+            from voice_pipeline.providers.vad import WebRTCVADProvider
+            self._vad = WebRTCVADProvider(**kwargs)
+        else:
+            raise ValueError(f"VAD provider desconhecido: {provider}")
+        return self
+
+    def language(self, lang: str) -> "VoiceAgentBuilder":
+        """Define idioma padrão."""
+        self._language = lang
+        return self
+
+    def barge_in(self, enabled: bool = True) -> "VoiceAgentBuilder":
+        """Habilita/desabilita interrupção de fala."""
+        self._enable_barge_in = enabled
+        return self
+
+    def tools(self, tools: list[VoiceTool]) -> "VoiceAgentBuilder":
+        """Configura ferramentas."""
+        self._tools = tools
+        return self
+
+    def tool(self, tool: VoiceTool) -> "VoiceAgentBuilder":
+        """Adiciona uma ferramenta."""
+        self._tools.append(tool)
+        return self
+
+    def persona(self, persona: VoicePersona) -> "VoiceAgentBuilder":
+        """Configura persona."""
+        self._persona = persona
+        return self
+
+    def system_prompt(self, prompt: str) -> "VoiceAgentBuilder":
+        """Define prompt do sistema."""
+        self._system_prompt = prompt
+        return self
+
+    def memory(self, max_messages: int = 20) -> "VoiceAgentBuilder":
+        """Configura memória."""
+        from voice_pipeline.memory import ConversationBufferMemory
+        self._memory = ConversationBufferMemory(max_messages=max_messages)
+        return self
+
+    def max_iterations(self, n: int) -> "VoiceAgentBuilder":
+        """Define máximo de iterações."""
+        self._max_iterations = n
+        return self
+
+    def build(self):
+        """Constrói o VoiceAgent ou ConversationChain.
+
+        Se ASR e TTS estão configurados, retorna ConversationChain.
+        Caso contrário, retorna VoiceAgent (texto → texto).
+
+        Returns:
+            VoiceAgent ou ConversationChain dependendo da configuração.
+        """
+        if self._llm is None:
+            raise ValueError("LLM é obrigatório. Use .llm() para configurar.")
+
+        # Se tem ASR e TTS, criar ConversationChain (pipeline de voz)
+        if self._asr is not None and self._tts is not None:
+            from voice_pipeline.chains import ConversationChain
+
+            return ConversationChain(
+                asr=self._asr,
+                llm=self._llm,
+                tts=self._tts,
+                vad=self._vad,
+                system_prompt=self._system_prompt or "Você é um assistente de voz.",
+                language=self._language,
+                tts_voice=self._tts_voice,
+                memory=self._memory,
+                enable_barge_in=self._enable_barge_in,
+            )
+
+        # Caso contrário, criar VoiceAgent (texto → texto)
+        return VoiceAgent(
+            llm=self._llm,
+            tools=self._tools,
+            persona=self._persona,
+            memory=self._memory,
+            system_prompt=self._system_prompt,
+            max_iterations=self._max_iterations,
+        )
+
+    async def build_async(self):
+        """Constrói e conecta todos os providers.
+
+        Returns:
+            VoiceAgent ou ConversationChain com providers conectados.
+        """
+        result = self.build()
+
+        # Conectar providers
+        if self._asr is not None:
+            await self._asr.connect()
+        if self._llm is not None:
+            await self._llm.connect()
+        if self._tts is not None:
+            await self._tts.connect()
+        if self._vad is not None:
+            await self._vad.connect()
+
+        return result

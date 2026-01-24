@@ -3,15 +3,25 @@
 This library provides a framework for building voice AI applications,
 inspired by LangChain's composability patterns.
 
-Quick Start:
-    >>> from voice_pipeline import ASRInterface, LLMInterface, TTSInterface
-    >>> # Create a chain using the | operator
-    >>> chain = my_asr | my_llm | my_tts
-    >>> result = await chain.ainvoke(audio_bytes)
+Quick Start (Simples):
+    >>> from voice_pipeline import VoiceAgent
+    >>> agent = VoiceAgent.local()
+    >>> await agent.connect()
+    >>> response = await agent.chat("Olá!")
 
-    >>> # Or use streaming for low-latency
-    >>> async for audio_chunk in chain.astream(audio_bytes):
-    ...     play(audio_chunk)
+Quick Start (Builder):
+    >>> agent = (
+    ...     VoiceAgent.builder()
+    ...     .asr("whisper", model="base")
+    ...     .llm("ollama", model="qwen2.5:0.5b")
+    ...     .tts("kokoro", voice="pf_dora")
+    ...     .build()
+    ... )
+
+Quick Start (Composição):
+    >>> from voice_pipeline import WhisperASR, OllamaLLM, KokoroTTS
+    >>> chain = WhisperASR() | OllamaLLM() | KokoroTTS()
+    >>> result = await chain.ainvoke(audio_bytes)
 """
 
 # Runnable (base for all components)
@@ -189,6 +199,7 @@ from .agents import (
     StreamingVoiceAgent,
     ToolNode,
     VoiceAgent,
+    VoiceAgentBuilder,
     create_tool_router,
     create_voice_agent,
     should_continue,
