@@ -67,16 +67,9 @@ Open your browser to: http://localhost:8000
 
 ## Configuration
 
-### Using Mock Providers (Default)
+### Providers
 
-The app works out of the box with mock providers for testing:
-- Mock ASR returns "Hello, this is a test message"
-- Mock LLM returns a fixed response
-- Mock TTS generates silence
-
-### Using Real Providers
-
-To use real providers, install the optional dependencies:
+The app uses real providers for voice processing. Install the dependencies:
 
 ```bash
 # Whisper for ASR

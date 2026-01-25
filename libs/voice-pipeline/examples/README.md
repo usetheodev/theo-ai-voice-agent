@@ -4,16 +4,17 @@ This directory contains examples demonstrating how to use the voice-pipeline lib
 
 ## Examples
 
-### 1. Basic Pipeline (`basic_pipeline.py`)
+### 1. Framework Validation (`validate_framework.py`)
 
-Demonstrates the core concepts:
-- Creating a pipeline with `PipelineBuilder`
-- Using mock providers for testing
-- Event handling
-- Pipeline metrics
+Validates the core framework components:
+- VoiceAgent Builder pattern
+- Streaming components (SentenceStreamer, RingBuffer)
+- Serialization (JSON, Msgpack)
+- RAG with FAISS
+- Provider Registry
 
 ```bash
-python basic_pipeline.py
+python validate_framework.py
 ```
 
 ### 2. Local Providers (`local_providers.py`)
