@@ -532,6 +532,8 @@ class VoiceAgentBuilder:
         self._max_sentence_chars = 200
         self._sentence_timeout_ms = 500
         self._enable_quick_phrases = True
+        # History config
+        self._max_messages = 20  # Max conversation messages (0 = unlimited)
         # RAG config
         self._rag_k = 5  # Number of documents to retrieve
 
@@ -545,17 +547,29 @@ class VoiceAgentBuilder:
         """Configura provider ASR (Speech-to-Text).
 
         Args:
-            provider: "whisper", "openai", ou "deepgram".
+            provider: Provider ASR a usar:
+                - "whisper": whisper.cpp local
+                - "faster-whisper": FasterWhisper (4x mais rápido, CPU otimizado)
+                - "openai": OpenAI Whisper API
+                - "deepgram": Deepgram streaming (real-time)
+                - "nemotron": NVIDIA Nemotron (<24ms, GPU required)
             model: Modelo a usar.
             language: Código do idioma.
             **kwargs: Argumentos adicionais para o provider.
 
         Example:
+            >>> # FasterWhisper (recomendado para CPU)
+            >>> builder.asr("faster-whisper", model="small", language="pt",
+            ...             compute_type="int8", vad_filter=True)
+            >>>
             >>> # Local Whisper
             >>> builder.asr("whisper", model="base", language="pt")
             >>>
             >>> # Deepgram streaming (real-time)
             >>> builder.asr("deepgram", api_key="...", language="pt-BR")
+            >>>
+            >>> # Nemotron (GPU, ultra-low latency)
+            >>> builder.asr("nemotron", latency_mode="low", device="cuda")
         """
         self._language = language
         self._asr_provider = provider
@@ -570,6 +584,12 @@ class VoiceAgentBuilder:
         elif provider == "deepgram":
             from voice_pipeline.providers.asr import DeepgramASRProvider
             self._asr = DeepgramASRProvider(language=language, **kwargs)
+        elif provider == "faster-whisper":
+            from voice_pipeline.providers.asr import FasterWhisperProvider
+            self._asr = FasterWhisperProvider(model=model, language=language, **kwargs)
+        elif provider == "nemotron":
+            from voice_pipeline.providers.asr import NemotronASRProvider
+            self._asr = NemotronASRProvider(**kwargs)
         else:
             raise ValueError(f"ASR provider desconhecido: {provider}")
         return self
@@ -605,13 +625,29 @@ class VoiceAgentBuilder:
         """Configura provider TTS (Text-to-Speech).
 
         Args:
-            provider: "kokoro" ou "openai".
-            voice: Voz a usar.
+            provider: Provider TTS a usar:
+                - "kokoro": Kokoro local TTS (82M params, CPU-friendly)
+                - "qwen3-tts": Qwen3-TTS (97ms latência, português nativo)
+                - "openai": OpenAI TTS API
+            voice: Voz a usar (speaker para qwen3-tts).
+
+        Example:
+            >>> # Kokoro (padrão, CPU)
+            >>> builder.tts("kokoro", voice="pf_dora")
+            >>>
+            >>> # Qwen3-TTS (melhor português, requer mais recursos)
+            >>> builder.tts("qwen3-tts", voice="Ryan", language="Portuguese")
+            >>>
+            >>> # OpenAI (API, requer key)
+            >>> builder.tts("openai", voice="nova")
         """
         self._tts_voice = voice
         if provider == "kokoro":
             from voice_pipeline.providers.tts import KokoroTTSProvider
             self._tts = KokoroTTSProvider(voice=voice, **kwargs)
+        elif provider in ("qwen3-tts", "qwen3", "qwen"):
+            from voice_pipeline.providers.tts import Qwen3TTSProvider
+            self._tts = Qwen3TTSProvider(speaker=voice, **kwargs)
         elif provider == "openai":
             from voice_pipeline.providers.tts import OpenAITTSProvider
             self._tts = OpenAITTSProvider(voice=voice, **kwargs)
@@ -782,6 +818,32 @@ class VoiceAgentBuilder:
         self._memory = ConversationBufferMemory(max_messages=max_messages)
         return self
 
+    def max_messages(self, n: int) -> "VoiceAgentBuilder":
+        """Define máximo de mensagens no histórico de conversação.
+
+        Controla quantas mensagens são mantidas no histórico das chains
+        (StreamingVoiceChain e ParallelStreamingChain). Mensagens mais
+        antigas são descartadas quando o limite é atingido.
+
+        Args:
+            n: Máximo de mensagens. 0 para ilimitado (não recomendado).
+
+        Returns:
+            Self for chaining.
+
+        Example:
+            >>> agent = (
+            ...     VoiceAgent.builder()
+            ...     .asr("whisper")
+            ...     .llm("ollama")
+            ...     .tts("kokoro")
+            ...     .max_messages(50)  # Histórico maior
+            ...     .build()
+            ... )
+        """
+        self._max_messages = n
+        return self
+
     def max_iterations(self, n: int) -> "VoiceAgentBuilder":
         """Define máximo de iterações."""
         self._max_iterations = n
@@ -898,6 +960,7 @@ class VoiceAgentBuilder:
                     auto_warmup=self._auto_warmup,
                     min_sentence_chars=self._min_sentence_chars,
                     max_sentence_chars=self._max_sentence_chars,
+                    max_messages=self._max_messages,
                 )
             else:
                 # Batch (padrão)
@@ -928,22 +991,33 @@ class VoiceAgentBuilder:
     async def build_async(self):
         """Constrói e conecta todos os providers.
 
+        Para StreamingVoiceChain (streaming=True), também faz warmup do TTS
+        para eliminar latência de cold-start.
+
         Também indexa documentos RAG se configurados.
 
         Returns:
-            VoiceAgent ou ConversationChain com providers conectados.
+            VoiceAgent, ConversationChain ou StreamingVoiceChain com providers conectados.
         """
         result = self.build()
 
-        # Conectar providers
-        if self._asr is not None:
-            await self._asr.connect()
-        if self._llm is not None:
-            await self._llm.connect()
-        if self._tts is not None:
-            await self._tts.connect()
-        if self._vad is not None:
-            await self._vad.connect()
+        # Se StreamingVoiceChain, usar seu connect() que faz warmup do TTS
+        if self._streaming and self._asr is not None and self._tts is not None:
+            # StreamingVoiceChain.connect() conecta providers e faz warmup
+            await result.connect()
+            # VAD é separado (não faz parte do StreamingVoiceChain)
+            if self._vad is not None:
+                await self._vad.connect()
+        else:
+            # Conectar providers individualmente
+            if self._asr is not None:
+                await self._asr.connect()
+            if self._llm is not None:
+                await self._llm.connect()
+            if self._tts is not None:
+                await self._tts.connect()
+            if self._vad is not None:
+                await self._vad.connect()
 
         # Index RAG documents if provided
         if self._rag is not None and hasattr(self, '_rag_documents') and self._rag_documents:

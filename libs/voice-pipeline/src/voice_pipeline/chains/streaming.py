@@ -140,6 +140,7 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
         auto_warmup: bool = True,
         use_streaming_asr: bool = True,
         streaming_asr_min_words: int = 3,
+        max_messages: int = 20,
     ):
         """
         Initialize the streaming chain.
@@ -165,6 +166,9 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
                               latency by ~200-300ms. Default: True.
             streaming_asr_min_words: Minimum words before starting LLM
                                     (only for streaming ASR). Default: 3.
+            max_messages: Maximum conversation messages to retain in history.
+                         Older messages are trimmed. Default: 20.
+                         Set to 0 for unlimited (not recommended).
         """
         self.asr = asr
         self.llm = llm
@@ -187,6 +191,7 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
         )
 
         self._messages: list[dict[str, str]] = []
+        self._max_messages: int = max_messages
 
         # Metrics from last run
         self.metrics: Optional[StreamingMetrics] = None
@@ -201,6 +206,13 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
     def messages(self) -> list[dict[str, str]]:
         """Current conversation history."""
         return self._messages.copy()
+
+    def _add_message(self, role: str, content: str) -> None:
+        """Add a message and trim history if over the limit."""
+        self._messages.append({"role": role, "content": content})
+        if self._max_messages > 0:
+            while len(self._messages) > self._max_messages:
+                self._messages.pop(0)
 
     async def connect(self) -> None:
         """Connect all providers and optionally warm up TTS.
@@ -342,7 +354,7 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
                 user_content = await self._augment_with_rag(transcription.text)
 
                 # Add user message
-                self._messages.append({"role": "user", "content": user_content})
+                self._add_message("user", user_content)
 
                 # Step 2: LLM with sentence streaming
                 await emit_llm_start(self._messages)
@@ -478,7 +490,7 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
             self.metrics.mark_llm_end()
 
             # Add assistant message
-            self._messages.append({"role": "assistant", "content": response_text})
+            self._add_message("assistant", response_text)
             logger.info(f"LLM response: {response_text[:100]}...")
 
         async def tts_consumer():
@@ -553,7 +565,7 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
 
                     # Augment with RAG if available
                     user_content = await self._augment_with_rag(user_text)
-                    self._messages.append({"role": "user", "content": user_content})
+                    self._add_message("user", user_content)
                     await emit_llm_start(self._messages)
 
                     llm_task = asyncio.create_task(llm_producer(user_text))
@@ -564,7 +576,7 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
                 if user_text:
                     # Augment with RAG if available
                     user_content = await self._augment_with_rag(user_text)
-                    self._messages.append({"role": "user", "content": user_content})
+                    self._add_message("user", user_content)
                     await emit_llm_start(self._messages)
                     llm_task = asyncio.create_task(llm_producer(user_text))
                 else:
@@ -630,7 +642,7 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
             metrics.mark_llm_end()
 
             # Add assistant message
-            self._messages.append({"role": "assistant", "content": response_text})
+            self._add_message("assistant", response_text)
             logger.info(f"LLM response: {response_text[:100]}...")
 
         async def tts_consumer():
@@ -708,6 +720,7 @@ class ParallelStreamingChain(VoiceRunnable[bytes, AudioChunk]):
         language: Optional[str] = None,
         tts_voice: Optional[str] = None,
         buffer_size: int = 3,
+        max_messages: int = 20,
     ):
         """
         Initialize the parallel streaming chain.
@@ -720,6 +733,9 @@ class ParallelStreamingChain(VoiceRunnable[bytes, AudioChunk]):
             language: Language code.
             tts_voice: TTS voice.
             buffer_size: Number of sentences to buffer ahead.
+            max_messages: Maximum conversation messages to retain in history.
+                         Older messages are trimmed. Default: 20.
+                         Set to 0 for unlimited (not recommended).
         """
         self.asr = asr
         self.llm = llm
@@ -730,6 +746,14 @@ class ParallelStreamingChain(VoiceRunnable[bytes, AudioChunk]):
         self.buffer_size = buffer_size
 
         self._messages: list[dict[str, str]] = []
+        self._max_messages: int = max_messages
+
+    def _add_message(self, role: str, content: str) -> None:
+        """Add a message and trim history if over the limit."""
+        self._messages.append({"role": role, "content": content})
+        if self._max_messages > 0:
+            while len(self._messages) > self._max_messages:
+                self._messages.pop(0)
 
     def reset(self) -> None:
         """Reset conversation history."""
@@ -776,7 +800,7 @@ class ParallelStreamingChain(VoiceRunnable[bytes, AudioChunk]):
         if not transcription.text.strip():
             return
 
-        self._messages.append({"role": "user", "content": transcription.text})
+        self._add_message("user", transcription.text)
 
         # Parallel LLM -> TTS
         await emit_llm_start(self._messages)
@@ -823,7 +847,7 @@ class ParallelStreamingChain(VoiceRunnable[bytes, AudioChunk]):
 
             await sentence_queue.put(None)
             await emit_llm_end(response_text)
-            self._messages.append({"role": "assistant", "content": response_text})
+            self._add_message("assistant", response_text)
 
         # Start producer
         producer_task = asyncio.create_task(producer())

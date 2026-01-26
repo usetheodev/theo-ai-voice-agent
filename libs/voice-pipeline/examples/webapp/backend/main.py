@@ -57,7 +57,12 @@ async def root():
 @app.get("/health")
 async def health():
     """Health check endpoint."""
-    return {"status": "healthy"}
+    from agent import _active_sessions, MAX_CONCURRENT_SESSIONS
+    return {
+        "status": "healthy",
+        "active_sessions": len(_active_sessions),
+        "max_sessions": MAX_CONCURRENT_SESSIONS,
+    }
 
 
 @app.websocket("/ws/voice")
@@ -86,12 +91,21 @@ async def voice_websocket(websocket: WebSocket):
     session: Optional[VoiceAgentSession] = None
 
     try:
-        # Create agent session
-        session = VoiceAgentSession(websocket)
-        await session.initialize()
+        # Create agent session with msgpack optimization
+        session = VoiceAgentSession(websocket, use_msgpack=True)
+        try:
+            await session.initialize()
+        except RuntimeError as e:
+            # Limite de sessões atingido
+            await websocket.send_json({
+                "type": "error",
+                "message": str(e),
+            })
+            await websocket.close(code=1013, reason=str(e))
+            return
 
-        # Send ready status
-        await websocket.send_json({
+        # Send ready status (usando serializer da session para consistência)
+        await session._serializer.send_json(websocket, {
             "type": "status",
             "state": "idle",
             "message": "Agent ready"
@@ -123,10 +137,17 @@ async def voice_websocket(websocket: WebSocket):
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         try:
-            await websocket.send_json({
-                "type": "error",
-                "message": str(e)
-            })
+            if session:
+                await session._serializer.send_json(websocket, {
+                    "type": "error",
+                    "message": str(e)
+                })
+            else:
+                # Fallback para JSON se session não existe ainda
+                await websocket.send_json({
+                    "type": "error",
+                    "message": str(e)
+                })
         except:
             pass
     finally:

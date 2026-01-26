@@ -89,6 +89,23 @@ msgpack = [
     "msgpack>=1.0.0",
 ]
 
+# NVIDIA Nemotron ASR (streaming, ultra-low latency, GPU required)
+nemotron = [
+    "nemo_toolkit[asr]>=2.0.0",
+    "torch>=2.0.0",
+]
+
+# FasterWhisper (CPU optimized, 4x faster than openai-whisper)
+faster-whisper = [
+    "faster-whisper>=1.0.0",
+]
+
+# Qwen3-TTS (ultra-low latency, native Portuguese support)
+qwen3-tts = [
+    "qwen-tts>=0.1.0",
+    "soundfile>=0.12.0",
+]
+
 # CLI
 cli = [
     "typer>=0.9.0",

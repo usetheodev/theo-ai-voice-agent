@@ -3,15 +3,64 @@
  *
  * Handles microphone capture, WebSocket communication,
  * and audio playback for real-time voice conversations.
+ *
+ * Otimizações:
+ * - msgpack: Serialização binária ~10x mais rápida que JSON
+ * - PCM16: Áudio binário direto (sem encoding overhead)
  */
 
 // Configuration
 const CONFIG = {
-    wsUrl: `ws://${window.location.hostname}:8000/ws/voice`,
+    wsUrl: `ws://${window.location.host}/ws/voice`,
     sampleRate: 16000,
     bufferSize: 4096,
     channels: 1,
+    useMsgpack: true,  // Usar msgpack para mensagens de controle
 };
+
+// ==============================================================================
+// Browser Compatibility Check
+// ==============================================================================
+
+function checkBrowserSupport() {
+    const issues = [];
+
+    // Check for secure context (HTTPS or localhost)
+    if (!window.isSecureContext) {
+        issues.push(
+            'Esta página precisa ser acessada via HTTPS ou localhost. ' +
+            'Acesse: http://localhost:8000 ou http://127.0.0.1:8000'
+        );
+    }
+
+    // Check for mediaDevices API
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        // Try legacy API
+        const getUserMedia = navigator.getUserMedia ||
+            navigator.webkitGetUserMedia ||
+            navigator.mozGetUserMedia ||
+            navigator.msGetUserMedia;
+
+        if (!getUserMedia) {
+            issues.push(
+                'Seu navegador não suporta acesso ao microfone. ' +
+                'Use Chrome, Firefox ou Edge atualizado.'
+            );
+        }
+    }
+
+    // Check for AudioContext
+    if (!window.AudioContext && !window.webkitAudioContext) {
+        issues.push('Seu navegador não suporta Web Audio API.');
+    }
+
+    // Check for WebSocket
+    if (!window.WebSocket) {
+        issues.push('Seu navegador não suporta WebSocket.');
+    }
+
+    return issues;
+}
 
 // State
 let websocket = null;
@@ -72,16 +121,51 @@ function connectWebSocket() {
 
 function handleWebSocketMessage(event) {
     if (event.data instanceof Blob) {
-        // Binary audio data
-        handleAudioData(event.data);
+        // Binary data: pode ser msgpack (controle) ou PCM16 (áudio)
+        event.data.arrayBuffer().then(buffer => {
+            if (CONFIG.useMsgpack && typeof MessagePack !== 'undefined') {
+                // Tentar decodificar como msgpack
+                try {
+                    const uint8 = new Uint8Array(buffer);
+                    const data = MessagePack.decode(uint8);
+
+                    // Se tem "type", é mensagem de controle
+                    if (data && typeof data === 'object' && data.type) {
+                        handleControlMessage(data);
+                        return;
+                    }
+                } catch (e) {
+                    // Não é msgpack válido, é áudio PCM16
+                }
+            }
+
+            // Fallback: tratar como áudio
+            handleAudioBuffer(buffer);
+        });
     } else {
-        // JSON control message
+        // JSON control message (fallback para compatibilidade)
         try {
             const data = JSON.parse(event.data);
             handleControlMessage(data);
         } catch (e) {
             console.error('Failed to parse message:', e);
         }
+    }
+}
+
+const AUDIO_QUEUE_MAX_SIZE = 50;
+
+async function handleAudioBuffer(arrayBuffer) {
+    // Limitar tamanho da fila para evitar consumo excessivo de memória
+    if (audioQueue.length >= AUDIO_QUEUE_MAX_SIZE) {
+        audioQueue.shift(); // Descarta o mais antigo
+        console.warn('Audio queue overflow: descartado chunk antigo');
+    }
+
+    audioQueue.push(arrayBuffer);
+
+    if (!isPlayingAudio) {
+        playNextAudio();
     }
 }
 
@@ -126,15 +210,7 @@ function handleControlMessage(data) {
     }
 }
 
-async function handleAudioData(blob) {
-    // Queue audio for playback
-    const arrayBuffer = await blob.arrayBuffer();
-    audioQueue.push(arrayBuffer);
-
-    if (!isPlayingAudio) {
-        playNextAudio();
-    }
-}
+// handleAudioData removida - agora usa handleAudioBuffer diretamente
 
 // ==============================================================================
 // Audio Capture
@@ -142,6 +218,14 @@ async function handleAudioData(blob) {
 
 async function startAudioCapture() {
     try {
+        // Check if mediaDevices is available
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            throw new Error(
+                'Acesso ao microfone indisponível. ' +
+                'Certifique-se de acessar via http://localhost:8000 ou http://127.0.0.1:8000'
+            );
+        }
+
         // Request microphone access
         mediaStream = await navigator.mediaDevices.getUserMedia({
             audio: {
@@ -380,6 +464,12 @@ async function startConversation() {
     try {
         startBtn.disabled = true;
 
+        // Check browser support first
+        const issues = checkBrowserSupport();
+        if (issues.length > 0) {
+            throw new Error(issues.join('\n'));
+        }
+
         // Connect WebSocket
         await connectWebSocket();
 
@@ -449,3 +539,14 @@ document.addEventListener('keydown', (event) => {
 
 // Initialize
 console.log('Voice Agent Frontend loaded');
+
+// Check browser support on load
+document.addEventListener('DOMContentLoaded', () => {
+    const issues = checkBrowserSupport();
+    if (issues.length > 0) {
+        console.warn('Browser compatibility issues:', issues);
+        addSystemMessage('⚠️ ' + issues.join(' '));
+        startBtn.disabled = true;
+        startBtn.title = issues.join('\n');
+    }
+});
