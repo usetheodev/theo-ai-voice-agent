@@ -22,6 +22,7 @@ from .sentence_strategy import SentenceStreamingStrategy
 from .clause_strategy import ClauseStreamingStrategy
 from .word_strategy import WordStreamingStrategy
 from .adaptive_strategy import AdaptiveStreamingStrategy
+from .filler import FillerInjector, FillerConfig
 
 __all__ = [
     # Sentence streaming
@@ -55,4 +56,7 @@ __all__ = [
     "mix_audio_np",
     "apply_gain_np",
     "normalize_audio_np",
+    # Filler injection
+    "FillerInjector",
+    "FillerConfig",
 ]

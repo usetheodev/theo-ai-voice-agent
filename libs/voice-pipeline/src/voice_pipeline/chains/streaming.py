@@ -52,6 +52,7 @@ from voice_pipeline.streaming import SentenceStreamer, SentenceStreamerConfig
 from voice_pipeline.streaming.metrics import StreamingMetrics
 from voice_pipeline.streaming.strategy import StreamingStrategy
 from voice_pipeline.streaming.sentence_strategy import SentenceStreamingStrategy
+from voice_pipeline.streaming.filler import FillerConfig, FillerInjector
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +131,7 @@ class StreamingVoiceChain(BaseVoiceChain):
         turn_taking_controller: Optional[TurnTakingController] = None,
         streaming_strategy: Optional[StreamingStrategy] = None,
         interruption_strategy: Optional[InterruptionStrategy] = None,
+        filler_config: Optional[FillerConfig] = None,
     ):
         """
         Initialize the streaming chain.
@@ -176,6 +178,10 @@ class StreamingVoiceChain(BaseVoiceChain):
                                   graceful, or backchannel-aware). If None,
                                   the chain uses the existing interrupt()
                                   behavior (caller-managed).
+            filler_config: Optional filler injection configuration.
+                          When provided and enabled, pre-synthesized filler
+                          sounds are played before the main TTS response
+                          to reduce perceived latency.
         """
         super().__init__(
             asr=asr,
@@ -196,6 +202,11 @@ class StreamingVoiceChain(BaseVoiceChain):
         self.turn_taking_controller = turn_taking_controller
         self.streaming_strategy = streaming_strategy
         self.interruption_strategy = interruption_strategy
+
+        # Filler injector
+        self._filler_injector: Optional[FillerInjector] = None
+        if filler_config and filler_config.enabled:
+            self._filler_injector = FillerInjector(filler_config)
 
         # Sentence streamer config
         self.streamer_config = SentenceStreamerConfig(
@@ -269,6 +280,11 @@ class StreamingVoiceChain(BaseVoiceChain):
         if self.auto_warmup and isinstance(self.llm, Warmable):
             self.llm_warmup_time_ms = await self.llm.warmup()
             logger.info(f"LLM warmed up in {self.llm_warmup_time_ms:.1f}ms")
+
+        # Warm up filler sounds
+        if self._filler_injector:
+            filler_ms = await self._filler_injector.warmup(self.tts)
+            logger.info(f"Fillers warmed up in {filler_ms:.1f}ms")
 
     async def disconnect(self) -> None:
         """Disconnect all providers."""
@@ -484,6 +500,7 @@ class StreamingVoiceChain(BaseVoiceChain):
                     else:
                         partial_text = result.text
 
+                    self.metrics.record_asr_chunk()
                     await transcription_queue.put(result)
 
                 # Signal completion
@@ -579,6 +596,7 @@ class StreamingVoiceChain(BaseVoiceChain):
                         len(audio_chunk.data),
                         audio_chunk.sample_rate,
                     )
+                    self.metrics.record_tts_chunk()
 
                     await emit_tts_chunk(audio_chunk)
                     yield audio_chunk
@@ -718,6 +736,21 @@ class StreamingVoiceChain(BaseVoiceChain):
 
             metrics.mark_tts_start()
 
+            # Inject filler before main response
+            if self._filler_injector and self._filler_injector.is_ready:
+                filler = self._filler_injector.get_filler()
+                if filler:
+                    metrics.mark_first_audio()
+                    metrics.add_audio_chunk(
+                        len(filler.data),
+                        filler.sample_rate,
+                    )
+                    metrics.record_tts_chunk()
+                    if not tts_started:
+                        await emit_tts_start("filler")
+                        tts_started = True
+                    yield filler
+
             while True:
                 try:
                     sentence = await asyncio.wait_for(
@@ -754,6 +787,7 @@ class StreamingVoiceChain(BaseVoiceChain):
                         len(audio_chunk.data),
                         audio_chunk.sample_rate,
                     )
+                    metrics.record_tts_chunk()
 
                     await emit_tts_chunk(audio_chunk)
                     yield audio_chunk
