@@ -113,11 +113,13 @@ class Pipeline:
         # Control
         self._running = False
         self._cancel_event = asyncio.Event()
+        self._processing_event = asyncio.Event()
         self._current_task: Optional[asyncio.Task] = None
+        self._barge_in_cooldown_until: float = 0.0
 
         # Audio buffers
-        self._input_buffer: asyncio.Queue[bytes] = asyncio.Queue()
-        self._output_buffer: asyncio.Queue[AudioChunk] = asyncio.Queue()
+        self._input_buffer: asyncio.Queue[bytes] = asyncio.Queue(maxsize=self.config.buffer_maxsize)
+        self._output_buffer: asyncio.Queue[AudioChunk] = asyncio.Queue(maxsize=self.config.buffer_maxsize)
 
     # =========================================================================
     # EVENT HANDLERS
@@ -236,6 +238,9 @@ class Pipeline:
 
             # Check for barge-in during speaking
             if self.state_machine.is_speaking and self.config.enable_barge_in:
+                # Skip barge-in during cooldown
+                if time.monotonic() < self._barge_in_cooldown_until:
+                    continue
                 event = await self.vad.process(chunk, self.config.sample_rate)
                 if event.is_speech:
                     if speech_start_time is None:
@@ -273,13 +278,17 @@ class Pipeline:
                         # Signal end of input
                         await self._input_buffer.put(None)
                         self.state_machine.transition_to(ConversationState.PROCESSING)
+                        self._processing_event.set()
 
     async def _process_loop(self) -> None:
         """Main processing loop: ASR → LLM → TTS."""
         while self._running:
-            # Wait for processing state
+            # Wait for processing state (event-driven, no polling)
             if not self.state_machine.is_processing:
-                await asyncio.sleep(0.01)
+                self._processing_event.clear()
+                await self._processing_event.wait()
+                if not self._running:
+                    break
                 continue
 
             try:
@@ -322,7 +331,13 @@ class Pipeline:
         # Collect audio from buffer
         async def audio_generator():
             while True:
-                chunk = await self._input_buffer.get()
+                try:
+                    chunk = await asyncio.wait_for(
+                        self._input_buffer.get(), timeout=30.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("Input buffer timeout - ending ASR collection")
+                    break
                 if chunk is None:
                     break
                 yield chunk
@@ -378,7 +393,7 @@ class Pipeline:
         response_text = ""
 
         # TTS queue
-        tts_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        tts_queue: asyncio.Queue[Optional[str]] = asyncio.Queue(maxsize=self.config.tts_queue_maxsize)
 
         # Start TTS consumer task
         async def tts_consumer():
@@ -388,7 +403,13 @@ class Pipeline:
 
             async def sentence_generator():
                 while True:
-                    sentence = await tts_queue.get()
+                    try:
+                        sentence = await asyncio.wait_for(
+                            tts_queue.get(), timeout=30.0
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning("TTS queue timeout")
+                        break
                     if sentence is None:
                         break
                     yield sentence
@@ -500,7 +521,11 @@ class Pipeline:
         return sentences
 
     async def _handle_barge_in(self) -> None:
-        """Handle user interruption (barge-in)."""
+        """Handle user interruption (barge-in).
+
+        Uses a non-blocking cooldown timestamp instead of sleep,
+        so VAD continues reading frames during the backoff period.
+        """
         logger.info("Barge-in detected")
 
         self.metrics.barge_in_count += 1
@@ -520,8 +545,10 @@ class Pipeline:
         # Transition to listening
         self.state_machine.force_transition(ConversationState.LISTENING)
 
-        # Wait for backoff
-        await asyncio.sleep(self.config.barge_in_backoff_ms / 1000)
+        # Non-blocking backoff: store timestamp instead of sleeping
+        self._barge_in_cooldown_until = (
+            time.monotonic() + self.config.barge_in_backoff_ms / 1000
+        )
 
         self._cancel_event.clear()
         self.vad.reset()
@@ -534,6 +561,7 @@ class Pipeline:
         """Stop the pipeline."""
         self._running = False
         self._cancel_event.set()
+        self._processing_event.set()  # Unblock _process_loop
 
     def reset(self) -> None:
         """Reset pipeline state."""

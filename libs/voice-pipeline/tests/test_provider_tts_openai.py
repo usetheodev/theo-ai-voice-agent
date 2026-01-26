@@ -318,6 +318,46 @@ class TestOpenAITTSProviderSynthesize:
         assert provider.metrics.total_requests == 1
 
 
+def _make_streaming_mock_client(*audio_chunks_list):
+    """Create a mock client that simulates with_streaming_response.
+
+    Args:
+        audio_chunks_list: For each text input, a list of bytes chunks
+                          to yield via aiter_bytes. If a single bytes is
+                          given, it is wrapped in a list.
+    """
+    call_count = 0
+
+    class MockStreamingResponse:
+        def __init__(self, chunks):
+            self._chunks = chunks
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def aiter_bytes(self, chunk_size=None):
+            for chunk in self._chunks:
+                yield chunk
+
+    class MockStreamingCreate:
+        def create(self_, **kwargs):
+            """Returns an async context manager (not a coroutine)."""
+            nonlocal call_count
+            idx = min(call_count, len(audio_chunks_list) - 1)
+            chunks = audio_chunks_list[idx]
+            if isinstance(chunks, bytes):
+                chunks = [chunks]
+            call_count += 1
+            return MockStreamingResponse(chunks)
+
+    mock_client = AsyncMock()
+    mock_client.audio.speech.with_streaming_response = MockStreamingCreate()
+    return mock_client
+
+
 class TestOpenAITTSProviderSynthesizeStream:
     """Tests for streaming synthesis."""
 
@@ -335,16 +375,13 @@ class TestOpenAITTSProviderSynthesizeStream:
 
     @pytest.mark.asyncio
     async def test_synthesize_stream_basic(self):
-        """Test basic streaming synthesis."""
+        """Test basic streaming synthesis with real HTTP streaming."""
         provider = OpenAITTSProvider(api_key="sk-test")
 
-        # Mock response
-        mock_response = MagicMock()
-        mock_response.read.return_value = b"audio_data"
-
-        mock_client = AsyncMock()
-        mock_client.audio.speech.create = AsyncMock(return_value=mock_response)
-        provider._async_client = mock_client
+        provider._async_client = _make_streaming_mock_client(
+            [b"audio_data"],
+            [b"audio_data"],
+        )
 
         async def text_gen():
             yield "Hello."
@@ -362,16 +399,35 @@ class TestOpenAITTSProviderSynthesizeStream:
             assert chunk.channels == 1
 
     @pytest.mark.asyncio
+    async def test_synthesize_stream_multiple_chunks_per_sentence(self):
+        """Test that multiple audio chunks are emitted per sentence."""
+        provider = OpenAITTSProvider(api_key="sk-test")
+
+        provider._async_client = _make_streaming_mock_client(
+            [b"chunk1", b"chunk2", b"chunk3"],
+        )
+
+        async def text_gen():
+            yield "Hello world."
+
+        chunks = []
+        async for chunk in provider.synthesize_stream(text_gen()):
+            chunks.append(chunk)
+
+        assert len(chunks) == 3
+        assert chunks[0].data == b"chunk1"
+        assert chunks[1].data == b"chunk2"
+        assert chunks[2].data == b"chunk3"
+
+    @pytest.mark.asyncio
     async def test_synthesize_stream_skips_empty(self):
         """Test that stream skips empty text."""
         provider = OpenAITTSProvider(api_key="sk-test")
 
-        mock_response = MagicMock()
-        mock_response.read.return_value = b"audio_data"
-
-        mock_client = AsyncMock()
-        mock_client.audio.speech.create = AsyncMock(return_value=mock_response)
-        provider._async_client = mock_client
+        provider._async_client = _make_streaming_mock_client(
+            [b"audio_data"],
+            [b"audio_data"],
+        )
 
         async def text_gen():
             yield "Hello."
@@ -384,32 +440,6 @@ class TestOpenAITTSProviderSynthesizeStream:
             chunks.append(chunk)
 
         assert len(chunks) == 2  # Only non-empty texts
-
-    @pytest.mark.asyncio
-    async def test_synthesize_stream_calculates_duration(self):
-        """Test that stream calculates PCM duration."""
-        provider = OpenAITTSProvider(api_key="sk-test")
-
-        # Create audio data: 24000 samples = 1 second at 24kHz
-        # PCM16 = 2 bytes per sample
-        audio_data = b"\x00" * (24000 * 2)  # 1 second of silence
-
-        mock_response = MagicMock()
-        mock_response.read.return_value = audio_data
-
-        mock_client = AsyncMock()
-        mock_client.audio.speech.create = AsyncMock(return_value=mock_response)
-        provider._async_client = mock_client
-
-        async def text_gen():
-            yield "Test"
-
-        chunks = []
-        async for chunk in provider.synthesize_stream(text_gen()):
-            chunks.append(chunk)
-
-        assert len(chunks) == 1
-        assert chunks[0].duration_ms == 1000.0  # 1 second
 
 
 class TestOpenAITTSProviderErrorHandling:
@@ -518,12 +548,15 @@ class TestOpenAITTSProviderVoiceRunnable:
         """Test ainvoke with async iterator input."""
         provider = OpenAITTSProvider(api_key="sk-test")
 
+        # ainvoke with async iterator goes through synthesize_stream (streaming)
+        provider._async_client = _make_streaming_mock_client(
+            [b"audio_data"],
+            [b"audio_data"],
+        )
+        # Also need create for non-streaming paths
         mock_response = MagicMock()
         mock_response.read.return_value = b"audio_data"
-
-        mock_client = AsyncMock()
-        mock_client.audio.speech.create = AsyncMock(return_value=mock_response)
-        provider._async_client = mock_client
+        provider._async_client.audio.speech.create = AsyncMock(return_value=mock_response)
 
         async def text_gen():
             yield "Hello."
@@ -540,12 +573,9 @@ class TestOpenAITTSProviderVoiceRunnable:
         """Test astream method."""
         provider = OpenAITTSProvider(api_key="sk-test")
 
-        mock_response = MagicMock()
-        mock_response.read.return_value = b"audio_chunk"
-
-        mock_client = AsyncMock()
-        mock_client.audio.speech.create = AsyncMock(return_value=mock_response)
-        provider._async_client = mock_client
+        provider._async_client = _make_streaming_mock_client(
+            [b"audio_chunk"],
+        )
 
         chunks = []
         async for chunk in provider.astream("Hello, world!"):

@@ -52,3 +52,10 @@ class PipelineConfig:
     # LLM
     llm_temperature: float = 0.7
     llm_max_tokens: Optional[int] = None
+
+    # Buffer sizes
+    buffer_maxsize: int = 50
+    """Maximum size for input/output audio buffers (~5s of audio at 16kHz)."""
+
+    tts_queue_maxsize: int = 10
+    """Maximum size for TTS sentence queue."""

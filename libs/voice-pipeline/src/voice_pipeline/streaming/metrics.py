@@ -67,6 +67,12 @@ class StreamingMetrics:
     _first_token_time: Optional[float] = field(default=None, repr=False)
     _first_audio_time: Optional[float] = field(default=None, repr=False)
 
+    # Latency histories for percentile calculation
+    _asr_latencies: list[float] = field(default_factory=list, repr=False)
+    _llm_ttft_latencies: list[float] = field(default_factory=list, repr=False)
+    _tts_ttfb_latencies: list[float] = field(default_factory=list, repr=False)
+    _total_latencies: list[float] = field(default_factory=list, repr=False)
+
     def start(self) -> None:
         """Mark pipeline start."""
         self._start_time = time.perf_counter()
@@ -75,6 +81,7 @@ class StreamingMetrics:
         """Mark pipeline end and calculate total time."""
         if self._start_time:
             self.total_time = time.perf_counter() - self._start_time
+            self._total_latencies.append(self.total_time)
 
     def mark_asr_start(self) -> None:
         """Mark ASR processing start."""
@@ -84,6 +91,7 @@ class StreamingMetrics:
         """Mark ASR processing end."""
         if self._asr_start:
             self.asr_time = time.perf_counter() - self._asr_start
+            self._asr_latencies.append(self.asr_time)
 
     def mark_llm_start(self) -> None:
         """Mark LLM generation start."""
@@ -93,6 +101,8 @@ class StreamingMetrics:
         """Mark LLM generation end."""
         if self._llm_start:
             self.llm_time = time.perf_counter() - self._llm_start
+            if self.ttft is not None:
+                self._llm_ttft_latencies.append(self.ttft)
 
     def mark_tts_start(self) -> None:
         """Mark TTS synthesis start."""
@@ -102,6 +112,8 @@ class StreamingMetrics:
         """Mark TTS synthesis end."""
         if self._tts_start:
             self.tts_time = time.perf_counter() - self._tts_start
+            if self.ttfa is not None:
+                self._tts_ttfb_latencies.append(self.ttfa)
 
     def mark_first_token(self) -> None:
         """Mark first LLM token received."""
@@ -153,9 +165,50 @@ class StreamingMetrics:
         rtf = self.rtf
         return rtf is not None and rtf < 1.0
 
+    @staticmethod
+    def _percentile(values: list[float], p: float) -> Optional[float]:
+        """Calculate percentile from a list of values.
+
+        Args:
+            values: List of observed values.
+            p: Percentile (0-100).
+
+        Returns:
+            Interpolated percentile value, or None if no data.
+        """
+        if not values:
+            return None
+        sorted_vals = sorted(values)
+        k = (len(sorted_vals) - 1) * (p / 100)
+        f = int(k)
+        c = f + 1 if f + 1 < len(sorted_vals) else f
+        return sorted_vals[f] + (k - f) * (sorted_vals[c] - sorted_vals[f])
+
+    def percentiles(self) -> dict:
+        """Get p50/p95/p99 percentiles for all tracked latencies.
+
+        Returns:
+            Dictionary with percentile values per stage.
+        """
+        result = {}
+        for name, values in [
+            ("asr", self._asr_latencies),
+            ("llm_ttft", self._llm_ttft_latencies),
+            ("tts_ttfb", self._tts_ttfb_latencies),
+            ("total", self._total_latencies),
+        ]:
+            if values:
+                result[name] = {
+                    "p50": self._percentile(values, 50),
+                    "p95": self._percentile(values, 95),
+                    "p99": self._percentile(values, 99),
+                    "count": len(values),
+                }
+        return result
+
     def to_dict(self) -> dict:
         """Convert to dictionary for logging/serialization."""
-        return {
+        result = {
             "ttft": self.ttft,
             "ttfa": self.ttfa,
             "total_time": self.total_time,
@@ -170,6 +223,10 @@ class StreamingMetrics:
             "rtf": self.rtf,
             "is_realtime": self.is_realtime,
         }
+        pctls = self.percentiles()
+        if pctls:
+            result["percentiles"] = pctls
+        return result
 
     def __str__(self) -> str:
         """Human-readable summary."""
@@ -184,6 +241,12 @@ class StreamingMetrics:
             parts.append(f"RTF={self.rtf:.2f}")
         if self.sentences_count > 0:
             parts.append(f"Sentences={self.sentences_count}")
+        pctls = self.percentiles()
+        if pctls:
+            for stage, vals in pctls.items():
+                parts.append(
+                    f"{stage}[p50={vals['p50']:.3f}s p95={vals['p95']:.3f}s]"
+                )
         return f"StreamingMetrics({', '.join(parts)})"
 
 
