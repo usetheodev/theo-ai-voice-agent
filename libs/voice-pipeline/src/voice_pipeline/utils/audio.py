@@ -4,6 +4,44 @@ import math
 from typing import Optional
 
 
+def audio_to_numpy(audio_data, sample_rate: int = 24000):
+    """Convert various audio formats to numpy float32 array.
+
+    Handles torch tensors, numpy arrays, lists, and raw data.
+    Returns audio data as a numpy float32 array normalized to [-1, 1].
+
+    Args:
+        audio_data: Audio data in various formats (torch.Tensor, np.ndarray, list, etc.).
+        sample_rate: Sample rate of the audio (used for validation).
+
+    Returns:
+        numpy.ndarray: Audio data as float32 array.
+
+    Raises:
+        ImportError: If numpy is not installed.
+    """
+    import numpy as np
+
+    # Already numpy
+    if isinstance(audio_data, np.ndarray):
+        return audio_data.astype(np.float32)
+
+    # Torch tensor
+    try:
+        import torch
+        if isinstance(audio_data, torch.Tensor):
+            return audio_data.cpu().numpy().astype(np.float32)
+    except ImportError:
+        pass
+
+    # List or other sequence
+    if isinstance(audio_data, (list, tuple)):
+        return np.array(audio_data, dtype=np.float32)
+
+    # Fallback: try to convert
+    return np.asarray(audio_data, dtype=np.float32)
+
+
 def pcm16_to_float(audio_bytes: bytes) -> list[float]:
     """Convert PCM16 audio bytes to float samples.
 

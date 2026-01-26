@@ -10,7 +10,7 @@ Quick Start:
     >>> async for audio in chain.astream(audio_bytes):
     ...     play(audio)
 
-Using the Builder:
+Using the Builder (deprecated, use VoiceAgent.builder() instead):
     >>> from voice_pipeline.chains import voice_chain
     >>> chain = (
     ...     voice_chain()

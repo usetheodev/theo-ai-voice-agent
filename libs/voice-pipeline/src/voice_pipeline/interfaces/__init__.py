@@ -49,6 +49,31 @@ from .interruption import (
     InterruptionStrategy,
 )
 
+from typing import Protocol, runtime_checkable
+
+
+@runtime_checkable
+class Warmable(Protocol):
+    """Protocol for providers that support warmup.
+
+    Providers implementing this protocol can pre-load models
+    or run initial inference to eliminate cold-start latency.
+
+    Example:
+        >>> if isinstance(provider, Warmable):
+        ...     warmup_ms = await provider.warmup()
+        ...     print(f"Warmed up in {warmup_ms:.1f}ms")
+    """
+
+    async def warmup(self) -> float:
+        """Warm up the provider.
+
+        Returns:
+            Warmup time in milliseconds.
+        """
+        ...
+
+
 __all__ = [
     # ASR
     "ASRInterface",
@@ -96,4 +121,6 @@ __all__ = [
     "InterruptionStrategy",
     "InterruptionContext",
     "InterruptionDecision",
+    # Warmable
+    "Warmable",
 ]

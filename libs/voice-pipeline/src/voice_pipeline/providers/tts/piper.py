@@ -69,7 +69,7 @@ class PiperTTSConfig(ProviderConfig):
         sentence_silence: Silence between sentences in seconds. Default: 0.2.
     """
 
-    voice: str = "pt_BR-faber-medium"
+    voice: str = "en_US-lessac-medium"
     model_path: Optional[str] = None
     data_dir: Optional[str] = None
     speaker_id: int = 0
@@ -96,7 +96,7 @@ class PiperTTSConfig(ProviderConfig):
     aliases=["piper-tts", "fast-tts"],
     tags=["local", "offline", "fast", "cpu", "onnx"],
     default_config={
-        "voice": "pt_BR-faber-medium",
+        "voice": "en_US-lessac-medium",
         "length_scale": 1.0,
     },
 )
@@ -119,9 +119,9 @@ class PiperTTSProvider(BaseProvider, TTSInterface):
     - And many more (40+ languages)
 
     Example:
-        >>> tts = PiperTTSProvider(voice="pt_BR-faber-medium")
+        >>> tts = PiperTTSProvider(voice="en_US-lessac-medium")
         >>> await tts.connect()
-        >>> audio = await tts.synthesize("Olá, como vai?")
+        >>> audio = await tts.synthesize("Hello, how are you?")
     """
 
     provider_name: str = "piper-tts"

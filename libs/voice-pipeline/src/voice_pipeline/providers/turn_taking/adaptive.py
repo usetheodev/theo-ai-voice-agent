@@ -86,11 +86,11 @@ class AdaptiveSilenceTurnTaking(TurnTakingController):
         # Long utterances may have pauses → increase threshold
         if context.transcript_word_count > 0:
             if context.transcript_word_count <= 3:
-                multiplier *= 0.7  # Short response, likely done
+                multiplier *= 0.7  # Short utterance (1-3 words): likely complete
             elif context.transcript_word_count <= 8:
-                multiplier *= 0.9  # Medium, slightly reduce
+                multiplier *= 0.9  # Medium utterance: slightly reduce wait
             elif context.transcript_word_count > 15:
-                multiplier *= 1.3  # Long speech, may pause to think
+                multiplier *= 1.3  # Long speech: may pause to think
 
         # Factor 2: Speech duration
         # Very short speech segments are likely complete

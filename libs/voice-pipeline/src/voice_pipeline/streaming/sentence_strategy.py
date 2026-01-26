@@ -29,12 +29,12 @@ class SentenceStreamingStrategy(StreamingStrategy):
 
     Example:
         >>> strategy = SentenceStreamingStrategy()
-        >>> chunks = strategy.process("Olá! ")
-        >>> # → ["Olá!"]
-        >>> chunks = strategy.process("Como vai")
+        >>> chunks = strategy.process("Hello! ")
+        >>> # → ["Hello!"]
+        >>> chunks = strategy.process("How are")
         >>> # → []
-        >>> chunks = strategy.process(" você?")
-        >>> # → ["Como vai você?"]
+        >>> chunks = strategy.process(" you?")
+        >>> # → ["How are you?"]
     """
 
     def __init__(self, config: Optional[SentenceStreamerConfig] = None):

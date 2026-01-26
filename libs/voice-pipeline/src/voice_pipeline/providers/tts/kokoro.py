@@ -14,33 +14,7 @@ from typing import AsyncIterator, Literal, Optional
 import numpy as np
 
 from voice_pipeline.interfaces.tts import AudioChunk, TTSInterface
-
-
-def _to_numpy(audio_data) -> np.ndarray:
-    """Convert audio data to numpy array.
-
-    Handles PyTorch Tensors, numpy arrays, and bytes.
-
-    Args:
-        audio_data: Audio data (Tensor, ndarray, or bytes).
-
-    Returns:
-        Numpy array with float32 audio samples.
-    """
-    # Already numpy
-    if isinstance(audio_data, np.ndarray):
-        return audio_data
-
-    # PyTorch Tensor - move to CPU and convert
-    if hasattr(audio_data, "cpu") and hasattr(audio_data, "numpy"):
-        return audio_data.cpu().numpy()
-
-    # Bytes - convert assuming float32
-    if isinstance(audio_data, bytes):
-        return np.frombuffer(audio_data, dtype=np.float32)
-
-    # Try to convert directly
-    return np.array(audio_data, dtype=np.float32)
+from voice_pipeline.utils.audio import audio_to_numpy as _to_numpy
 from voice_pipeline.providers.base import (
     BaseProvider,
     HealthCheckResult,
@@ -313,7 +287,7 @@ class KokoroTTSProvider(BaseProvider, TTSInterface):
             Warmup time in milliseconds.
 
         Example:
-            >>> tts = KokoroTTSProvider(lang_code="p", voice="pf_dora")
+            >>> tts = KokoroTTSProvider(lang_code="a", voice="af_heart")
             >>> await tts.connect()
             >>> warmup_ms = await tts.warmup()
             >>> print(f"Kokoro warmed up in {warmup_ms:.1f}ms")

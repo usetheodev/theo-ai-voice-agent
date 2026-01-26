@@ -1,20 +1,20 @@
-"""Voice Agent Session - WebSocket handler usando voice-pipeline.
+"""Voice Agent Session - WebSocket handler using voice-pipeline.
 
-Usa streaming sentence-level para baixa latência (TTFA ~0.6-0.8s).
+Uses sentence-level streaming for low latency (TTFA ~0.6-0.8s).
 
-Otimizações implementadas:
-- TTS Warmup: Elimina cold-start do TTS (auto_warmup=True por padrão)
-- Sentence Streaming: LLM e TTS executam em paralelo
-- Producer-Consumer: asyncio.Queue conecta LLM→TTS
-- msgpack (opcional): Serialização binária ~10x mais rápida que JSON
-- Singleton de providers: Modelos compartilhados entre sessões
-- Buffers limitados: Previne consumo ilimitado de memória
+Implemented optimizations:
+- TTS Warmup: Eliminates TTS cold-start (auto_warmup=True by default)
+- Sentence Streaming: LLM and TTS run in parallel
+- Producer-Consumer: asyncio.Queue connects LLM→TTS
+- msgpack (optional): Binary serialization ~10x faster than JSON
+- Provider Singleton: Models shared between sessions
+- Limited Buffers: Prevents unbounded memory consumption
 
 Features (Phase 7-9):
-- Turn-Taking Adaptativo: Silêncio contextual para detecção de fim de turno
-- Streaming Granularity: Clause-level para balanço latência/naturalidade
-- Interruption Strategy: Backchannel-aware (distingue "uhum" de interrupção real)
-- Full-Duplex State: Suporta fala simultânea com decisão inteligente
+- Adaptive Turn-Taking: Contextual silence for end-of-turn detection
+- Streaming Granularity: Clause-level for latency/naturalness balance
+- Interruption Strategy: Backchannel-aware (distinguishes "uh-huh" from real interruption)
+- Full-Duplex State: Supports simultaneous speech with intelligent decision-making
 """
 
 import asyncio
@@ -35,32 +35,34 @@ from voice_pipeline.interfaces.interruption import (
 
 logger = logging.getLogger(__name__)
 
-# Limite de sessões simultâneas
+# Maximum concurrent sessions
 MAX_CONCURRENT_SESSIONS = 3
 
-# Controle de sessões ativas
+# Active sessions control
 _active_sessions: set["VoiceAgentSession"] = set()
 _sessions_lock = asyncio.Lock()
 
-# Singleton: chain e VAD compartilhados entre sessões
+# Singleton: chain and VAD shared between sessions
 _shared_chain: Optional[StreamingVoiceChain] = None
 _shared_vad = None
 _shared_chain_lock = asyncio.Lock()
 
-# Configuração de modelos via variáveis de ambiente
-LLM_MODEL = os.environ.get("VP_LLM_MODEL", "qwen3:0.6b")
+# Model configuration via environment variables
+LLM_MODEL = os.environ.get("VP_LLM_MODEL", "llama3.2:1b")
 TTS_PROVIDER = os.environ.get("VP_TTS_PROVIDER", "kokoro")
-TTS_VOICE = os.environ.get("VP_TTS_VOICE", "pf_dora")
+TTS_VOICE = os.environ.get("VP_TTS_VOICE", None) or None
+VP_LANGUAGE = os.environ.get("VP_LANGUAGE", None) or None
+VP_SYSTEM_PROMPT = os.environ.get("VP_SYSTEM_PROMPT", None) or None
 
-# Limites de buffers
-AUDIO_BUFFER_MAX_SIZE = 100  # ~100 chunks de 1024 bytes = ~100KB
-VAD_BUFFER_MAX_BYTES = 32768  # 32KB máximo no buffer do VAD
-POST_SPEECH_COOLDOWN_MS = 500  # Cooldown após agente falar (evitar echo)
-BUFFER_OVERFLOW_LOG_INTERVAL = 50  # Logar warning a cada N overflows
+# Buffer limits
+AUDIO_BUFFER_MAX_SIZE = 100  # ~100 chunks of 1024 bytes = ~100KB
+VAD_BUFFER_MAX_BYTES = 32768  # 32KB maximum in VAD buffer
+POST_SPEECH_COOLDOWN_MS = 500  # Cooldown after agent speaks (avoid echo)
+BUFFER_OVERFLOW_LOG_INTERVAL = 50  # Log warning every N overflows
 
 
 # =============================================================================
-# Serialização otimizada (msgpack opcional)
+# Optimized serialization (optional msgpack)
 # =============================================================================
 
 def _has_msgpack() -> bool:
@@ -73,12 +75,12 @@ def _has_msgpack() -> bool:
 
 
 class WebSocketSerializer:
-    """Serializer para WebSocket com suporte a msgpack.
+    """WebSocket serializer with msgpack support.
 
-    Usa msgpack se disponível e habilitado, senão usa JSON.
-    msgpack é ~10x mais rápido e ~50% menor que JSON.
+    Uses msgpack if available and enabled, otherwise uses JSON.
+    msgpack is ~10x faster and ~50% smaller than JSON.
 
-    Para habilitar msgpack no cliente JavaScript:
+    To enable msgpack in the JavaScript client:
     ```javascript
     import msgpack from '@msgpack/msgpack';
 
@@ -108,7 +110,7 @@ class WebSocketSerializer:
         """
         self.use_msgpack = use_msgpack and _has_msgpack()
         if use_msgpack and not _has_msgpack():
-            logger.warning("msgpack solicitado mas não instalado. Usando JSON.")
+            logger.warning("msgpack requested but not installed. Using JSON.")
 
     async def send_json(self, websocket: WebSocket, data: dict[str, Any]) -> None:
         """Send control message (JSON or msgpack)."""
@@ -120,24 +122,24 @@ class WebSocketSerializer:
 
 
 class VoiceAgentSession:
-    """Sessão WebSocket para conversação de voz em tempo real.
+    """WebSocket session for real-time voice conversation.
 
-    Usa VoiceAgent.builder() com streaming=True para baixa latência.
+    Uses VoiceAgent.builder() with streaming=True for low latency.
 
-    Arquitetura:
+    Architecture:
         Audio → ASR → LLM (streaming) → StreamingStrategy → TTS → Audio
                             ↓
-                    [chunk pronto (clause/sentence/word)]
+                    [chunk ready (clause/sentence/word)]
                             ↓
-                      TTS começa
+                      TTS starts
 
     Features:
-        - Turn-Taking Adaptativo: Silêncio contextual
+        - Adaptive Turn-Taking: Contextual silence
         - Streaming Granularity: Clause-level (~200-400ms TTFA)
-        - Backchannel Detection: "uhum", "sim" não interrompem
-        - Full-Duplex: Fala simultânea com decisão inteligente
-        - TTS Warmup: Elimina cold-start (~200-500ms economia)
-        - msgpack (opcional): Serialização ~10x mais rápida
+        - Backchannel Detection: "uh-huh", "yes" don't interrupt
+        - Full-Duplex: Simultaneous speech with intelligent decision
+        - TTS Warmup: Eliminates cold-start (~200-500ms savings)
+        - msgpack (optional): ~10x faster serialization
     """
 
     def __init__(self, websocket: WebSocket, use_msgpack: bool = False):
@@ -151,25 +153,25 @@ class VoiceAgentSession:
         self.websocket = websocket
         self.sample_rate = 16000
 
-        # Serializer (JSON ou msgpack)
+        # Serializer (JSON or msgpack)
         self._serializer = WebSocketSerializer(use_msgpack=use_msgpack)
 
-        # Pipeline compartilhado (singleton)
+        # Shared pipeline (singleton)
         self._chain: Optional[StreamingVoiceChain] = None
         self._vad = None
         self._is_listening = False
-        # Buffer limitado para evitar consumo ilimitado de memória
+        # Limited buffer to prevent unbounded memory consumption
         self._audio_buffer: asyncio.Queue[bytes] = asyncio.Queue(
             maxsize=AUDIO_BUFFER_MAX_SIZE
         )
         self._speech_started = False
         self._speech_start_time = 0.0
         self._last_speech_time = 0.0
-        # Flag para ignorar áudio durante processamento da resposta
+        # Flag to ignore audio during response processing
         self._is_processing = False
-        # VAD buffer mutável (bytearray evita cópias de bytes imutáveis)
+        # Mutable VAD buffer (bytearray avoids immutable bytes copies)
         self._vad_buffer = bytearray()
-        # Turn-taking: número de turnos completos na conversação
+        # Turn-taking: number of complete turns in the conversation
         self._turn_count = 0
         self._last_agent_response_length = 0
         # Interruption tracking
@@ -177,41 +179,41 @@ class VoiceAgentSession:
         self._barge_in_speech_start = 0.0
         self._backchannel_count = 0
         self._interruption_count = 0
-        # Post-speech cooldown (evitar echo do TTS no microfone)
+        # Post-speech cooldown (avoid TTS echo in microphone)
         self._processing_end_time = 0.0
-        # Rate-limit de log de buffer overflow
+        # Rate-limit for buffer overflow logging
         self._buffer_overflow_count = 0
 
     async def initialize(self):
-        """Inicializa voice agent com streaming de baixa latência.
+        """Initialize voice agent with low-latency streaming.
 
-        Usa singleton para compartilhar modelos entre sessões,
-        evitando múltiplas cópias dos modelos na memória.
+        Uses singleton to share models between sessions,
+        avoiding multiple copies of models in memory.
         """
         global _shared_chain, _shared_vad
 
-        # Verificar limite de sessões
+        # Check session limit
         async with _sessions_lock:
             if len(_active_sessions) >= MAX_CONCURRENT_SESSIONS:
                 raise RuntimeError(
-                    f"Limite de {MAX_CONCURRENT_SESSIONS} sessões simultâneas atingido"
+                    f"Maximum of {MAX_CONCURRENT_SESSIONS} concurrent sessions reached"
                 )
             _active_sessions.add(self)
 
         async with _shared_chain_lock:
             if _shared_chain is None:
-                # Otimizado para CPU (máxima velocidade, memória mínima):
+                # Optimized for CPU (maximum speed, minimal memory):
                 # Config via env vars: VP_LLM_MODEL, VP_TTS_PROVIDER, VP_TTS_VOICE
                 # Ex: VP_TTS_PROVIDER=piper VP_TTS_VOICE=pt_BR-faber-medium
-                #     VP_LLM_MODEL=qwen3:0.6b
+                #     VP_LLM_MODEL=llama3.2:1b
                 logger.info(
-                    f"Inicializando providers compartilhados (primeira sessão)...\n"
+                    f"Initializing shared providers (first session)...\n"
                     f"  LLM: {LLM_MODEL}, TTS: {TTS_PROVIDER} ({TTS_VOICE})"
                 )
 
                 builder = (
                     VoiceAgent.builder()
-                    .asr("faster-whisper", model="base", language="pt",
+                    .asr("faster-whisper", model="base", language=VP_LANGUAGE,
                          compute_type="int8", vad_filter=True, beam_size=1,
                          vad_parameters={
                              "threshold": 0.5,
@@ -222,13 +224,13 @@ class VoiceAgentSession:
                     .tts(TTS_PROVIDER, voice=TTS_VOICE)
                     .vad("silero")
                     .turn_taking("adaptive", base_threshold_ms=600)
-                    .streaming_granularity("adaptive", first_chunk_words=3, clause_min_chars=10, language="pt")
-                    .interruption("backchannel", language="pt")
+                    .streaming_granularity("adaptive", first_chunk_words=3, clause_min_chars=10, language=VP_LANGUAGE or "en")
+                    .interruption("backchannel", language=VP_LANGUAGE or "en")
                     .system_prompt(
-                        "Você é um assistente de voz prestativo. "
-                        "Responda de forma MUITO breve (1-2 frases curtas) "
-                        "em português brasileiro. "
-                        "Seja direto e conciso."
+                        VP_SYSTEM_PROMPT or
+                        "You are a helpful voice assistant. "
+                        "Respond very briefly (1-2 short sentences). "
+                        "Be direct and concise."
                     )
                     .streaming(True)
                 )
@@ -237,9 +239,9 @@ class VoiceAgentSession:
                 _shared_vad = builder._vad
 
                 if hasattr(_shared_chain, 'warmup_time_ms') and _shared_chain.warmup_time_ms:
-                    logger.info(f"TTS warmup completado em {_shared_chain.warmup_time_ms:.1f}ms")
+                    logger.info(f"TTS warmup completed in {_shared_chain.warmup_time_ms:.1f}ms")
 
-                logger.info("Providers compartilhados prontos")
+                logger.info("Shared providers ready")
                 logger.info(
                     f"Strategies: "
                     f"turn_taking={type(_shared_chain.turn_taking_controller).__name__ if _shared_chain.turn_taking_controller else 'None'}, "
@@ -247,18 +249,18 @@ class VoiceAgentSession:
                     f"interruption={_shared_chain.interruption_strategy.name if _shared_chain.interruption_strategy else 'None'}"
                 )
             else:
-                logger.info("Reutilizando providers compartilhados")
+                logger.info("Reusing shared providers")
 
         self._chain = _shared_chain
         self._vad = _shared_vad
 
-        # Enviar informações sobre strategies ativas ao frontend
+        # Send active strategy info to frontend
         await self._send_strategy_info()
 
-        logger.info("Voice agent pronto (StreamingVoiceChain com otimizações)")
+        logger.info("Voice agent ready (StreamingVoiceChain with optimizations)")
 
     async def _send_strategy_info(self):
-        """Envia informações sobre as strategies ativas ao frontend."""
+        """Send active strategy information to the frontend."""
         chain = self._chain
         if not chain:
             return
@@ -272,71 +274,71 @@ class VoiceAgentSession:
         await self._serializer.send_json(self.websocket, info)
 
     async def configure(self, sample_rate: int = 16000, language: str = "pt"):
-        """Atualiza configuração."""
+        """Update configuration."""
         self.sample_rate = sample_rate
 
     async def start_listening(self):
-        """Inicia escuta."""
+        """Start listening."""
         self._is_listening = True
         self._speech_started = False
         await self._send_status("listening")
 
     async def stop_listening(self):
-        """Para escuta."""
+        """Stop listening."""
         self._is_listening = False
         await self._send_status("idle")
 
     async def process_audio(self, audio_chunk: bytes):
-        """Processa chunk de áudio do cliente.
+        """Process audio chunk from client.
 
-        Usa TurnTakingController plugável para decidir quando o
-        turno do usuário terminou. O controller recebe contexto
-        completo (VAD, silêncio, duração da fala) e retorna uma
-        decisão (CONTINUE, END_OF_TURN, BARGE_IN).
+        Uses pluggable TurnTakingController to decide when the
+        user's turn has ended. The controller receives full context
+        (VAD, silence, speech duration) and returns a decision
+        (CONTINUE, END_OF_TURN, BARGE_IN).
 
-        Quando o agente está falando (is_processing=True), o VAD
-        continua rodando para detectar barge-in. A InterruptionStrategy
-        decide se é um backchannel ("uhum") ou interrupção real.
+        When the agent is speaking (is_processing=True), VAD
+        continues running to detect barge-in. The InterruptionStrategy
+        decides if it's a backchannel ("uh-huh") or real interruption.
 
-        Silero VAD espera chunks de 512 samples (para 16kHz).
-        Frontend envia chunks maiores, então dividimos aqui.
+        Silero VAD expects chunks of 512 samples (for 16kHz).
+        Frontend sends larger chunks, so we split here.
         """
         if not self._is_listening or not self._vad:
             return
 
-        # Cooldown pós-processamento: ignorar áudio para evitar echo
+        # Post-processing cooldown: ignore audio to avoid echo
         if self._processing_end_time > 0:
             elapsed_ms = (time.time() - self._processing_end_time) * 1000
             if elapsed_ms < POST_SPEECH_COOLDOWN_MS:
-                return  # Ainda no cooldown, descartar áudio (provável echo)
+                return  # Still in cooldown, discard audio (likely echo)
             else:
-                self._processing_end_time = 0.0  # Cooldown expirou
+                self._processing_end_time = 0.0  # Cooldown expired
 
-        # Silero VAD espera 512 samples para 16kHz (1024 bytes em PCM16)
+        # Silero VAD expects 512 samples for 16kHz (1024 bytes in PCM16)
         VAD_CHUNK_SIZE = 512 * 2  # 512 samples * 2 bytes/sample
 
-        # Acumular no buffer de VAD (bytearray mutável - sem cópias)
+        # Accumulate in VAD buffer (mutable bytearray - no copies)
         self._vad_buffer.extend(audio_chunk)
 
-        # Proteger contra acúmulo excessivo (descarta dados antigos)
+        # Protect against excessive accumulation (discard old data)
         if len(self._vad_buffer) > VAD_BUFFER_MAX_BYTES:
             excess = len(self._vad_buffer) - VAD_BUFFER_MAX_BYTES
             del self._vad_buffer[:excess]
-            logger.warning(f"VAD buffer overflow: descartados {excess} bytes")
+            logger.warning(f"VAD buffer overflow: discarded {excess} bytes")
 
-        # Processar chunks de tamanho correto para o VAD
+        # Process correctly-sized chunks for VAD
         while len(self._vad_buffer) >= VAD_CHUNK_SIZE:
             vad_chunk = bytes(self._vad_buffer[:VAD_CHUNK_SIZE])
             del self._vad_buffer[:VAD_CHUNK_SIZE]
 
             vad_event = await self._vad.process(vad_chunk, self.sample_rate)
 
-            # === Modo Full-Duplex: VAD roda mesmo durante processamento ===
+            # === Full-Duplex mode: VAD runs even during processing ===
             if self._is_processing:
                 await self._handle_barge_in(vad_event)
                 continue
 
-            # === Modo normal: coletar áudio e detectar fim de turno ===
+            # === Normal mode: collect audio and detect end of turn ===
             if vad_event.is_speech:
                 if not self._speech_started:
                     self._speech_started = True
@@ -344,7 +346,7 @@ class VoiceAgentSession:
                     await self._serializer.send_json(self.websocket, {"type": "vad", "event": "speech_start"})
 
                 self._last_speech_time = time.time()
-                # put_nowait com fallback: descarta chunk mais antigo se buffer cheio
+                # put_nowait with fallback: discard oldest chunk if buffer is full
                 if self._audio_buffer.full():
                     try:
                         self._audio_buffer.get_nowait()
@@ -353,11 +355,11 @@ class VoiceAgentSession:
                     self._buffer_overflow_count += 1
                     if self._buffer_overflow_count % BUFFER_OVERFLOW_LOG_INTERVAL == 1:
                         logger.warning(
-                            f"Audio buffer cheio: descartados {self._buffer_overflow_count} chunks até agora"
+                            f"Audio buffer full: discarded {self._buffer_overflow_count} chunks so far"
                         )
                 await self._audio_buffer.put(vad_chunk)
 
-            # Consultar TurnTakingController para decisão
+            # Query TurnTakingController for decision
             turn_controller = (
                 self._chain.turn_taking_controller if self._chain else None
             )
@@ -388,7 +390,7 @@ class VoiceAgentSession:
                     await self.interrupt()
 
             elif not turn_controller and self._speech_started and not vad_event.is_speech:
-                # Fallback: silêncio fixo 800ms se não há controller
+                # Fallback: fixed 800ms silence if no controller
                 silence_ms = (time.time() - self._last_speech_time) * 1000
                 if silence_ms >= 800:
                     await self._serializer.send_json(self.websocket, {"type": "vad", "event": "speech_end"})
@@ -396,21 +398,21 @@ class VoiceAgentSession:
                     self._speech_started = False
 
     async def _handle_barge_in(self, vad_event):
-        """Trata barge-in usando InterruptionStrategy.
+        """Handle barge-in using InterruptionStrategy.
 
-        Quando o agente está falando e o VAD detecta fala do usuário,
-        consulta a InterruptionStrategy para decidir:
-        - IGNORE: Ruído ou fala muito curta, ignorar
-        - BACKCHANNEL: "uhum", "ok" — agente continua falando
-        - INTERRUPT_IMMEDIATE: Parar TTS imediatamente
-        - INTERRUPT_GRACEFUL: Terminar chunk atual e parar
+        When the agent is speaking and VAD detects user speech,
+        queries the InterruptionStrategy to decide:
+        - IGNORE: Noise or very short speech, ignore
+        - BACKCHANNEL: "uh-huh", "ok" -- agent continues speaking
+        - INTERRUPT_IMMEDIATE: Stop TTS immediately
+        - INTERRUPT_GRACEFUL: Finish current chunk and stop
         """
         interruption_strategy = (
             self._chain.interruption_strategy if self._chain else None
         )
 
         if not interruption_strategy:
-            # Fallback: comportamento antigo (interrompe imediatamente)
+            # Fallback: old behavior (interrupt immediately)
             if vad_event.is_speech:
                 if not self._barge_in_speech_start:
                     self._barge_in_speech_start = time.time()
@@ -422,18 +424,18 @@ class VoiceAgentSession:
                 self._barge_in_speech_start = 0.0
             return
 
-        # Rastrear início de fala durante barge-in
+        # Track speech start during barge-in
         if vad_event.is_speech:
             if not self._barge_in_speech_start:
                 self._barge_in_speech_start = time.time()
-                # Notificar frontend que entrou em modo full-duplex
+                # Notify frontend that full-duplex mode started
                 await self._serializer.send_json(self.websocket, {
                     "type": "full_duplex",
                     "event": "start",
                 })
         else:
             if self._barge_in_speech_start:
-                # Fala parou durante barge-in
+                # Speech stopped during barge-in
                 self._barge_in_speech_start = 0.0
                 await self._serializer.send_json(self.websocket, {
                     "type": "full_duplex",
@@ -441,7 +443,7 @@ class VoiceAgentSession:
                 })
             return
 
-        # Calcular contexto para InterruptionStrategy
+        # Calculate context for InterruptionStrategy
         now = time.time()
         speech_duration_ms = (now - self._barge_in_speech_start) * 1000
         time_since_last = (
@@ -456,7 +458,7 @@ class VoiceAgentSession:
             agent_is_speaking=True,
             time_since_last_interruption_ms=time_since_last,
             conversation_turn_count=self._turn_count,
-            agent_response_text="",  # Não temos acesso fácil aqui
+            agent_response_text="",  # Not easily accessible here
         )
 
         decision = await interruption_strategy.decide(context)
@@ -466,13 +468,13 @@ class VoiceAgentSession:
 
         elif decision == InterruptionDecision.BACKCHANNEL:
             self._backchannel_count += 1
-            # Notificar frontend do backchannel (agente continua falando)
+            # Notify frontend of backchannel (agent continues speaking)
             await self._serializer.send_json(self.websocket, {
                 "type": "backchannel",
                 "count": self._backchannel_count,
             })
-            logger.debug(f"Backchannel #{self._backchannel_count} detectado")
-            # Resetar timer de fala para evitar re-trigger
+            logger.debug(f"Backchannel #{self._backchannel_count} detected")
+            # Reset speech timer to avoid re-trigger
             self._barge_in_speech_start = 0.0
 
         elif decision in (
@@ -483,14 +485,14 @@ class VoiceAgentSession:
             self._last_interruption_time = time.time()
             interruption_strategy.on_interruption_executed(decision)
 
-            # Notificar tipo de interrupção
+            # Notify interruption type
             await self._serializer.send_json(self.websocket, {
                 "type": "interruption",
                 "mode": decision.value,
                 "count": self._interruption_count,
             })
             logger.info(
-                f"Interrupção #{self._interruption_count} ({decision.value}): "
+                f"Interruption #{self._interruption_count} ({decision.value}): "
                 f"speech={speech_duration_ms:.0f}ms"
             )
 
@@ -498,12 +500,12 @@ class VoiceAgentSession:
             self._barge_in_speech_start = 0.0
 
     async def _process_speech(self):
-        """Processa fala coletada com streaming de baixa latência."""
+        """Process collected speech with low-latency streaming."""
         self._is_processing = True
         await self._send_status("processing")
 
         try:
-            # Coletar áudio
+            # Collect audio
             chunks = []
             while not self._audio_buffer.empty():
                 chunks.append(await self._audio_buffer.get())
@@ -514,15 +516,15 @@ class VoiceAgentSession:
 
             audio_data = b"".join(chunks)
 
-            # Stream áudio de resposta (baixa latência)
+            # Stream response audio (low latency)
             await self._send_status("speaking")
             first_audio = True
 
             async for audio_chunk in self._chain.astream(audio_data):
-                # Notificar primeiro áudio
+                # Notify first audio
                 if first_audio:
                     first_audio = False
-                    # Enviar métricas parciais
+                    # Send partial metrics
                     if self._chain.metrics and self._chain.metrics.ttfa:
                         await self._serializer.send_json(self.websocket, {
                             "type": "metrics",
@@ -531,7 +533,7 @@ class VoiceAgentSession:
 
                 await self.websocket.send_bytes(audio_chunk.data)
 
-            # Enviar métricas finais
+            # Send final metrics
             if self._chain.metrics:
                 metrics = self._chain.metrics
                 strategy_name = (
@@ -550,7 +552,7 @@ class VoiceAgentSession:
                     "streaming_strategy": strategy_name,
                 })
 
-            # Resposta de texto + atualizar contexto para turn-taking
+            # Text response + update context for turn-taking
             if self._chain.messages:
                 last = self._chain.messages[-1]
                 if last.get("role") == "assistant":
@@ -559,32 +561,32 @@ class VoiceAgentSession:
                         "type": "response",
                         "text": response_text,
                     })
-                    # Atualizar contexto para o TurnTakingController
+                    # Update context for the TurnTakingController
                     self._turn_count += 1
                     self._last_agent_response_length = len(response_text)
 
         except Exception as e:
-            logger.error(f"Erro no processamento de fala: {e}", exc_info=True)
+            logger.error(f"Speech processing error: {e}", exc_info=True)
             try:
                 await self._serializer.send_json(self.websocket, {"type": "error", "message": str(e)})
             except Exception:
-                logger.debug("WebSocket já desconectado, não foi possível enviar erro")
+                logger.debug("WebSocket already disconnected, could not send error")
 
         finally:
             self._is_processing = False
             self._vad_buffer.clear()
             self._barge_in_speech_start = 0.0
             self._speech_started = False
-            # Ativar cooldown para evitar echo do TTS
+            # Activate cooldown to avoid TTS echo
             self._processing_end_time = time.time()
-            # Drenar audio buffer (evitar processar áudio stale/echo)
+            # Drain audio buffer (avoid processing stale/echo audio)
             while not self._audio_buffer.empty():
                 try:
                     self._audio_buffer.get_nowait()
                 except asyncio.QueueEmpty:
                     break
             if self._buffer_overflow_count > 0:
-                logger.info(f"Buffer overflow total neste turno: {self._buffer_overflow_count} chunks descartados")
+                logger.info(f"Total buffer overflow this turn: {self._buffer_overflow_count} chunks discarded")
                 self._buffer_overflow_count = 0
             try:
                 await self._send_status("listening")
@@ -592,11 +594,11 @@ class VoiceAgentSession:
                 pass
 
     async def _send_status(self, state: str):
-        """Envia status."""
+        """Send status."""
         await self._serializer.send_json(self.websocket, {"type": "status", "state": state})
 
     async def interrupt(self):
-        """Interrompe resposta (barge-in)."""
+        """Interrupt response (barge-in)."""
         if self._chain:
             self._chain.interrupt()
         self._speech_started = False
@@ -604,7 +606,7 @@ class VoiceAgentSession:
         await self._serializer.send_json(self.websocket, {"type": "interrupted"})
 
     async def reset(self):
-        """Reseta conversação."""
+        """Reset conversation."""
         if self._chain:
             self._chain.reset()
         self._vad_buffer.clear()
@@ -615,29 +617,29 @@ class VoiceAgentSession:
         self._last_interruption_time = 0.0
 
     async def cleanup(self):
-        """Limpa recursos da sessão.
+        """Clean up session resources.
 
-        Libera buffers e remove a sessão do controle global.
-        Os providers compartilhados (chain, vad) NÃO são desconectados
-        pois são reutilizados por outras sessões.
+        Releases buffers and removes the session from global control.
+        Shared providers (chain, vad) are NOT disconnected
+        as they are reused by other sessions.
         """
         self._is_listening = False
         self._vad_buffer.clear()
 
-        # Drenar audio buffer
+        # Drain audio buffer
         while not self._audio_buffer.empty():
             try:
                 self._audio_buffer.get_nowait()
             except asyncio.QueueEmpty:
                 break
 
-        # Remover do controle de sessões ativas
+        # Remove from active sessions control
         async with _sessions_lock:
             _active_sessions.discard(self)
             remaining = len(_active_sessions)
 
-        # Limpar referências locais (sem desconectar o singleton)
+        # Clear local references (without disconnecting the singleton)
         self._chain = None
         self._vad = None
 
-        logger.info(f"Sessão limpa. Sessões ativas restantes: {remaining}")
+        logger.info(f"Session cleaned up. Remaining active sessions: {remaining}")

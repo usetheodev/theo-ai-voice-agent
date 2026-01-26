@@ -1,19 +1,19 @@
 """
-VoiceRunnable - Interface base para componentes do Voice Pipeline.
+VoiceRunnable - Base interface for Voice Pipeline components.
 
-Este módulo fornece a fundação para criar pipelines de voz composíveis
-usando o padrão LCEL (LangChain Expression Language) adaptado para Voice AI.
+This module provides the foundation for creating composable voice pipelines
+using the LCEL (LangChain Expression Language) pattern adapted for Voice AI.
 
-Exemplo básico:
+Basic example:
     >>> from voice_pipeline.runnable import VoiceRunnable, VoiceSequence
     >>> chain = asr | llm | tts
     >>> result = await chain.ainvoke(audio_bytes)
 
-Exemplo com streaming:
+Streaming example:
     >>> async for audio_chunk in chain.astream(audio_bytes):
     ...     play(audio_chunk)
 
-Exemplo com paralelo:
+Parallel example:
     >>> parallel = VoiceParallel(
     ...     whisper=whisper_asr,
     ...     deepgram=deepgram_asr,

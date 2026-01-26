@@ -6,20 +6,19 @@ LLM, tools, memory, and persona support.
 Quick Start:
     >>> from voice_pipeline import VoiceAgent
     >>> agent = VoiceAgent.local()
-    >>> await agent.connect()
-    >>> response = await agent.chat("Olá!")
+    >>> response = await agent.ainvoke("Hello!")
 
-    >>> # Ou com builder
+    >>> # Or use the builder pattern
     >>> agent = (
     ...     VoiceAgent.builder()
     ...     .llm("ollama", model="qwen2.5:0.5b")
-    ...     .system_prompt("Você é um assistente...")
+    ...     .system_prompt("You are an assistant...")
     ...     .build()
     ... )
 """
 
 import logging
-from typing import Any, AsyncIterator, Optional, TYPE_CHECKING
+from typing import Any, AsyncIterator, Optional, Union, TYPE_CHECKING
 
 from voice_pipeline.agents.loop import AgentLoop
 from voice_pipeline.agents.state import AgentState, AgentStatus
@@ -160,20 +159,20 @@ class VoiceAgent(VoiceRunnable[str, str]):
         llm_model: str = "qwen2.5:0.5b",
         **kwargs,
     ) -> "VoiceAgent":
-        """Cria agente com LLM local (Ollama).
+        """Create agent with local LLM (Ollama).
 
         Args:
-            system_prompt: Prompt do sistema.
-            tools: Lista de ferramentas.
-            llm_model: Modelo Ollama.
+            system_prompt: System prompt.
+            tools: List of tools.
+            llm_model: Ollama model.
 
         Returns:
-            VoiceAgent configurado com Ollama.
+            VoiceAgent configured with Ollama.
 
         Example:
             >>> agent = VoiceAgent.local()
             >>> await agent.llm.connect()
-            >>> response = await agent.ainvoke("Olá!")
+            >>> response = await agent.ainvoke("Hello!")
         """
         from voice_pipeline.providers.llm import OllamaLLMProvider
 
@@ -195,16 +194,16 @@ class VoiceAgent(VoiceRunnable[str, str]):
         llm_model: str = "gpt-4o-mini",
         **kwargs,
     ) -> "VoiceAgent":
-        """Cria agente com LLM OpenAI.
+        """Create agent with OpenAI LLM.
 
         Args:
             api_key: OpenAI API key.
-            system_prompt: Prompt do sistema.
-            tools: Lista de ferramentas.
-            llm_model: Modelo OpenAI.
+            system_prompt: System prompt.
+            tools: List of tools.
+            llm_model: OpenAI model.
 
         Returns:
-            VoiceAgent configurado com OpenAI.
+            VoiceAgent configured with OpenAI.
         """
         from voice_pipeline.providers.llm import OpenAILLMProvider
 
@@ -219,14 +218,14 @@ class VoiceAgent(VoiceRunnable[str, str]):
 
     @classmethod
     def builder(cls) -> "VoiceAgentBuilder":
-        """Retorna builder para configuração fluente.
+        """Return builder for fluent configuration.
 
         Example:
             >>> agent = (
             ...     VoiceAgent.builder()
             ...     .llm("ollama", model="qwen2.5:0.5b")
             ...     .tools([get_weather, search])
-            ...     .system_prompt("Você é um assistente...")
+            ...     .system_prompt("You are an assistant...")
             ...     .build()
             ... )
         """
@@ -486,26 +485,26 @@ def create_voice_agent(
 
 
 class VoiceAgentBuilder:
-    """Builder fluente para VoiceAgent.
+    """Fluent builder for VoiceAgent.
 
-    Example - Agente de texto:
+    Example - Text agent:
         >>> agent = (
         ...     VoiceAgent.builder()
         ...     .llm("ollama", model="qwen2.5:0.5b")
         ...     .tools([get_weather])
-        ...     .system_prompt("Você é um assistente...")
+        ...     .system_prompt("You are an assistant...")
         ...     .memory(max_messages=20)
         ...     .build()
         ... )
 
-    Example - Pipeline de voz completo:
+    Example - Full voice pipeline:
         >>> agent = (
         ...     VoiceAgent.builder()
-        ...     .asr("whisper", model="base", language="pt")
+        ...     .asr("whisper", model="base", language="en")
         ...     .llm("ollama", model="qwen2.5:0.5b")
-        ...     .tts("kokoro", voice="pf_dora")
+        ...     .tts("kokoro", voice="af_heart")
         ...     .vad("silero")
-        ...     .system_prompt("Você é um assistente...")
+        ...     .system_prompt("You are an assistant...")
         ...     .memory(max_messages=20)
         ...     .build()
         ... )
@@ -522,8 +521,8 @@ class VoiceAgentBuilder:
         self._memory = None
         self._system_prompt = None
         self._max_iterations = 10
-        self._language = "pt"
-        self._tts_voice = "pf_dora"
+        self._language = None
+        self._tts_voice = None
         self._enable_barge_in = True
         self._streaming = False  # Sentence-level streaming for low latency
         self._auto_warmup = True  # Auto warmup TTS to eliminate cold start
@@ -547,32 +546,32 @@ class VoiceAgentBuilder:
         self,
         provider: str = "whisper",
         model: str = "base",
-        language: str = "pt",
+        language: Optional[str] = None,
         **kwargs,
     ) -> "VoiceAgentBuilder":
-        """Configura provider ASR (Speech-to-Text).
+        """Configure ASR (Speech-to-Text) provider.
 
         Args:
-            provider: Provider ASR a usar:
+            provider: ASR provider to use:
                 - "whisper": whisper.cpp local
-                - "faster-whisper": FasterWhisper (4x mais rápido, CPU otimizado)
+                - "faster-whisper": FasterWhisper (4x faster, CPU optimized)
                 - "openai": OpenAI Whisper API
                 - "deepgram": Deepgram streaming (real-time)
                 - "nemotron": NVIDIA Nemotron (<24ms, GPU required)
-            model: Modelo a usar.
-            language: Código do idioma.
-            **kwargs: Argumentos adicionais para o provider.
+            model: Model to use.
+            language: Language code.
+            **kwargs: Additional arguments for the provider.
 
         Example:
-            >>> # FasterWhisper (recomendado para CPU)
-            >>> builder.asr("faster-whisper", model="small", language="pt",
+            >>> # FasterWhisper (recommended for CPU)
+            >>> builder.asr("faster-whisper", model="small", language="en",
             ...             compute_type="int8", vad_filter=True)
             >>>
             >>> # Local Whisper
-            >>> builder.asr("whisper", model="base", language="pt")
+            >>> builder.asr("whisper", model="base", language="en")
             >>>
             >>> # Deepgram streaming (real-time)
-            >>> builder.asr("deepgram", api_key="...", language="pt-BR")
+            >>> builder.asr("deepgram", api_key="...", language="en-US")
             >>>
             >>> # Nemotron (GPU, ultra-low latency)
             >>> builder.asr("nemotron", latency_mode="low", device="cuda")
@@ -597,7 +596,7 @@ class VoiceAgentBuilder:
             from voice_pipeline.providers.asr import NemotronASRProvider
             self._asr = NemotronASRProvider(**kwargs)
         else:
-            raise ValueError(f"ASR provider desconhecido: {provider}")
+            raise ValueError(f"Unknown ASR provider: {provider}")
         return self
 
     def llm(
@@ -606,11 +605,11 @@ class VoiceAgentBuilder:
         model: Optional[str] = None,
         **kwargs,
     ) -> "VoiceAgentBuilder":
-        """Configura provider LLM.
+        """Configure LLM provider.
 
         Args:
-            provider: "ollama" ou "openai".
-            model: Modelo a usar.
+            provider: "ollama" or "openai".
+            model: Model to use.
         """
         if provider == "ollama":
             from voice_pipeline.providers.llm import OllamaLLMProvider
@@ -619,36 +618,36 @@ class VoiceAgentBuilder:
             from voice_pipeline.providers.llm import OpenAILLMProvider
             self._llm = OpenAILLMProvider(model=model or "gpt-4o-mini", **kwargs)
         else:
-            raise ValueError(f"LLM provider desconhecido: {provider}")
+            raise ValueError(f"Unknown LLM provider: {provider}")
         return self
 
     def tts(
         self,
         provider: str = "kokoro",
-        voice: str = "pf_dora",
+        voice: Optional[str] = None,
         **kwargs,
     ) -> "VoiceAgentBuilder":
-        """Configura provider TTS (Text-to-Speech).
+        """Configure TTS (Text-to-Speech) provider.
 
         Args:
-            provider: Provider TTS a usar:
-                - "kokoro": Kokoro local TTS (82M params, qualidade alta)
-                - "piper": Piper ultra-fast CPU TTS (5-32M params, mínima latência)
-                - "qwen3-tts": Qwen3-TTS (97ms latência, português nativo)
+            provider: TTS provider to use:
+                - "kokoro": Kokoro local TTS (82M params, high quality)
+                - "piper": Piper ultra-fast CPU TTS (5-32M params, minimal latency)
+                - "qwen3-tts": Qwen3-TTS (97ms latency, native multilingual)
                 - "openai": OpenAI TTS API
-            voice: Voz a usar (speaker para qwen3-tts).
+            voice: Voice to use (speaker for qwen3-tts).
 
         Example:
-            >>> # Kokoro (padrão, qualidade alta)
-            >>> builder.tts("kokoro", voice="pf_dora")
+            >>> # Kokoro (default, high quality)
+            >>> builder.tts("kokoro", voice="af_heart")
             >>>
-            >>> # Piper (ultra-rápido no CPU, ~30ms)
-            >>> builder.tts("piper", voice="pt_BR-faber-medium")
+            >>> # Piper (ultra-fast on CPU, ~30ms)
+            >>> builder.tts("piper", voice="en_US-lessac-medium")
             >>>
-            >>> # Qwen3-TTS (melhor português, requer mais recursos)
-            >>> builder.tts("qwen3-tts", voice="Ryan", language="Portuguese")
+            >>> # Qwen3-TTS (best multilingual, requires more resources)
+            >>> builder.tts("qwen3-tts", voice="Ryan", language="English")
             >>>
-            >>> # OpenAI (API, requer key)
+            >>> # OpenAI (API, requires key)
             >>> builder.tts("openai", voice="nova")
         """
         self._tts_voice = voice
@@ -665,7 +664,7 @@ class VoiceAgentBuilder:
             from voice_pipeline.providers.tts import OpenAITTSProvider
             self._tts = OpenAITTSProvider(voice=voice, **kwargs)
         else:
-            raise ValueError(f"TTS provider desconhecido: {provider}")
+            raise ValueError(f"Unknown TTS provider: {provider}")
         return self
 
     def vad(
@@ -673,10 +672,10 @@ class VoiceAgentBuilder:
         provider: str = "silero",
         **kwargs,
     ) -> "VoiceAgentBuilder":
-        """Configura provider VAD (Voice Activity Detection).
+        """Configure VAD (Voice Activity Detection) provider.
 
         Args:
-            provider: "silero" ou "webrtc".
+            provider: "silero" or "webrtc".
         """
         if provider == "silero":
             from voice_pipeline.providers.vad import SileroVADProvider
@@ -685,7 +684,7 @@ class VoiceAgentBuilder:
             from voice_pipeline.providers.vad import WebRTCVADProvider
             self._vad = WebRTCVADProvider(**kwargs)
         else:
-            raise ValueError(f"VAD provider desconhecido: {provider}")
+            raise ValueError(f"Unknown VAD provider: {provider}")
         return self
 
     def turn_taking(
@@ -693,37 +692,37 @@ class VoiceAgentBuilder:
         strategy: str = "fixed",
         **kwargs,
     ) -> "VoiceAgentBuilder":
-        """Configura estratégia de turn-taking.
+        """Configure turn-taking strategy.
 
-        Turn-taking determina quando o usuário terminou de falar
-        e o agente deve começar a responder.
+        Turn-taking determines when the user has finished speaking
+        and the agent should start responding.
 
         Args:
-            strategy: Estratégia a usar:
-                - "fixed": Silêncio fixo (default, mais simples).
+            strategy: Strategy to use:
+                - "fixed": Fixed silence (default, simplest).
                     kwargs: silence_threshold_ms (default 800)
-                - "adaptive": Silêncio adaptativo por contexto.
+                - "adaptive": Adaptive silence by context.
                     kwargs: base_threshold_ms (default 600),
                             min_threshold_ms (default 400),
                             max_threshold_ms (default 1500)
-                - "semantic": Detecção semântica de fim de turno.
+                - "semantic": Semantic end-of-turn detection.
                     kwargs: backend ("heuristic"|"transformers"),
                             min_silence_ms (default 300),
-                            language (default "pt")
-            **kwargs: Argumentos adicionais para a estratégia.
+                            language (default "en")
+            **kwargs: Additional arguments for the strategy.
 
         Returns:
             Self for chaining.
 
         Example:
-            >>> # Silêncio fixo rápido
+            >>> # Fast fixed silence
             >>> builder.turn_taking("fixed", silence_threshold_ms=600)
             >>>
-            >>> # Adaptativo (melhor balanço)
+            >>> # Adaptive (best balance)
             >>> builder.turn_taking("adaptive", base_threshold_ms=500)
             >>>
-            >>> # Semântico (máxima precisão)
-            >>> builder.turn_taking("semantic", backend="heuristic", language="pt")
+            >>> # Semantic (maximum accuracy)
+            >>> builder.turn_taking("semantic", backend="heuristic", language="en")
         """
         if strategy == "fixed":
             from voice_pipeline.providers.turn_taking import FixedSilenceTurnTaking
@@ -736,8 +735,8 @@ class VoiceAgentBuilder:
             self._turn_taking_controller = SemanticTurnTaking(**kwargs)
         else:
             raise ValueError(
-                f"Turn-taking strategy desconhecida: {strategy}. "
-                f"Use 'fixed', 'adaptive' ou 'semantic'."
+                f"Unknown turn-taking strategy: {strategy}. "
+                f"Use 'fixed', 'adaptive' or 'semantic'."
             )
         return self
 
@@ -746,45 +745,45 @@ class VoiceAgentBuilder:
         granularity: str = "sentence",
         **kwargs,
     ) -> "VoiceAgentBuilder":
-        """Configura granularidade de streaming LLM → TTS.
+        """Configure LLM to TTS streaming granularity.
 
-        Controla como os tokens do LLM são bufferizados antes de
-        serem enviados ao TTS. Granularidades menores reduzem latência
-        mas podem afetar a naturalidade da fala.
+        Controls how LLM tokens are buffered before being sent to TTS.
+        Smaller granularities reduce latency but may affect speech
+        naturalness.
 
         Args:
-            granularity: Nível de granularidade:
-                - "sentence": Sentenças completas (~600-800ms TTFA).
-                    Melhor naturalidade. Padrão.
+            granularity: Granularity level:
+                - "sentence": Complete sentences (~600-800ms TTFA).
+                    Best naturalness. Default.
                     kwargs: config (SentenceStreamerConfig)
-                - "clause": Cláusulas (~200-400ms TTFA).
-                    Bom balanço latência/naturalidade.
+                - "clause": Clauses (~200-400ms TTFA).
+                    Good latency/naturalness balance.
                     kwargs: min_chars (default 8),
                             max_chars (default 150),
-                            language (default "pt")
-                - "word": Palavras individuais (~45ms TTFA).
-                    Mínima latência, prosódia menos natural.
+                            language (default "en")
+                - "word": Individual words (~45ms TTFA).
+                    Minimal latency, less natural prosody.
                     kwargs: min_word_length (default 1),
                             group_size (default 1)
-                - "adaptive": Word-level no primeiro chunk, clause depois.
-                    Melhor TTFA com naturalidade (~100-200ms TTFA).
+                - "adaptive": Word-level on first chunk, clause after.
+                    Best TTFA with naturalness (~100-200ms TTFA).
                     kwargs: first_chunk_words (default 3),
                             clause_min_chars (default 10),
                             clause_max_chars (default 150),
-                            language (default "pt")
-            **kwargs: Argumentos adicionais para a estratégia.
+                            language (default "en")
+            **kwargs: Additional arguments for the strategy.
 
         Returns:
             Self for chaining.
 
         Example:
-            >>> # Cláusula (balanço latência/naturalidade)
+            >>> # Clause (latency/naturalness balance)
             >>> builder.streaming_granularity("clause", min_chars=10)
             >>>
-            >>> # Palavra (mínima latência)
+            >>> # Word (minimal latency)
             >>> builder.streaming_granularity("word", group_size=2)
             >>>
-            >>> # Sentença (padrão, máxima naturalidade)
+            >>> # Sentence (default, maximum naturalness)
             >>> builder.streaming_granularity("sentence")
         """
         if granularity == "sentence":
@@ -801,8 +800,8 @@ class VoiceAgentBuilder:
             self._streaming_strategy = AdaptiveStreamingStrategy(**kwargs)
         else:
             raise ValueError(
-                f"Streaming granularity desconhecida: {granularity}. "
-                f"Use 'sentence', 'clause', 'word' ou 'adaptive'."
+                f"Unknown streaming granularity: {granularity}. "
+                f"Use 'sentence', 'clause', 'word' or 'adaptive'."
             )
         return self
 
@@ -811,40 +810,40 @@ class VoiceAgentBuilder:
         strategy: str = "immediate",
         **kwargs,
     ) -> "VoiceAgentBuilder":
-        """Configura estratégia de interrupção (barge-in).
+        """Configure interruption (barge-in) strategy.
 
-        Controla como o sistema responde quando o usuário fala
-        enquanto o agente está falando.
+        Controls how the system responds when the user speaks
+        while the agent is speaking.
 
         Args:
-            strategy: Estratégia a usar:
-                - "immediate": Para TTS imediatamente (padrão).
+            strategy: Strategy to use:
+                - "immediate": Stop TTS immediately (default).
                     kwargs: min_speech_ms (default 200),
                             min_confidence (default 0.5),
                             debounce_ms (default 500)
-                - "graceful": Termina chunk atual antes de parar.
+                - "graceful": Finish current chunk before stopping.
                     kwargs: min_speech_ms (default 300),
                             finish_threshold (default 0.3),
                             max_wait_ms (default 500)
-                - "backchannel": Distingue backchannels de interrupções.
+                - "backchannel": Distinguish backchannels from interruptions.
                     kwargs: backchannel_max_ms (default 500),
                             interruption_min_ms (default 800),
-                            language (default "pt"),
+                            language (default "en"),
                             use_transcript (default True)
-            **kwargs: Argumentos adicionais para a estratégia.
+            **kwargs: Additional arguments for the strategy.
 
         Returns:
             Self for chaining.
 
         Example:
-            >>> # Imediato (padrão, menor latência)
+            >>> # Immediate (default, lowest latency)
             >>> builder.interruption("immediate", min_speech_ms=150)
             >>>
-            >>> # Graceful (áudio mais suave)
+            >>> # Graceful (smoother audio)
             >>> builder.interruption("graceful", finish_threshold=0.5)
             >>>
-            >>> # Backchannel-aware (melhor para português)
-            >>> builder.interruption("backchannel", language="pt")
+            >>> # Backchannel-aware (best for conversations)
+            >>> builder.interruption("backchannel", language="en")
         """
         if strategy == "immediate":
             from voice_pipeline.providers.interruption import ImmediateInterruption
@@ -857,31 +856,31 @@ class VoiceAgentBuilder:
             self._interruption_strategy = BackchannelAwareInterruption(**kwargs)
         else:
             raise ValueError(
-                f"Interruption strategy desconhecida: {strategy}. "
-                f"Use 'immediate', 'graceful' ou 'backchannel'."
+                f"Unknown interruption strategy: {strategy}. "
+                f"Use 'immediate', 'graceful' or 'backchannel'."
             )
         return self
 
     def language(self, lang: str) -> "VoiceAgentBuilder":
-        """Define idioma padrão."""
+        """Set default language."""
         self._language = lang
         return self
 
     def barge_in(self, enabled: bool = True) -> "VoiceAgentBuilder":
-        """Habilita/desabilita interrupção de fala."""
+        """Enable/disable speech interruption (barge-in)."""
         self._enable_barge_in = enabled
         return self
 
     def streaming(self, enabled: bool = True) -> "VoiceAgentBuilder":
-        """Ativa streaming sentence-level (baixa latência).
+        """Enable sentence-level streaming (low latency).
 
-        Quando ativado:
-        - LLM e TTS executam em paralelo
-        - Áudio começa a ser gerado assim que uma sentença completa
-        - TTFA reduzido de ~2-3s para ~0.6-0.8s
+        When enabled:
+        - LLM and TTS run in parallel
+        - Audio starts being generated as soon as a sentence completes
+        - TTFA reduced from ~2-3s to ~0.6-0.8s
 
         Args:
-            enabled: True para ativar streaming (default).
+            enabled: True to enable streaming (default).
 
         Returns:
             Self for chaining.
@@ -892,7 +891,7 @@ class VoiceAgentBuilder:
             ...     .asr("whisper")
             ...     .llm("ollama")
             ...     .tts("kokoro")
-            ...     .streaming(True)  # Baixa latência
+            ...     .streaming(True)  # Low latency
             ...     .build()
             ... )
         """
@@ -900,17 +899,17 @@ class VoiceAgentBuilder:
         return self
 
     def warmup(self, enabled: bool = True) -> "VoiceAgentBuilder":
-        """Ativa warmup automático do TTS (elimina cold start).
+        """Enable automatic TTS warmup (eliminates cold start).
 
-        Quando ativado (padrão), o TTS é pré-aquecido durante connect(),
-        eliminando a latência de cold start na primeira síntese.
+        When enabled (default), the TTS is pre-warmed during connect(),
+        eliminating cold start latency on first synthesis.
 
-        Impacto típico:
-        - Kokoro: reduz primeira síntese de ~500-800ms para ~100-200ms
-        - OpenAI: reduz primeira síntese de ~300-500ms para ~150-250ms
+        Typical impact:
+        - Kokoro: reduces first synthesis from ~500-800ms to ~100-200ms
+        - OpenAI: reduces first synthesis from ~300-500ms to ~150-250ms
 
         Args:
-            enabled: True para ativar warmup automático (default).
+            enabled: True to enable automatic warmup (default).
 
         Returns:
             Self for chaining.
@@ -922,7 +921,7 @@ class VoiceAgentBuilder:
             ...     .llm("ollama")
             ...     .tts("kokoro")
             ...     .streaming(True)
-            ...     .warmup(True)  # Elimina cold start
+            ...     .warmup(True)  # Eliminates cold start
             ...     .build()
             ... )
         """
@@ -936,26 +935,26 @@ class VoiceAgentBuilder:
         timeout_ms: Optional[int] = None,
         enable_quick_phrases: Optional[bool] = None,
     ) -> "VoiceAgentBuilder":
-        """Configura o SentenceStreamer para baixa latência.
+        """Configure the SentenceStreamer for low latency.
 
-        O SentenceStreamer bufferiza tokens do LLM e emite sentenças
-        completas para o TTS. Esta configuração controla quando as
-        sentenças são emitidas.
+        The SentenceStreamer buffers LLM tokens and emits complete
+        sentences to the TTS. This configuration controls when
+        sentences are emitted.
 
         Args:
-            min_chars: Mínimo de caracteres antes de emitir (default 20).
-                       Sentenças curtas como "Olá!" usam min_chars menor.
-            max_chars: Máximo de caracteres antes de forçar emissão (default 200).
-            timeout_ms: Emite buffer após este tempo sem pontuação (default 500).
-                        Útil para quando o LLM pausa sem terminar a frase.
-            enable_quick_phrases: Emite frases comuns ("Olá!", "Sim.")
-                                  imediatamente (default True).
+            min_chars: Minimum characters before emitting (default 20).
+                       Short sentences like "Hello!" use a smaller min_chars.
+            max_chars: Maximum characters before forcing emission (default 200).
+            timeout_ms: Emit buffer after this time without punctuation (default 500).
+                        Useful when the LLM pauses without finishing the sentence.
+            enable_quick_phrases: Emit common phrases ("Hello!", "Yes.")
+                                  immediately (default True).
 
         Returns:
             Self for chaining.
 
         Example:
-            >>> # Configuração agressiva para latência mínima
+            >>> # Aggressive configuration for minimal latency
             >>> agent = (
             ...     VoiceAgent.builder()
             ...     .asr("whisper")
@@ -963,8 +962,8 @@ class VoiceAgentBuilder:
             ...     .tts("kokoro")
             ...     .streaming(True)
             ...     .sentence_config(
-            ...         min_chars=10,      # Emite sentenças menores
-            ...         timeout_ms=300,    # Timeout mais curto
+            ...         min_chars=10,      # Emit smaller sentences
+            ...         timeout_ms=300,    # Shorter timeout
             ...     )
             ...     .build()
             ... )
@@ -980,40 +979,40 @@ class VoiceAgentBuilder:
         return self
 
     def tools(self, tools: list[VoiceTool]) -> "VoiceAgentBuilder":
-        """Configura ferramentas."""
+        """Configure tools."""
         self._tools = tools
         return self
 
     def tool(self, tool: VoiceTool) -> "VoiceAgentBuilder":
-        """Adiciona uma ferramenta."""
+        """Add a single tool."""
         self._tools.append(tool)
         return self
 
     def persona(self, persona: VoicePersona) -> "VoiceAgentBuilder":
-        """Configura persona."""
+        """Configure persona."""
         self._persona = persona
         return self
 
     def system_prompt(self, prompt: str) -> "VoiceAgentBuilder":
-        """Define prompt do sistema."""
+        """Set system prompt."""
         self._system_prompt = prompt
         return self
 
     def memory(self, max_messages: int = 20) -> "VoiceAgentBuilder":
-        """Configura memória."""
+        """Configure memory."""
         from voice_pipeline.memory import ConversationBufferMemory
         self._memory = ConversationBufferMemory(max_messages=max_messages)
         return self
 
     def max_messages(self, n: int) -> "VoiceAgentBuilder":
-        """Define máximo de mensagens no histórico de conversação.
+        """Set maximum messages in conversation history.
 
-        Controla quantas mensagens são mantidas no histórico das chains
-        (StreamingVoiceChain e ParallelStreamingChain). Mensagens mais
-        antigas são descartadas quando o limite é atingido.
+        Controls how many messages are kept in the chain history
+        (StreamingVoiceChain and ParallelStreamingChain). Older messages
+        are discarded when the limit is reached.
 
         Args:
-            n: Máximo de mensagens. 0 para ilimitado (não recomendado).
+            n: Maximum messages. 0 for unlimited (not recommended).
 
         Returns:
             Self for chaining.
@@ -1024,7 +1023,7 @@ class VoiceAgentBuilder:
             ...     .asr("whisper")
             ...     .llm("ollama")
             ...     .tts("kokoro")
-            ...     .max_messages(50)  # Histórico maior
+            ...     .max_messages(50)  # Larger history
             ...     .build()
             ... )
         """
@@ -1032,7 +1031,7 @@ class VoiceAgentBuilder:
         return self
 
     def max_iterations(self, n: int) -> "VoiceAgentBuilder":
-        """Define máximo de iterações."""
+        """Set maximum iterations."""
         self._max_iterations = n
         return self
 
@@ -1044,37 +1043,37 @@ class VoiceAgentBuilder:
         k: int = 5,
         **kwargs,
     ) -> "VoiceAgentBuilder":
-        """Configura RAG (Retrieval-Augmented Generation).
+        """Configure RAG (Retrieval-Augmented Generation).
 
-        RAG permite que o agente responda perguntas usando uma base
-        de conhecimento de documentos.
+        RAG allows the agent to answer questions using a document
+        knowledge base.
 
         Args:
             provider: Vector store provider ("faiss").
             embedding: Embedding provider ("sentence-transformers").
-            documents: Lista de documentos para indexar (opcional).
-                       Pode ser lista de strings ou Document objects.
-            k: Número de documentos a recuperar por query.
-            **kwargs: Argumentos adicionais para os providers.
+            documents: List of documents to index (optional).
+                       Can be a list of strings or Document objects.
+            k: Number of documents to retrieve per query.
+            **kwargs: Additional arguments for the providers.
 
         Returns:
             Self for chaining.
 
         Example:
-            >>> # RAG com documentos simples
+            >>> # RAG with simple documents
             >>> agent = (
             ...     VoiceAgent.builder()
             ...     .asr("whisper")
             ...     .llm("ollama")
             ...     .tts("kokoro")
             ...     .rag("faiss", documents=[
-            ...         "Voice Pipeline é um framework para agentes de voz.",
-            ...         "Suporta ASR streaming com Deepgram.",
+            ...         "Voice Pipeline is a framework for voice agents.",
+            ...         "It supports ASR streaming with Deepgram.",
             ...     ])
             ...     .build()
             ... )
             >>>
-            >>> # RAG com Document objects
+            >>> # RAG with Document objects
             >>> from voice_pipeline.interfaces import Document
             >>> agent = (
             ...     VoiceAgent.builder()
@@ -1095,7 +1094,7 @@ class VoiceAgentBuilder:
             embedding_model = kwargs.pop("embedding_model", "all-MiniLM-L6-v2")
             embedding_provider = SentenceTransformerEmbedding(model_name=embedding_model)
         else:
-            raise ValueError(f"Embedding provider desconhecido: {embedding}")
+            raise ValueError(f"Unknown embedding provider: {embedding}")
 
         # Get embedding dimension (lazy load model)
         dimension = embedding_provider.dimension
@@ -1105,7 +1104,7 @@ class VoiceAgentBuilder:
             from voice_pipeline.providers.vectorstore import FAISSVectorStore
             vector_store = FAISSVectorStore(dimension=dimension, **kwargs)
         else:
-            raise ValueError(f"Vector store provider desconhecido: {provider}")
+            raise ValueError(f"Unknown vector store provider: {provider}")
 
         # Create RAG
         self._rag = SimpleRAG(vector_store, embedding_provider)
@@ -1115,24 +1114,24 @@ class VoiceAgentBuilder:
 
         return self
 
-    def build(self):
-        """Constrói o VoiceAgent, ConversationChain ou StreamingVoiceChain.
+    def build(self) -> Union["VoiceAgent", Any]:
+        """Build the VoiceAgent, ConversationChain or StreamingVoiceChain.
 
-        Lógica de seleção:
-        - Se ASR + TTS + streaming=True → StreamingVoiceChain (baixa latência)
-        - Se ASR + TTS + streaming=False → ConversationChain (batch)
-        - Se apenas LLM → VoiceAgent (texto → texto)
+        Selection logic:
+        - If ASR + TTS + streaming=True -> StreamingVoiceChain (low latency)
+        - If ASR + TTS + streaming=False -> ConversationChain (batch)
+        - If only LLM -> VoiceAgent (text -> text)
 
         Returns:
-            VoiceAgent, ConversationChain ou StreamingVoiceChain.
+            VoiceAgent, ConversationChain or StreamingVoiceChain.
         """
         if self._llm is None:
-            raise ValueError("LLM é obrigatório. Use .llm() para configurar.")
+            raise ValueError("LLM is required. Use .llm() to configure.")
 
-        # Se tem ASR e TTS, criar pipeline de voz
+        # If ASR and TTS are present, create voice pipeline
         if self._asr is not None and self._tts is not None:
             if self._streaming:
-                # Streaming sentence-level (baixa latência)
+                # Streaming sentence-level (low latency)
                 from voice_pipeline.chains import StreamingVoiceChain
 
                 return StreamingVoiceChain(
@@ -1141,7 +1140,7 @@ class VoiceAgentBuilder:
                     tts=self._tts,
                     rag=self._rag,
                     rag_k=self._rag_k,
-                    system_prompt=self._system_prompt or "Você é um assistente de voz.",
+                    system_prompt=self._system_prompt or "You are a helpful voice assistant.",
                     language=self._language,
                     tts_voice=self._tts_voice,
                     auto_warmup=self._auto_warmup,
@@ -1153,7 +1152,7 @@ class VoiceAgentBuilder:
                     interruption_strategy=self._interruption_strategy,
                 )
             else:
-                # Batch (padrão)
+                # Batch (default)
                 from voice_pipeline.chains import ConversationChain
 
                 return ConversationChain(
@@ -1161,14 +1160,14 @@ class VoiceAgentBuilder:
                     llm=self._llm,
                     tts=self._tts,
                     vad=self._vad,
-                    system_prompt=self._system_prompt or "Você é um assistente de voz.",
+                    system_prompt=self._system_prompt or "You are a helpful voice assistant.",
                     language=self._language,
                     tts_voice=self._tts_voice,
                     memory=self._memory,
                     enable_barge_in=self._enable_barge_in,
                 )
 
-        # Caso contrário, criar VoiceAgent (texto → texto)
+        # Otherwise, create VoiceAgent (text -> text)
         return VoiceAgent(
             llm=self._llm,
             tools=self._tools,
@@ -1179,27 +1178,27 @@ class VoiceAgentBuilder:
         )
 
     async def build_async(self):
-        """Constrói e conecta todos os providers.
+        """Build and connect all providers.
 
-        Para StreamingVoiceChain (streaming=True), também faz warmup do TTS
-        para eliminar latência de cold-start.
+        For StreamingVoiceChain (streaming=True), also performs TTS warmup
+        to eliminate cold-start latency.
 
-        Também indexa documentos RAG se configurados.
+        Also indexes RAG documents if configured.
 
         Returns:
-            VoiceAgent, ConversationChain ou StreamingVoiceChain com providers conectados.
+            VoiceAgent, ConversationChain or StreamingVoiceChain with connected providers.
         """
         result = self.build()
 
-        # Se StreamingVoiceChain, usar seu connect() que faz warmup do TTS
+        # If StreamingVoiceChain, use its connect() which performs TTS warmup
         if self._streaming and self._asr is not None and self._tts is not None:
-            # StreamingVoiceChain.connect() conecta providers e faz warmup
+            # StreamingVoiceChain.connect() connects providers and performs warmup
             await result.connect()
-            # VAD é separado (não faz parte do StreamingVoiceChain)
+            # VAD is separate (not part of StreamingVoiceChain)
             if self._vad is not None:
                 await self._vad.connect()
         else:
-            # Conectar providers individualmente
+            # Connect providers individually
             if self._asr is not None:
                 await self._asr.connect()
             if self._llm is not None:

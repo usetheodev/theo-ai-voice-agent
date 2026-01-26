@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -373,7 +373,7 @@
         <!-- Status bar -->
         <div class="status-bar">
             <div class="status-indicator idle" id="statusIndicator"></div>
-            <span class="status-text" id="statusText">Desconectado</span>
+            <span class="status-text" id="statusText">Disconnected</span>
             <span class="status-badge" id="statusBadge"></span>
         </div>
 
@@ -400,9 +400,9 @@
         <!-- Chat -->
         <div class="chat-container" id="chatContainer">
             <div class="message assistant">
-                <div class="message-label">Assistente</div>
-                <div class="message-bubble">
-                    Clique em "Iniciar Conversa" e fale para comecar.
+                <div class="message-label" data-i18n="assistant">Assistant</div>
+                <div class="message-bubble" data-i18n="welcomeMessage">
+                    Click "Start Conversation" and speak to begin.
                 </div>
             </div>
         </div>
@@ -413,15 +413,15 @@
                 <svg class="mic-icon" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm-1 1.93c-3.94-.49-7-3.85-7-7.93h2c0 3.31 2.69 6 6 6s6-2.69 6-6h2c0 4.08-3.06 7.44-7 7.93V20h4v2H8v-2h4v-4.07z"/>
                 </svg>
-                Iniciar Conversa
+                Start Conversation
             </button>
             <button class="btn btn-danger" id="stopBtn" onclick="stopConversation()" style="display: none;">
-                Parar
+                Stop
             </button>
         </div>
 
         <div class="shortcut-hint" id="shortcutHint" style="display: none;">
-            Pressione <b>Espaco</b> para interromper a resposta
+            Press <b>Space</b> to interrupt the response
         </div>
 
         <div class="footer">
@@ -429,8 +429,28 @@
         </div>
     </div>
 
-    <!-- msgpack para serialização binária otimizada -->
+    <!-- msgpack for optimized binary serialization -->
     <script src="https://unpkg.com/@msgpack/msgpack@3.0.0-beta2/dist.es5+umd/msgpack.min.js"></script>
+    <script>
+        // Localize initial HTML based on ?lang= parameter
+        (function() {
+            const lang = new URLSearchParams(window.location.search).get('lang');
+            if (lang === 'pt') {
+                document.documentElement.lang = 'pt-BR';
+                const el = (id) => document.getElementById(id);
+                if (el('statusText')) el('statusText').textContent = 'Desconectado';
+                if (el('startBtn')) el('startBtn').lastChild.textContent = ' Iniciar Conversa';
+                if (el('stopBtn')) el('stopBtn').textContent = 'Parar';
+                // Localize initial chat message
+                const labels = document.querySelectorAll('[data-i18n="assistant"]');
+                labels.forEach(l => l.textContent = 'Assistente');
+                const welcome = document.querySelector('[data-i18n="welcomeMessage"]');
+                if (welcome) welcome.textContent = 'Clique em "Iniciar Conversa" e fale para comecar.';
+                const hint = el('shortcutHint');
+                if (hint) hint.innerHTML = 'Pressione <b>Espaco</b> para interromper a resposta';
+            }
+        })();
+    </script>
     <script src="/static/app.js"></script>
 </body>
 </html>

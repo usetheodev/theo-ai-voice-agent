@@ -90,7 +90,7 @@ class FasterWhisperConfig(ProviderConfig):
     Example:
         >>> config = FasterWhisperConfig(
         ...     model="small",
-        ...     language="pt",
+        ...     language="en",
         ...     compute_type="int8",
         ... )
         >>> asr = FasterWhisperProvider(config=config)
@@ -164,7 +164,7 @@ class FasterWhisperProvider(BaseProvider, ASRInterface):
     Example:
         >>> asr = FasterWhisperProvider(
         ...     model="small",
-        ...     language="pt",
+        ...     language="en",
         ...     device="cpu",
         ... )
         >>> await asr.connect()

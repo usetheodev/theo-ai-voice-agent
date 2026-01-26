@@ -73,7 +73,8 @@ def _is_realtime_asr(asr: ASRInterface) -> bool:
         if hasattr(caps, 'real_time'):
             return caps.real_time
 
-    # Check for provider name patterns
+    # Legacy fallback: check by provider name patterns
+    # TODO: Remove in v0.2.0 when all providers use registry capabilities
     provider_name = getattr(asr, 'provider_name', '').lower()
     realtime_providers = {'deepgram', 'assemblyai', 'speechmatics', 'aws-transcribe'}
     if provider_name in realtime_providers:
@@ -126,6 +127,12 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
     """
 
     name: str = "StreamingVoiceChain"
+
+    _QUEUE_TIMEOUT_S: float = 30.0
+    """Safety timeout for queue operations in seconds."""
+
+    _ASR_CHUNK_SIZE: int = 4000
+    """Size of audio chunks sent to streaming ASR (~250ms at 16kHz)."""
 
     def __init__(
         self,
@@ -217,6 +224,7 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
 
         self._messages: list[dict[str, str]] = []
         self._max_messages: int = max_messages
+        self._interrupted: bool = False
 
         # Metrics from last run
         self.metrics: Optional[StreamingMetrics] = None
@@ -269,12 +277,13 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
             await self.turn_taking_controller.connect()
 
         # Warm up TTS to eliminate cold-start latency
-        if self.auto_warmup and hasattr(self.tts, 'warmup'):
+        from voice_pipeline.interfaces import Warmable
+        if self.auto_warmup and isinstance(self.tts, Warmable):
             self.warmup_time_ms = await self.tts.warmup()
             logger.info(f"TTS warmed up in {self.warmup_time_ms:.1f}ms")
 
         # Warm up LLM to eliminate cold-start latency
-        if self.auto_warmup and hasattr(self.llm, 'warmup'):
+        if self.auto_warmup and isinstance(self.llm, Warmable):
             self.llm_warmup_time_ms = await self.llm.warmup()
             logger.info(f"LLM warmed up in {self.llm_warmup_time_ms:.1f}ms")
 
@@ -289,6 +298,16 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
         if self.turn_taking_controller is not None:
             await self.turn_taking_controller.disconnect()
 
+    async def __aenter__(self):
+        """Enter async context: connect all providers."""
+        await self.connect()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Exit async context: disconnect all providers."""
+        await self.disconnect()
+        return False
+
     def reset(self) -> None:
         """Reset conversation history."""
         self._messages.clear()
@@ -296,9 +315,11 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
     def interrupt(self) -> None:
         """Interrupt current response (barge-in).
 
-        Note: For full interrupt support, the streaming would need
-        to check a cancellation flag. This is a placeholder.
+        Sets an interruption flag that is checked by the LLM producer
+        and TTS consumer loops, causing them to stop processing.
+        The flag is automatically reset at the start of each astream() call.
         """
+        self._interrupted = True
         logger.info("Interrupt requested")
 
     async def _augment_with_rag(self, user_text: str) -> str:
@@ -360,6 +381,9 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
         Metrics are collected and available via self.metrics after completion.
         """
         config = ensure_config(config)
+
+        # Reset interrupt flag for new stream
+        self._interrupted = False
 
         # Initialize metrics
         self.metrics = StreamingMetrics()
@@ -479,7 +503,7 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
 
             async def audio_generator():
                 # Send audio in chunks for streaming
-                chunk_size = 4000  # ~250ms of audio at 16kHz
+                chunk_size = self._ASR_CHUNK_SIZE
                 for i in range(0, len(audio_input), chunk_size):
                     yield audio_input[i:i + chunk_size]
                     await asyncio.sleep(0.01)  # Small delay to simulate real-time
@@ -502,7 +526,7 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
                 self.metrics.mark_asr_end()
 
             except Exception as e:
-                logger.error(f"ASR error: {e}")
+                logger.exception(f"ASR streaming error: {e}")
                 await transcription_queue.put(None)
 
         async def llm_producer(input_text: str):
@@ -513,6 +537,9 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
             strategy = self._get_strategy()
 
             async for chunk in self.llm.astream(self._messages, llm_config):
+                if self._interrupted:
+                    logger.info("LLM producer interrupted")
+                    break
                 token = chunk.text if isinstance(chunk, LLMChunk) else str(chunk)
                 response_text += token
                 await emit_llm_token(token)
@@ -551,13 +578,17 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
                 try:
                     sentence = await asyncio.wait_for(
                         sentence_queue.get(),
-                        timeout=30.0,
+                        timeout=self._QUEUE_TIMEOUT_S,
                     )
                 except asyncio.TimeoutError:
                     logger.warning("TTS consumer timeout")
                     break
 
                 if sentence is None:
+                    break
+
+                if self._interrupted:
+                    logger.info("TTS consumer interrupted")
                     break
 
                 if not sentence.strip():
@@ -593,7 +624,7 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
                 try:
                     result = await asyncio.wait_for(
                         transcription_queue.get(),
-                        timeout=30.0,
+                        timeout=self._QUEUE_TIMEOUT_S,
                     )
                 except asyncio.TimeoutError:
                     break
@@ -665,6 +696,9 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
             strategy = self._get_strategy()
 
             async for chunk in self.llm.astream(self._messages, llm_config):
+                if self._interrupted:
+                    logger.info("LLM producer interrupted")
+                    break
                 token = chunk.text if isinstance(chunk, LLMChunk) else str(chunk)
                 response_text += token
                 await emit_llm_token(token)
@@ -704,13 +738,17 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
                 try:
                     sentence = await asyncio.wait_for(
                         sentence_queue.get(),
-                        timeout=30.0,  # Safety timeout
+                        timeout=self._QUEUE_TIMEOUT_S,
                     )
                 except asyncio.TimeoutError:
                     logger.warning("TTS consumer timeout waiting for sentence")
                     break
 
                 if sentence is None:
+                    break
+
+                if self._interrupted:
+                    logger.info("TTS consumer interrupted")
                     break
 
                 if not sentence.strip():

@@ -93,13 +93,13 @@ async def run_benchmark(
         title="Configuration",
     ))
 
-    # Test prompts (Portuguese)
+    # Test prompts
     test_prompts = [
-        "Olá, como você está?",
-        "Qual é a capital do Brasil?",
-        "Me conte uma curiosidade interessante.",
-        "O que você pode fazer?",
-        "Explique o que é inteligência artificial.",
+        "Hello, how are you?",
+        "What is the capital of France?",
+        "Tell me an interesting fact.",
+        "What can you do?",
+        "Explain what artificial intelligence is.",
     ]
 
     # Build agent
@@ -108,9 +108,9 @@ async def run_benchmark(
     try:
         builder = (
             VoiceAgent.builder()
-            .asr("whisper", model="base", language="pt")
+            .asr("whisper", model="base", language="en")
             .llm("ollama", model=model)
-            .tts("kokoro", voice="pf_dora")
+            .tts("kokoro", voice="af_heart")
             .streaming(streaming)
             .warmup(warmup)
         )

@@ -61,7 +61,7 @@ def list_providers():
     tts_table.add_column("Default Voice")
 
     tts_providers = [
-        ("kokoro", True, True, "pf_dora"),
+        ("kokoro", True, True, "af_heart"),
         ("openai", True, False, "alloy"),
     ]
 

@@ -25,25 +25,9 @@ from voice_pipeline.providers.base import (
 )
 from voice_pipeline.providers.decorators import register_tts
 from voice_pipeline.providers.types import TTSCapabilities
+from voice_pipeline.utils.audio import audio_to_numpy as _to_numpy
 
 logger = logging.getLogger(__name__)
-
-
-def _to_numpy(audio_data) -> np.ndarray:
-    """Convert audio data to numpy array.
-
-    Handles PyTorch Tensors, numpy arrays, and bytes.
-    """
-    if isinstance(audio_data, np.ndarray):
-        return audio_data
-
-    if hasattr(audio_data, "cpu") and hasattr(audio_data, "numpy"):
-        return audio_data.cpu().numpy()
-
-    if isinstance(audio_data, bytes):
-        return np.frombuffer(audio_data, dtype=np.float32)
-
-    return np.array(audio_data, dtype=np.float32)
 
 
 # Supported languages
@@ -96,13 +80,13 @@ class Qwen3TTSConfig(ProviderConfig):
     model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
     """Model variant. VoiceDesign is default (no reference audio needed)."""
 
-    language: Qwen3Language = "Portuguese"
+    language: Qwen3Language = "English"
     """Target language for synthesis."""
 
     speaker: Optional[str] = None
     """Preset speaker name (for CustomVoice model)."""
 
-    instruct: Optional[str] = "Voz feminina brasileira clara e natural, falando de forma amigável."
+    instruct: Optional[str] = "Clear, natural female voice, speaking in a friendly manner."
     """Voice instruction for VoiceDesign model (e.g., 'Speak cheerfully')."""
 
     device: str = "cpu"
@@ -173,7 +157,7 @@ class Qwen3TTSProvider(BaseProvider, TTSInterface):
         ...     device="cuda",
         ... )
         >>> await tts.connect()
-        >>> audio = await tts.synthesize("Olá, como você está?")
+        >>> audio = await tts.synthesize("Hello, how are you?")
 
     Attributes:
         provider_name: "qwen3-tts"
@@ -363,7 +347,7 @@ class Qwen3TTSProvider(BaseProvider, TTSInterface):
 
         warmup_text = text or self._WARMUP_TEXTS.get(
             self._tts_config.language,
-            "Olá."
+            "Hello."
         )
 
         start = time.perf_counter()

@@ -291,8 +291,8 @@ class HuggingFaceLLMProvider(BaseProvider, LLMInterface):
         if self._llm_config.use_flash_attention:
             try:
                 model_kwargs["attn_implementation"] = "flash_attention_2"
-            except Exception:
-                logger.warning("Flash Attention 2 not available, using default attention")
+            except Exception as e:
+                logger.warning(f"Flash Attention 2 not available, using default attention: {e}")
 
         # Quantization config
         if self._llm_config.quantization != QuantizationType.NONE:

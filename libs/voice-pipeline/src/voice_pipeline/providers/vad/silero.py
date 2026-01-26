@@ -6,11 +6,14 @@ It runs in < 1ms on CPU and is MIT licensed.
 Reference: https://github.com/snakers4/silero-vad
 """
 
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Optional
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from voice_pipeline.interfaces.vad import SpeechState, VADEvent, VADInterface
 from voice_pipeline.providers.base import (
@@ -136,7 +139,14 @@ class SileroVADProvider(BaseProvider, VADInterface):
         return 32  # 512 samples at 16kHz = 32ms
 
     async def connect(self) -> None:
-        """Load the Silero VAD model."""
+        """Load the Silero VAD model.
+
+        Note:
+            Uses ``trust_repo=True`` when loading from torch.hub.
+            This is required by Silero VAD but means the repository
+            code is trusted. For security-sensitive deployments,
+            consider using a local model via ``model_path``.
+        """
         await super().connect()
 
         try:
@@ -208,7 +218,7 @@ class SileroVADProvider(BaseProvider, VADInterface):
             try:
                 self._model.reset_states()
             except AttributeError:
-                pass  # Model might not have reset_states method
+                logger.debug("Model does not have reset_states method")
 
     async def process(
         self,

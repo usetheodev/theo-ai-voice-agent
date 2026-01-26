@@ -90,6 +90,10 @@ class OllamaLLMConfig(ProviderConfig):
     default_system_prompt: Optional[str] = None
     """Default system prompt to use if none provided."""
 
+    auto_pull: bool = True
+    """Automatically download model if not available locally.
+    Set to False to prevent automatic downloads in production."""
+
     def get_model_options(self) -> dict[str, Any]:
         """Get Ollama model options dict.
 
@@ -308,6 +312,11 @@ class OllamaLLMProvider(BaseProvider, LLMInterface):
         )
 
         if not model_exists:
+            if not self._llm_config.auto_pull:
+                raise RuntimeError(
+                    f"Model '{self._llm_config.model}' not found locally and "
+                    f"auto_pull is disabled. Pull it manually: ollama pull {self._llm_config.model}"
+                )
             logger.info(f"Model '{self._llm_config.model}' not found. Downloading...")
             await self._pull_model_with_progress()
             logger.info(f"Model '{self._llm_config.model}' ready!")

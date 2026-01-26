@@ -4,7 +4,7 @@ Buffers LLM tokens and emits complete sentences for TTS synthesis.
 This reduces latency by starting TTS before the full LLM response is ready.
 
 Optimizations for low-latency voice applications:
-- Quick phrases (Olá!, Sim., Não.) are emitted immediately
+- Quick phrases (Hello!, Yes., No.) are emitted immediately
 - Adaptive min_chars based on punctuation type
 - Timeout-based emission for long pauses
 - Configurable via builder pattern
@@ -72,8 +72,8 @@ class SentenceStreamerConfig:
     min_chars: int = 20
 
     # Adaptive min_chars for different punctuation
-    min_chars_exclamation: int = 5   # ! sentences can be shorter (Olá!)
-    min_chars_question: int = 8      # ? sentences (Sim?)
+    min_chars_exclamation: int = 5   # ! sentences can be shorter (Hello!)
+    min_chars_question: int = 8      # ? sentences (Yes?)
 
     # Maximum characters before forcing emit
     max_chars: int = 200
@@ -100,7 +100,7 @@ class SentenceStreamer:
 
     Features:
     - Detects sentence boundaries (., !, ?, newline)
-    - Quick phrases ("Olá!", "Sim.") emitted immediately
+    - Quick phrases ("Hello!", "Yes.") emitted immediately
     - Adaptive min_chars based on punctuation type
     - Timeout-based emission for long pauses
     - Soft breaks (;, :, ,) for very long sentences

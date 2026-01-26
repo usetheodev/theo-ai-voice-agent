@@ -53,7 +53,7 @@ class ClauseStreamingStrategy(StreamingStrategy):
         max_chars: Maximum characters before forcing emission.
             Default: 150.
         language: Language for conjunction detection ("pt" or "en").
-            Default: "pt".
+            Default: "en".
 
     Example:
         >>> strategy = ClauseStreamingStrategy(min_chars=8)
@@ -63,13 +63,18 @@ class ClauseStreamingStrategy(StreamingStrategy):
         ["Eu gosto de café,"]
         >>> strategy.process(" chá.")
         ["mas prefiro chá."]
+
+    Adding new languages:
+        To add clause detection for a new language, add a new conjunction
+        set (e.g., ``_CONJUNCTIONS_FR``) and update the ``__init__`` method
+        to select it based on the ``language`` parameter.
     """
 
     def __init__(
         self,
         min_chars: int = 8,
         max_chars: int = 150,
-        language: str = "pt",
+        language: str = "en",
     ):
         self.min_chars = min_chars
         self.max_chars = max_chars
@@ -91,7 +96,7 @@ class ClauseStreamingStrategy(StreamingStrategy):
         """Extract ready clauses from buffer.
 
         Uses min_chars as minimum position for boundary search,
-        so short initial segments (like "Olá!") don't block
+        so short initial segments (like "Hello!") don't block
         detection of subsequent boundaries.
         """
         chunks: list[str] = []

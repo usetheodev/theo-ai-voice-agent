@@ -111,8 +111,8 @@ class SemanticTurnTaking(TurnTakingController):
             Default: 2000ms.
         eot_confidence_threshold: Minimum confidence for END_OF_TURN.
             Default: 0.7.
-        language: Language for heuristic patterns ("pt" or "en").
-            Default: "pt".
+        language: Language for heuristic patterns ("en" or "pt").
+            Default: "en".
         barge_in_confidence: Minimum VAD confidence for barge-in.
             Default: 0.6.
         min_speech_ms: Minimum speech duration to consider.
@@ -123,7 +123,7 @@ class SemanticTurnTaking(TurnTakingController):
         >>> controller = SemanticTurnTaking(
         ...     backend="heuristic",
         ...     min_silence_ms=300,
-        ...     language="pt",
+        ...     language="en",
         ... )
         >>>
         >>> # Transformer (highest accuracy)
@@ -140,7 +140,7 @@ class SemanticTurnTaking(TurnTakingController):
         min_silence_ms: int = 300,
         max_silence_ms: int = 2000,
         eot_confidence_threshold: float = 0.7,
-        language: str = "pt",
+        language: str = "en",
         barge_in_confidence: float = 0.6,
         min_speech_ms: float = 200.0,
     ):

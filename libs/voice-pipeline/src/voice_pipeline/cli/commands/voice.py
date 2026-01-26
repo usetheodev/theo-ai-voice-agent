@@ -166,7 +166,7 @@ if __name__ == "__main__":
         llm="ollama",
         model="qwen2.5:0.5b",
         tts="kokoro",
-        voice_name="pf_dora",
-        language="pt",
+        voice_name="af_heart",
+        language="en",
         streaming=True,
     ))

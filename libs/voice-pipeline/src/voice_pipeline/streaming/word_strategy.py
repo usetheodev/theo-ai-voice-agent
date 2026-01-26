@@ -43,9 +43,9 @@ class WordStreamingStrategy(StreamingStrategy):
 
     Example:
         >>> strategy = WordStreamingStrategy()
-        >>> strategy.process("Olá ")
-        ["Olá"]
-        >>> strategy.process("mundo!")
+        >>> strategy.process("Hello ")
+        ["Hello"]
+        >>> strategy.process("world!")
         []
         >>> strategy.flush()
         "mundo!"

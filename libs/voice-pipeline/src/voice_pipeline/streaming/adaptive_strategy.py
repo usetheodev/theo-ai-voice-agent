@@ -44,30 +44,30 @@ class AdaptiveStreamingStrategy(StreamingStrategy):
 
     Args:
         first_chunk_words: Number of words for the first chunk.
-            Default: 3 (e.g., "Olá, eu sou" -> TTS starts).
+            Default: 3 (e.g., "Hello, I am" -> TTS starts).
         clause_min_chars: Minimum characters for clause emission.
             Default: 10.
         clause_max_chars: Maximum characters for clause emission.
             Default: 150.
         language: Language for clause conjunction detection.
-            Default: "pt".
+            Default: "en".
 
     Example:
         >>> strategy = AdaptiveStreamingStrategy()
         >>> # Phase WORD: emit first 3 words
-        >>> strategy.process("Olá, ")
+        >>> strategy.process("Hello, ")
         []
-        >>> strategy.process("eu ")
+        >>> strategy.process("I ")
         []
-        >>> strategy.process("sou ")
-        ["Olá, eu sou"]  # First chunk! TTS starts here
+        >>> strategy.process("am ")
+        ["Hello, I am"]  # First chunk! TTS starts here
         >>> # Phase CLAUSE: now uses clause-level
-        >>> strategy.process("um assistente de voz, ")
+        >>> strategy.process("a voice assistant, ")
         []
-        >>> strategy.process("e posso ajudar.")
-        ["um assistente de voz,"]
+        >>> strategy.process("and I can help.")
+        ["a voice assistant,"]
         >>> strategy.flush()
-        "e posso ajudar."
+        "and I can help."
     """
 
     def __init__(
@@ -75,7 +75,7 @@ class AdaptiveStreamingStrategy(StreamingStrategy):
         first_chunk_words: int = 3,
         clause_min_chars: int = 10,
         clause_max_chars: int = 150,
-        language: str = "pt",
+        language: str = "en",
     ):
         self.first_chunk_words = first_chunk_words
         self._phase = _Phase.WORD

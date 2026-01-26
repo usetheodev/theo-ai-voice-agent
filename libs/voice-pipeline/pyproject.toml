@@ -37,7 +37,7 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-# Desenvolvimento e testes
+# Development and testing
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
@@ -48,7 +48,7 @@ dev = [
     "mypy>=1.8.0",
 ]
 
-# Memory stores persistentes
+# Persistent memory stores
 redis = [
     "redis>=4.5.0",
 ]
@@ -56,19 +56,19 @@ sqlite = [
     "aiosqlite>=0.19.0",
 ]
 
-# Observabilidade
+# Observability
 tracing = [
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
 ]
 
-# Processamento de áudio
+# Audio processing
 audio = [
     "numpy>=1.24.0",
     "soundfile>=0.12.0",
 ]
 
-# Providers populares
+# Popular providers
 openai = [
     "openai>=1.0.0",
 ]
@@ -76,7 +76,7 @@ anthropic = [
     "anthropic>=0.18.0",
 ]
 
-# HuggingFace com quantização
+# HuggingFace with quantization
 huggingface = [
     "transformers>=4.36.0",
     "accelerate>=0.25.0",
@@ -84,7 +84,7 @@ huggingface = [
     "torch>=2.0.0",
 ]
 
-# Serialização binária (msgpack)
+# Binary serialization (msgpack)
 msgpack = [
     "msgpack>=1.0.0",
 ]
@@ -100,7 +100,7 @@ faster-whisper = [
     "faster-whisper>=1.0.0",
 ]
 
-# Qwen3-TTS (ultra-low latency, native Portuguese support)
+# Qwen3-TTS (ultra-low latency, multilingual)
 qwen3-tts = [
     "qwen-tts>=0.1.0",
     "soundfile>=0.12.0",
@@ -113,7 +113,7 @@ cli = [
     "httpx>=0.25.0",
 ]
 
-# Todas as dependências opcionais
+# All optional dependencies
 all = [
     "redis>=4.5.0",
     "aiosqlite>=0.19.0",
@@ -148,3 +148,7 @@ packages = ["src/voice_pipeline"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "integration: marks tests that require external services or hardware (deselect with '-m \"not integration\"')",
+    "slow: marks tests that take a long time to run",
+]

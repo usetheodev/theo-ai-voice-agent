@@ -85,14 +85,14 @@ class BackchannelAwareInterruption(InterruptionStrategy):
             Default: 800ms.
         min_confidence: Minimum VAD confidence. Default: 0.5.
         language: Language for backchannel pattern matching.
-            Default: "pt".
+            Default: "en".
         use_transcript: Whether to use partial transcript for
             backchannel detection. Default: True.
         debounce_ms: Minimum time between interruption decisions.
             Default: 300ms.
 
     Example:
-        >>> strategy = BackchannelAwareInterruption(language="pt")
+        >>> strategy = BackchannelAwareInterruption(language="en")
         >>> # User says "uhum" while agent speaks
         >>> context = InterruptionContext(
         ...     user_is_speaking=True,
@@ -109,7 +109,7 @@ class BackchannelAwareInterruption(InterruptionStrategy):
         backchannel_max_ms: float = 500.0,
         interruption_min_ms: float = 800.0,
         min_confidence: float = 0.5,
-        language: str = "pt",
+        language: str = "en",
         use_transcript: bool = True,
         debounce_ms: float = 300.0,
     ):

@@ -37,7 +37,7 @@ async def run_chat(
     try:
         agent = VoiceAgent.local(
             llm_model=model,
-            system_prompt=system_prompt or "Você é um assistente de voz amigável e prestativo. Responda de forma concisa.",
+            system_prompt=system_prompt or "You are a friendly and helpful voice assistant. Respond concisely.",
         )
         await agent.llm.connect()
         console.print("[green]Agent connected successfully![/green]\n")

@@ -115,16 +115,16 @@ def voice(
         help="TTS provider (kokoro, openai).",
     ),
     voice_name: str = typer.Option(
-        "pf_dora",
+        "af_heart",
         "--voice",
         "-V",
         help="TTS voice name.",
     ),
     language: str = typer.Option(
-        "pt",
+        "en",
         "--language",
         "-l",
-        help="Language code (pt, en, es, etc.).",
+        help="Language code (en, pt, es, etc.).",
     ),
     streaming: bool = typer.Option(
         True,

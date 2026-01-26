@@ -17,13 +17,82 @@
  * - PCM16: Direct binary audio (no encoding overhead)
  */
 
+// i18n strings - default language is English
+const LANG = new URLSearchParams(window.location.search).get('lang') || 'en';
+
+const i18n = {
+    en: {
+        connecting: 'Connecting...',
+        connected: 'Connected',
+        disconnected: 'Disconnected',
+        listening: 'Listening...',
+        processing: 'Thinking...',
+        speaking: 'Speaking...',
+        ready: 'Ready',
+        errorConnection: 'Connection error',
+        errorMicUnavailable: 'Microphone unavailable. Make sure to access via http://localhost:8000 or http://127.0.0.1:8000',
+        errorSecureContext: 'This page must be accessed via HTTPS or localhost. Access: http://localhost:8000 or http://127.0.0.1:8000',
+        errorMicNotSupported: 'Your browser does not support microphone access. Use an updated Chrome, Firefox or Edge.',
+        errorWebAudio: 'Your browser does not support Web Audio API.',
+        errorWebSocket: 'Your browser does not support WebSocket.',
+        errorPrefix: 'Error: ',
+        interrupted: 'Response interrupted',
+        failedToStart: 'Failed to start: ',
+        warning: 'Warning: ',
+        you: 'You',
+        assistant: 'Assistant',
+        startConversation: 'Start Conversation',
+        stop: 'Stop',
+        shortcutHint: 'Press <b>Space</b> to interrupt the response',
+        interruptionImmediate: 'immediate',
+        interruptionGraceful: 'graceful',
+        interruptionPrefix: 'Interruption ',
+        audioQueueOverflow: 'Audio queue overflow: discarded old chunk',
+        backchannelDetected: 'Backchannel detected #',
+        msgpackComment: 'msgpack for optimized binary serialization',
+    },
+    pt: {
+        connecting: 'Conectando...',
+        connected: 'Conectado',
+        disconnected: 'Desconectado',
+        listening: 'Ouvindo...',
+        processing: 'Processando...',
+        speaking: 'Falando...',
+        ready: 'Pronto',
+        errorConnection: 'Erro de conexao',
+        errorMicUnavailable: 'Acesso ao microfone indisponivel. Certifique-se de acessar via http://localhost:8000 ou http://127.0.0.1:8000',
+        errorSecureContext: 'Esta pagina precisa ser acessada via HTTPS ou localhost. Acesse: http://localhost:8000 ou http://127.0.0.1:8000',
+        errorMicNotSupported: 'Seu navegador nao suporta acesso ao microfone. Use Chrome, Firefox ou Edge atualizado.',
+        errorWebAudio: 'Seu navegador nao suporta Web Audio API.',
+        errorWebSocket: 'Seu navegador nao suporta WebSocket.',
+        errorPrefix: 'Erro: ',
+        interrupted: 'Resposta interrompida',
+        failedToStart: 'Falha ao iniciar: ',
+        warning: 'Aviso: ',
+        you: 'Voce',
+        assistant: 'Assistente',
+        startConversation: 'Iniciar Conversa',
+        stop: 'Parar',
+        shortcutHint: 'Pressione <b>Espaco</b> para interromper a resposta',
+        interruptionImmediate: 'imediata',
+        interruptionGraceful: 'graceful',
+        interruptionPrefix: 'Interrupcao ',
+        audioQueueOverflow: 'Audio queue overflow: descartado chunk antigo',
+        backchannelDetected: 'Backchannel detectado #',
+        msgpackComment: 'msgpack para serialização binária otimizada',
+    },
+};
+
+// Get current language strings
+const t = i18n[LANG] || i18n.en;
+
 // Configuration
 const CONFIG = {
     wsUrl: `ws://${window.location.host}/ws/voice`,
     sampleRate: 16000,
     bufferSize: 4096,
     channels: 1,
-    useMsgpack: true,  // Usar msgpack para mensagens de controle
+    useMsgpack: true,  // Use msgpack for control messages
 };
 
 // ==============================================================================
@@ -35,10 +104,7 @@ function checkBrowserSupport() {
 
     // Check for secure context (HTTPS or localhost)
     if (!window.isSecureContext) {
-        issues.push(
-            'Esta pagina precisa ser acessada via HTTPS ou localhost. ' +
-            'Acesse: http://localhost:8000 ou http://127.0.0.1:8000'
-        );
+        issues.push(t.errorSecureContext);
     }
 
     // Check for mediaDevices API
@@ -49,21 +115,18 @@ function checkBrowserSupport() {
             navigator.msGetUserMedia;
 
         if (!getUserMedia) {
-            issues.push(
-                'Seu navegador nao suporta acesso ao microfone. ' +
-                'Use Chrome, Firefox ou Edge atualizado.'
-            );
+            issues.push(t.errorMicNotSupported);
         }
     }
 
     // Check for AudioContext
     if (!window.AudioContext && !window.webkitAudioContext) {
-        issues.push('Seu navegador nao suporta Web Audio API.');
+        issues.push(t.errorWebAudio);
     }
 
     // Check for WebSocket
     if (!window.WebSocket) {
-        issues.push('Seu navegador nao suporta WebSocket.');
+        issues.push(t.errorWebSocket);
     }
 
     return issues;
@@ -98,33 +161,36 @@ const metricsBar = document.getElementById('metricsBar');
 
 function connectWebSocket() {
     return new Promise((resolve, reject) => {
-        updateStatus('connecting', 'Conectando...');
+        updateStatus('connecting', t.connecting);
 
         websocket = new WebSocket(CONFIG.wsUrl);
 
         websocket.onopen = () => {
             console.log('WebSocket connected');
-            updateStatus('connected', 'Conectado');
+            updateStatus('connected', t.connected);
 
             // Send configuration
-            websocket.send(JSON.stringify({
+            const config = {
                 type: 'config',
                 sample_rate: CONFIG.sampleRate,
-                language: 'pt'
-            }));
+            };
+            if (LANG === 'pt') {
+                config.language = 'pt';
+            }
+            websocket.send(JSON.stringify(config));
 
             resolve();
         };
 
         websocket.onclose = () => {
             console.log('WebSocket disconnected');
-            updateStatus('idle', 'Desconectado');
+            updateStatus('idle', t.disconnected);
             stopConversation();
         };
 
         websocket.onerror = (error) => {
             console.error('WebSocket error:', error);
-            updateStatus('error', 'Erro de conexao');
+            updateStatus('error', t.errorConnection);
             reject(error);
         };
 
@@ -134,29 +200,29 @@ function connectWebSocket() {
 
 function handleWebSocketMessage(event) {
     if (event.data instanceof Blob) {
-        // Binary data: pode ser msgpack (controle) ou PCM16 (audio)
+        // Binary data: may be msgpack (control) or PCM16 (audio)
         event.data.arrayBuffer().then(buffer => {
             if (CONFIG.useMsgpack && typeof MessagePack !== 'undefined') {
-                // Tentar decodificar como msgpack
+                // Try to decode as msgpack
                 try {
                     const uint8 = new Uint8Array(buffer);
                     const data = MessagePack.decode(uint8);
 
-                    // Se tem "type", eh mensagem de controle
+                    // If it has "type", it's a control message
                     if (data && typeof data === 'object' && data.type) {
                         handleControlMessage(data);
                         return;
                     }
                 } catch (e) {
-                    // Nao eh msgpack valido, eh audio PCM16
+                    // Not valid msgpack, it's PCM16 audio
                 }
             }
 
-            // Fallback: tratar como audio
+            // Fallback: treat as audio
             handleAudioBuffer(buffer);
         });
     } else {
-        // JSON control message (fallback para compatibilidade)
+        // JSON control message (fallback for compatibility)
         try {
             const data = JSON.parse(event.data);
             handleControlMessage(data);
@@ -169,10 +235,10 @@ function handleWebSocketMessage(event) {
 const AUDIO_QUEUE_MAX_SIZE = 50;
 
 async function handleAudioBuffer(arrayBuffer) {
-    // Limitar tamanho da fila para evitar consumo excessivo de memoria
+    // Limit queue size to avoid excessive memory consumption
     if (audioQueue.length >= AUDIO_QUEUE_MAX_SIZE) {
         audioQueue.shift();
-        console.warn('Audio queue overflow: descartado chunk antigo');
+        console.warn(t.audioQueueOverflow);
     }
 
     audioQueue.push(arrayBuffer);
@@ -192,9 +258,9 @@ function handleControlMessage(data) {
 
         case 'vad':
             if (data.event === 'speech_start') {
-                updateStatus('listening', 'Ouvindo...');
+                updateStatus('listening', t.listening);
             } else if (data.event === 'speech_end') {
-                updateStatus('processing', 'Processando...');
+                updateStatus('processing', t.processing);
             }
             break;
 
@@ -212,11 +278,11 @@ function handleControlMessage(data) {
 
         case 'error':
             console.error('Server error:', data.message);
-            addSystemMessage('Erro: ' + data.message);
+            addSystemMessage(t.errorPrefix + data.message);
             break;
 
         case 'interrupted':
-            addSystemMessage('Resposta interrompida');
+            addSystemMessage(t.interrupted);
             break;
 
         // === Phase 7-9: New event types ===
@@ -312,12 +378,12 @@ function handleBackchannel(data) {
         }
     }, 2000);
 
-    console.log('Backchannel detectado #' + data.count);
+    console.log(t.backchannelDetected + data.count);
 }
 
 function handleInterruption(data) {
-    const modeText = data.mode === 'interrupt_graceful' ? 'graceful' : 'imediata';
-    addSystemMessage('Interrupcao ' + modeText + ' #' + data.count);
+    const modeText = data.mode === 'interrupt_graceful' ? t.interruptionGraceful : t.interruptionImmediate;
+    addSystemMessage(t.interruptionPrefix + modeText + ' #' + data.count);
 }
 
 function handleMetrics(data) {
@@ -345,10 +411,7 @@ async function startAudioCapture() {
     try {
         // Check if mediaDevices is available
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            throw new Error(
-                'Acesso ao microfone indisponivel. ' +
-                'Certifique-se de acessar via http://localhost:8000 ou http://127.0.0.1:8000'
-            );
+            throw new Error(t.errorMicUnavailable);
         }
 
         // Request microphone access
@@ -443,7 +506,7 @@ async function playNextAudio() {
     }
 
     isPlayingAudio = true;
-    updateStatus('speaking', 'Falando...');
+    updateStatus('speaking', t.speaking);
 
     const arrayBuffer = audioQueue.shift();
 
@@ -504,10 +567,10 @@ function updateStatus(state, text) {
 
 function getStatusText(state) {
     const texts = {
-        'idle': 'Pronto',
-        'listening': 'Ouvindo...',
-        'processing': 'Pensando...',
-        'speaking': 'Falando...',
+        'idle': t.ready,
+        'listening': t.listening,
+        'processing': t.processing,
+        'speaking': t.speaking,
     };
     return texts[state] || state;
 }
@@ -515,7 +578,7 @@ function getStatusText(state) {
 function addMessage(role, text) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${role}`;
-    const label = role === 'user' ? 'Voce' : 'Assistente';
+    const label = role === 'user' ? t.you : t.assistant;
     messageDiv.innerHTML = `
         <div class="message-label">${label}</div>
         <div class="message-bubble">${escapeHtml(text)}</div>
@@ -532,7 +595,7 @@ function updateAssistantMessage(chunk) {
         currentAssistantMessage = document.createElement('div');
         currentAssistantMessage.className = 'message assistant';
         currentAssistantMessage.innerHTML = `
-            <div class="message-label">Assistente</div>
+            <div class="message-label">${t.assistant}</div>
             <div class="message-bubble"></div>
         `;
         chatContainer.appendChild(currentAssistantMessage);
@@ -619,7 +682,7 @@ async function startConversation() {
 
     } catch (error) {
         console.error('Failed to start conversation:', error);
-        addSystemMessage('Falha ao iniciar: ' + error.message);
+        addSystemMessage(t.failedToStart + error.message);
         startBtn.disabled = false;
     }
 }
@@ -647,7 +710,7 @@ function stopConversation() {
     startBtn.disabled = false;
     stopBtn.style.display = 'none';
     shortcutHint.style.display = 'none';
-    updateStatus('idle', 'Desconectado');
+    updateStatus('idle', t.disconnected);
 
     // Hide strategy panel and metrics
     strategyPanel.classList.remove('active');
@@ -685,7 +748,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const issues = checkBrowserSupport();
     if (issues.length > 0) {
         console.warn('Browser compatibility issues:', issues);
-        addSystemMessage('Aviso: ' + issues.join(' '));
+        addSystemMessage(t.warning + issues.join(' '));
         startBtn.disabled = true;
         startBtn.title = issues.join('\n');
     }

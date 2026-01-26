@@ -5,6 +5,7 @@ Provides a builder pattern for creating VoiceChain instances
 with a clean, readable syntax.
 """
 
+import warnings
 from typing import Any, Optional, TypeVar, Union
 
 from voice_pipeline.interfaces import (
@@ -21,6 +22,10 @@ T = TypeVar("T", bound="VoiceChainBuilder")
 class VoiceChainBuilder:
     """
     Builder for constructing VoiceChain instances.
+
+    .. deprecated::
+        Use ``VoiceAgent.builder()`` (``VoiceAgentBuilder``) instead.
+        ``VoiceChainBuilder`` will be removed in v0.2.0.
 
     Provides a fluent API for configuring voice pipelines:
 
@@ -53,6 +58,12 @@ class VoiceChainBuilder:
         Args:
             registry: Provider registry to use. Defaults to global registry.
         """
+        warnings.warn(
+            "VoiceChainBuilder is deprecated. Use VoiceAgent.builder() instead. "
+            "VoiceChainBuilder will be removed in v0.2.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._registry = registry or get_registry()
 
         # Provider instances

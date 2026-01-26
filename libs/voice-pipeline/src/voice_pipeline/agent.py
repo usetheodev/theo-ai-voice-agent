@@ -1,26 +1,26 @@
-"""VoiceAgent - API simples estilo LangChain para agentes de voz.
+"""VoiceAgent - Simple LangChain-style API for voice agents.
 
-Exemplo de uso:
+Usage example:
 
-    # Uma linha
+    # One-liner
     agent = VoiceAgent.local()
-    response = await agent.chat("Olá!")
+    response = await agent.chat("Hello!")
 
-    # Builder fluente
+    # Fluent builder
     agent = (
         VoiceAgent.builder()
         .asr("whisper", model="base")
         .llm("ollama", model="qwen2.5:0.5b")
-        .tts("kokoro", voice="pf_dora")
-        .system_prompt("Você é um assistente...")
+        .tts("kokoro", voice="af_heart")
+        .system_prompt("You are an assistant...")
         .build()
     )
 
-    # Usar
-    response = await agent.chat("Olá!")       # Texto -> Texto
-    audio = await agent.speak("Olá!")         # Texto -> Áudio
-    audio = await agent.process(audio_bytes)  # Áudio -> Áudio
-    await agent.conversation()                 # Loop interativo
+    # Use
+    response = await agent.chat("Hello!")       # Text -> Text
+    audio = await agent.speak("Hello!")         # Text -> Audio
+    audio = await agent.process(audio_bytes)    # Audio -> Audio
+    await agent.conversation()                   # Interactive loop
 """
 
 import asyncio
@@ -42,10 +42,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class VoiceAgentConfig:
-    """Configuração do VoiceAgent."""
+    """VoiceAgent configuration."""
 
-    system_prompt: str = "Você é um assistente de voz prestativo. Responda de forma concisa."
-    language: str = "pt"
+    system_prompt: str = "You are a helpful voice assistant. Respond concisely."
+    language: str = "en"
     max_messages: int = 20
     temperature: float = 0.7
 
@@ -59,7 +59,7 @@ class VoiceAgentConfig:
 
     # TTS
     tts_provider: str = "kokoro"
-    tts_voice: str = "pf_dora"
+    tts_voice: str = "af_heart"
 
     # VAD
     vad_provider: str = "silero"
@@ -67,15 +67,15 @@ class VoiceAgentConfig:
 
 
 class VoiceAgent:
-    """Agente de voz com API simples estilo LangChain.
+    """Voice agent with a simple LangChain-style API.
 
-    Exemplo:
+    Example:
         >>> agent = VoiceAgent.local()
-        >>> response = await agent.chat("Olá, como você está?")
+        >>> response = await agent.chat("Hello, how are you?")
         >>> print(response)
-        "Olá! Estou bem, obrigado por perguntar!"
+        "Hello! I'm doing well, thanks for asking!"
 
-        >>> audio = await agent.speak("Bom dia!")
+        >>> audio = await agent.speak("Good morning!")
         >>> play_audio(audio)
 
         >>> response_audio = await agent.process(user_audio)
@@ -90,20 +90,20 @@ class VoiceAgent:
         vad: Optional[VADInterface] = None,
         memory: Optional[VoiceMemory] = None,
         system_prompt: Optional[str] = None,
-        language: str = "pt",
+        language: str = "en",
         config: Optional[VoiceAgentConfig] = None,
     ):
-        """Inicializa o VoiceAgent.
+        """Initialize VoiceAgent.
 
         Args:
-            asr: Provider ASR (speech-to-text).
-            llm: Provider LLM (language model).
-            tts: Provider TTS (text-to-speech).
-            vad: Provider VAD (voice activity detection).
-            memory: Memória de conversação.
-            system_prompt: Prompt do sistema.
-            language: Idioma (default: "pt").
-            config: Configuração completa.
+            asr: ASR provider (speech-to-text).
+            llm: LLM provider (language model).
+            tts: TTS provider (text-to-speech).
+            vad: VAD provider (voice activity detection).
+            memory: Conversation memory.
+            system_prompt: System prompt.
+            language: Language code (default: "en").
+            config: Full configuration.
         """
         self._config = config or VoiceAgentConfig()
 
@@ -128,27 +128,27 @@ class VoiceAgent:
     def local(
         cls,
         system_prompt: Optional[str] = None,
-        language: str = "pt",
+        language: str = "en",
         asr_model: str = "base",
         llm_model: str = "qwen2.5:0.5b",
-        tts_voice: str = "pf_dora",
+        tts_voice: str = "af_heart",
     ) -> "VoiceAgent":
-        """Cria agente com providers locais (Whisper + Ollama + Kokoro).
+        """Create agent with local providers (Whisper + Ollama + Kokoro).
 
         Args:
-            system_prompt: Prompt do sistema.
-            language: Idioma.
-            asr_model: Modelo Whisper (tiny, base, small, medium, large).
-            llm_model: Modelo Ollama.
-            tts_voice: Voz Kokoro.
+            system_prompt: System prompt.
+            language: Language code.
+            asr_model: Whisper model (tiny, base, small, medium, large).
+            llm_model: Ollama model.
+            tts_voice: Kokoro voice.
 
         Returns:
-            VoiceAgent configurado com providers locais.
+            VoiceAgent configured with local providers.
 
         Example:
             >>> agent = VoiceAgent.local()
             >>> await agent.connect()
-            >>> response = await agent.chat("Olá!")
+            >>> response = await agent.chat("Hello!")
         """
         from voice_pipeline.providers.asr import WhisperCppASRProvider
         from voice_pipeline.providers.llm import OllamaLLMProvider
@@ -169,23 +169,23 @@ class VoiceAgent:
         cls,
         api_key: Optional[str] = None,
         system_prompt: Optional[str] = None,
-        language: str = "pt",
+        language: str = "en",
         asr_model: str = "whisper-1",
         llm_model: str = "gpt-4o-mini",
         tts_voice: str = "alloy",
     ) -> "VoiceAgent":
-        """Cria agente com providers OpenAI.
+        """Create agent with OpenAI providers.
 
         Args:
-            api_key: OpenAI API key (ou usa OPENAI_API_KEY env).
-            system_prompt: Prompt do sistema.
-            language: Idioma.
-            asr_model: Modelo ASR.
-            llm_model: Modelo LLM.
-            tts_voice: Voz TTS.
+            api_key: OpenAI API key (or uses OPENAI_API_KEY env).
+            system_prompt: System prompt.
+            language: Language code.
+            asr_model: ASR model.
+            llm_model: LLM model.
+            tts_voice: TTS voice.
 
         Returns:
-            VoiceAgent configurado com providers OpenAI.
+            VoiceAgent configured with OpenAI providers.
         """
         from voice_pipeline.providers.asr import OpenAIASRProvider
         from voice_pipeline.providers.llm import OpenAILLMProvider
@@ -201,15 +201,15 @@ class VoiceAgent:
 
     @classmethod
     def builder(cls) -> "VoiceAgentBuilder":
-        """Retorna um builder para configuração fluente.
+        """Return a builder for fluent configuration.
 
         Example:
             >>> agent = (
             ...     VoiceAgent.builder()
             ...     .asr("whisper", model="base")
             ...     .llm("ollama", model="qwen2.5:0.5b")
-            ...     .tts("kokoro", voice="pf_dora")
-            ...     .system_prompt("Você é um assistente...")
+            ...     .tts("kokoro", voice="af_heart")
+            ...     .system_prompt("You are an assistant...")
             ...     .build()
             ... )
         """
@@ -220,10 +220,10 @@ class VoiceAgent:
     # =========================================================================
 
     async def connect(self) -> "VoiceAgent":
-        """Conecta todos os providers (baixa modelos se necessário).
+        """Connect all providers (downloads models if needed).
 
         Returns:
-            Self para encadeamento.
+            Self for chaining.
 
         Example:
             >>> agent = VoiceAgent.local()
@@ -232,7 +232,7 @@ class VoiceAgent:
         if self._connected:
             return self
 
-        logger.info("Conectando providers...")
+        logger.info("Connecting providers...")
 
         if self._asr:
             await self._asr.connect()
@@ -251,16 +251,16 @@ class VoiceAgent:
                 await self._vad.connect()
                 logger.info(f"  VAD: {self._vad}")
             except Exception as e:
-                logger.warning(f"  VAD não disponível: {e}")
+                logger.warning(f"  VAD not available: {e}")
                 self._vad = None
 
         self._connected = True
-        logger.info("Agente pronto!")
+        logger.info("Agent ready!")
 
         return self
 
     async def disconnect(self) -> None:
-        """Desconecta todos os providers."""
+        """Disconnect all providers."""
         if self._asr and hasattr(self._asr, 'disconnect'):
             await self._asr.disconnect()
         if self._llm and hasattr(self._llm, 'disconnect'):
@@ -285,29 +285,29 @@ class VoiceAgent:
     # =========================================================================
 
     async def chat(self, text: str) -> str:
-        """Envia texto e recebe resposta em texto.
+        """Send text and receive text response.
 
         Args:
-            text: Mensagem do usuário.
+            text: User message.
 
         Returns:
-            Resposta do assistente.
+            Assistant response.
 
         Example:
-            >>> response = await agent.chat("Qual é a capital do Brasil?")
+            >>> response = await agent.chat("What is the capital of France?")
             >>> print(response)
-            "A capital do Brasil é Brasília."
+            "The capital of France is Paris."
         """
         if not self._connected:
             await self.connect()
 
         if not self._llm:
-            raise RuntimeError("LLM não configurado")
+            raise RuntimeError("LLM not configured")
 
-        # Adiciona mensagem do usuário
+        # Add user message
         self._messages.append({"role": "user", "content": text})
 
-        # Gera resposta
+        # Generate response
         response = ""
         async for chunk in self._llm.generate_stream(
             messages=self._messages,
@@ -316,33 +316,33 @@ class VoiceAgent:
         ):
             response += chunk.text
 
-        # Adiciona resposta ao histórico
+        # Add response to history
         self._messages.append({"role": "assistant", "content": response})
 
-        # Limita histórico
+        # Limit history
         if len(self._messages) > self._config.max_messages * 2:
             self._messages = self._messages[-self._config.max_messages * 2:]
 
         return response
 
     async def chat_stream(self, text: str) -> AsyncIterator[str]:
-        """Envia texto e recebe resposta em streaming.
+        """Send text and receive streaming response.
 
         Args:
-            text: Mensagem do usuário.
+            text: User message.
 
         Yields:
-            Chunks de texto da resposta.
+            Text chunks of the response.
 
         Example:
-            >>> async for chunk in agent.chat_stream("Conte uma história"):
+            >>> async for chunk in agent.chat_stream("Tell me a story"):
             ...     print(chunk, end="", flush=True)
         """
         if not self._connected:
             await self.connect()
 
         if not self._llm:
-            raise RuntimeError("LLM não configurado")
+            raise RuntimeError("LLM not configured")
 
         self._messages.append({"role": "user", "content": text})
 
@@ -358,16 +358,16 @@ class VoiceAgent:
         self._messages.append({"role": "assistant", "content": response})
 
     async def speak(self, text: str) -> bytes:
-        """Converte texto em áudio.
+        """Convert text to audio.
 
         Args:
-            text: Texto para sintetizar.
+            text: Text to synthesize.
 
         Returns:
-            Áudio em bytes (PCM16, 24kHz, mono).
+            Audio bytes (PCM16, 24kHz, mono).
 
         Example:
-            >>> audio = await agent.speak("Bom dia!")
+            >>> audio = await agent.speak("Good morning!")
             >>> with open("output.wav", "wb") as f:
             ...     write_wav(f, audio, 24000)
         """
@@ -375,7 +375,7 @@ class VoiceAgent:
             await self.connect()
 
         if not self._tts:
-            raise RuntimeError("TTS não configurado")
+            raise RuntimeError("TTS not configured")
 
         chunks = []
         async for chunk in self._tts.synthesize_stream(
@@ -387,19 +387,19 @@ class VoiceAgent:
         return b"".join(chunks)
 
     async def speak_stream(self, text: str) -> AsyncIterator[bytes]:
-        """Converte texto em áudio com streaming.
+        """Convert text to audio with streaming.
 
         Args:
-            text: Texto para sintetizar.
+            text: Text to synthesize.
 
         Yields:
-            Chunks de áudio.
+            Audio chunks.
         """
         if not self._connected:
             await self.connect()
 
         if not self._tts:
-            raise RuntimeError("TTS não configurado")
+            raise RuntimeError("TTS not configured")
 
         async for chunk in self._tts.synthesize_stream(
             self._text_iterator(text),
@@ -408,36 +408,36 @@ class VoiceAgent:
             yield chunk.data
 
     async def listen(self, audio: bytes) -> str:
-        """Converte áudio em texto.
+        """Convert audio to text.
 
         Args:
-            audio: Áudio em bytes (PCM16, 16kHz, mono).
+            audio: Audio bytes (PCM16, 16kHz, mono).
 
         Returns:
-            Texto transcrito.
+            Transcribed text.
 
         Example:
             >>> text = await agent.listen(audio_bytes)
             >>> print(text)
-            "Olá, como você está?"
+            "Hello, how are you?"
         """
         if not self._connected:
             await self.connect()
 
         if not self._asr:
-            raise RuntimeError("ASR não configurado")
+            raise RuntimeError("ASR not configured")
 
         result = await self._asr.ainvoke(audio)
         return result.text
 
     async def process(self, audio: bytes) -> bytes:
-        """Processa áudio completo: ASR -> LLM -> TTS.
+        """Process full audio: ASR -> LLM -> TTS.
 
         Args:
-            audio: Áudio de entrada (PCM16, 16kHz, mono).
+            audio: Input audio (PCM16, 16kHz, mono).
 
         Returns:
-            Áudio de resposta (PCM16, 24kHz, mono).
+            Response audio (PCM16, 24kHz, mono).
 
         Example:
             >>> response_audio = await agent.process(user_audio)
@@ -446,30 +446,30 @@ class VoiceAgent:
         if not self._connected:
             await self.connect()
 
-        # ASR: Áudio -> Texto
+        # ASR: Audio -> Text
         user_text = await self.listen(audio)
         if not user_text.strip():
             return b""
 
-        logger.info(f"Usuário: {user_text}")
+        logger.info(f"User: {user_text}")
 
-        # LLM: Texto -> Resposta
+        # LLM: Text -> Response
         response_text = await self.chat(user_text)
-        logger.info(f"Assistente: {response_text}")
+        logger.info(f"Assistant: {response_text}")
 
-        # TTS: Resposta -> Áudio
+        # TTS: Response -> Audio
         response_audio = await self.speak(response_text)
 
         return response_audio
 
     async def process_stream(self, audio: bytes) -> AsyncIterator[bytes]:
-        """Processa áudio com streaming de resposta.
+        """Process audio with streaming response.
 
         Args:
-            audio: Áudio de entrada.
+            audio: Input audio.
 
         Yields:
-            Chunks de áudio de resposta.
+            Response audio chunks.
         """
         if not self._connected:
             await self.connect()
@@ -479,9 +479,9 @@ class VoiceAgent:
         if not user_text.strip():
             return
 
-        logger.info(f"Usuário: {user_text}")
+        logger.info(f"User: {user_text}")
 
-        # LLM + TTS com streaming
+        # LLM + TTS with streaming
         self._messages.append({"role": "user", "content": user_text})
 
         response = ""
@@ -494,7 +494,7 @@ class VoiceAgent:
             response += chunk.text
             sentence_buffer += chunk.text
 
-            # Quando completar uma sentença, sintetiza
+            # When a sentence is complete, synthesize
             if any(sentence_buffer.rstrip().endswith(p) for p in ".!?"):
                 if len(sentence_buffer.strip()) > 10:
                     async for audio_chunk in self._tts.synthesize_stream(
@@ -503,7 +503,7 @@ class VoiceAgent:
                         yield audio_chunk.data
                     sentence_buffer = ""
 
-        # Sintetiza resto
+        # Synthesize remainder
         if sentence_buffer.strip():
             async for audio_chunk in self._tts.synthesize_stream(
                 self._text_iterator(sentence_buffer),
@@ -511,7 +511,7 @@ class VoiceAgent:
                 yield audio_chunk.data
 
         self._messages.append({"role": "assistant", "content": response})
-        logger.info(f"Assistente: {response}")
+        logger.info(f"Assistant: {response}")
 
     # =========================================================================
     # Conversation Loop
@@ -523,33 +523,33 @@ class VoiceAgent:
         on_assistant_text: Optional[Callable[[str], None]] = None,
         on_audio: Optional[Callable[[bytes], None]] = None,
     ) -> None:
-        """Inicia loop de conversação interativo (para terminal).
+        """Start interactive conversation loop (for terminal).
 
         Args:
-            on_user_text: Callback quando usuário fala.
-            on_assistant_text: Callback quando assistente responde.
-            on_audio: Callback para tocar áudio.
+            on_user_text: Callback when user speaks.
+            on_assistant_text: Callback when assistant responds.
+            on_audio: Callback to play audio.
 
         Example:
             >>> await agent.conversation()
-            Você: Olá!
-            Assistente: Olá! Como posso ajudar?
-            Você: Tchau
-            Assistente: Até logo!
+            You: Hello!
+            Assistant: Hello! How can I help?
+            You: Bye
+            Assistant: Goodbye!
         """
         if not self._connected:
             await self.connect()
 
         print("\n" + "=" * 50)
-        print("Conversação iniciada! Digite 'sair' para encerrar.")
+        print("Conversation started! Type 'exit' to end.")
         print("=" * 50 + "\n")
 
         while True:
             try:
-                user_input = input("Você: ").strip()
+                user_input = input("You: ").strip()
 
-                if user_input.lower() in ("sair", "exit", "quit", "q"):
-                    print("\nAté logo!")
+                if user_input.lower() in ("exit", "quit", "q"):
+                    print("\nGoodbye!")
                     break
 
                 if not user_input:
@@ -558,8 +558,8 @@ class VoiceAgent:
                 if on_user_text:
                     on_user_text(user_input)
 
-                # Gera resposta
-                print("Assistente: ", end="", flush=True)
+                # Generate response
+                print("Assistant: ", end="", flush=True)
                 response = ""
                 async for chunk in self.chat_stream(user_input):
                     print(chunk, end="", flush=True)
@@ -569,13 +569,13 @@ class VoiceAgent:
                 if on_assistant_text:
                     on_assistant_text(response)
 
-                # Sintetiza áudio se callback fornecido
+                # Synthesize audio if callback provided
                 if on_audio:
                     audio = await self.speak(response)
                     on_audio(audio)
 
             except KeyboardInterrupt:
-                print("\n\nInterrompido!")
+                print("\n\nInterrupted!")
                 break
             except EOFError:
                 break
@@ -585,23 +585,23 @@ class VoiceAgent:
     # =========================================================================
 
     async def _text_iterator(self, text: str) -> AsyncIterator[str]:
-        """Converte texto em async iterator."""
+        """Convert text to async iterator."""
         yield text
 
     def reset(self) -> None:
-        """Limpa histórico de conversação."""
+        """Clear conversation history."""
         self._messages.clear()
         if self._memory:
             self._memory.clear()
 
     @property
     def messages(self) -> list[dict[str, str]]:
-        """Retorna histórico de mensagens."""
+        """Return message history."""
         return self._messages.copy()
 
     @property
     def is_connected(self) -> bool:
-        """Verifica se está conectado."""
+        """Check if connected."""
         return self._connected
 
     def __repr__(self) -> str:
@@ -615,15 +615,15 @@ class VoiceAgent:
 
 
 class VoiceAgentBuilder:
-    """Builder fluente para VoiceAgent.
+    """Fluent builder for VoiceAgent.
 
     Example:
         >>> agent = (
         ...     VoiceAgent.builder()
         ...     .asr("whisper", model="base")
         ...     .llm("ollama", model="qwen2.5:0.5b")
-        ...     .tts("kokoro", voice="pf_dora")
-        ...     .system_prompt("Você é um assistente...")
+        ...     .tts("kokoro", voice="af_heart")
+        ...     .system_prompt("You are an assistant...")
         ...     .memory(max_messages=20)
         ...     .build()
         ... )
@@ -635,7 +635,7 @@ class VoiceAgentBuilder:
         self._tts = None
         self._vad = None
         self._system_prompt = None
-        self._language = "pt"
+        self._language = "en"
         self._memory = None
         self._config = VoiceAgentConfig()
 
@@ -645,12 +645,12 @@ class VoiceAgentBuilder:
         model: str = "base",
         **kwargs,
     ) -> "VoiceAgentBuilder":
-        """Configura provider ASR.
+        """Configure ASR provider.
 
         Args:
-            provider: "whisper" ou "openai".
-            model: Modelo a usar.
-            **kwargs: Argumentos extras.
+            provider: "whisper" or "openai".
+            model: Model to use.
+            **kwargs: Extra arguments.
         """
         if provider in ("whisper", "whispercpp"):
             from voice_pipeline.providers.asr import WhisperCppASRProvider
@@ -659,7 +659,7 @@ class VoiceAgentBuilder:
             from voice_pipeline.providers.asr import OpenAIASRProvider
             self._asr = OpenAIASRProvider(model=model, **kwargs)
         else:
-            raise ValueError(f"ASR provider desconhecido: {provider}")
+            raise ValueError(f"Unknown ASR provider: {provider}")
         return self
 
     def llm(
@@ -668,12 +668,12 @@ class VoiceAgentBuilder:
         model: str = "qwen2.5:0.5b",
         **kwargs,
     ) -> "VoiceAgentBuilder":
-        """Configura provider LLM.
+        """Configure LLM provider.
 
         Args:
-            provider: "ollama" ou "openai".
-            model: Modelo a usar.
-            **kwargs: Argumentos extras.
+            provider: "ollama" or "openai".
+            model: Model to use.
+            **kwargs: Extra arguments.
         """
         if provider == "ollama":
             from voice_pipeline.providers.llm import OllamaLLMProvider
@@ -682,21 +682,21 @@ class VoiceAgentBuilder:
             from voice_pipeline.providers.llm import OpenAILLMProvider
             self._llm = OpenAILLMProvider(model=model, **kwargs)
         else:
-            raise ValueError(f"LLM provider desconhecido: {provider}")
+            raise ValueError(f"Unknown LLM provider: {provider}")
         return self
 
     def tts(
         self,
         provider: str = "kokoro",
-        voice: str = "pf_dora",
+        voice: str = "af_heart",
         **kwargs,
     ) -> "VoiceAgentBuilder":
-        """Configura provider TTS.
+        """Configure TTS provider.
 
         Args:
-            provider: "kokoro" ou "openai".
-            voice: Voz a usar.
-            **kwargs: Argumentos extras.
+            provider: "kokoro" or "openai".
+            voice: Voice to use.
+            **kwargs: Extra arguments.
         """
         if provider == "kokoro":
             from voice_pipeline.providers.tts import KokoroTTSProvider
@@ -705,7 +705,7 @@ class VoiceAgentBuilder:
             from voice_pipeline.providers.tts import OpenAITTSProvider
             self._tts = OpenAITTSProvider(voice=voice, **kwargs)
         else:
-            raise ValueError(f"TTS provider desconhecido: {provider}")
+            raise ValueError(f"Unknown TTS provider: {provider}")
         return self
 
     def vad(
@@ -713,11 +713,11 @@ class VoiceAgentBuilder:
         provider: str = "silero",
         **kwargs,
     ) -> "VoiceAgentBuilder":
-        """Configura provider VAD.
+        """Configure VAD provider.
 
         Args:
-            provider: "silero" ou "webrtc".
-            **kwargs: Argumentos extras.
+            provider: "silero" or "webrtc".
+            **kwargs: Extra arguments.
         """
         if provider == "silero":
             from voice_pipeline.providers.vad import SileroVADProvider
@@ -726,31 +726,31 @@ class VoiceAgentBuilder:
             from voice_pipeline.providers.vad import WebRTCVADProvider
             self._vad = WebRTCVADProvider(**kwargs)
         else:
-            raise ValueError(f"VAD provider desconhecido: {provider}")
+            raise ValueError(f"Unknown VAD provider: {provider}")
         return self
 
     def system_prompt(self, prompt: str) -> "VoiceAgentBuilder":
-        """Define o prompt do sistema."""
+        """Set the system prompt."""
         self._system_prompt = prompt
         return self
 
     def language(self, lang: str) -> "VoiceAgentBuilder":
-        """Define o idioma."""
+        """Set the language."""
         self._language = lang
         return self
 
     def memory(self, max_messages: int = 20) -> "VoiceAgentBuilder":
-        """Configura memória de conversação."""
+        """Configure conversation memory."""
         self._memory = ConversationBufferMemory(max_messages=max_messages)
         return self
 
     def temperature(self, temp: float) -> "VoiceAgentBuilder":
-        """Define temperatura do LLM."""
+        """Set LLM temperature."""
         self._config.temperature = temp
         return self
 
     def build(self) -> VoiceAgent:
-        """Constrói o VoiceAgent."""
+        """Build the VoiceAgent."""
         return VoiceAgent(
             asr=self._asr,
             llm=self._llm,
