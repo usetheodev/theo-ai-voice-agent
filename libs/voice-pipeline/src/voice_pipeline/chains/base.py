@@ -29,10 +29,11 @@ from voice_pipeline.interfaces import (
     TTSInterface,
     VADInterface,
 )
+from voice_pipeline.chains.base_voice_chain import BaseVoiceChain
 from voice_pipeline.runnable import RunnableConfig, VoiceRunnable, ensure_config
 
 
-class VoiceChain(VoiceRunnable[bytes, AudioChunk]):
+class VoiceChain(BaseVoiceChain):
     """
     A complete voice-to-voice chain: Audio → ASR → LLM → TTS → Audio.
 
@@ -86,60 +87,21 @@ class VoiceChain(VoiceRunnable[bytes, AudioChunk]):
             llm_temperature: LLM sampling temperature.
             llm_max_tokens: Maximum tokens for LLM response.
         """
-        self.asr = asr
-        self.llm = llm
-        self.tts = tts
-        self.vad = vad
-        self.system_prompt = system_prompt
-        self.language = language
-        self.tts_voice = tts_voice
-        self.llm_temperature = llm_temperature
+        super().__init__(
+            asr=asr,
+            llm=llm,
+            tts=tts,
+            vad=vad,
+            system_prompt=system_prompt,
+            language=language,
+            tts_voice=tts_voice,
+            llm_temperature=llm_temperature,
+        )
         self.llm_max_tokens = llm_max_tokens
 
-        # Conversation history
-        self._messages: list[dict[str, str]] = []
-
-    def reset(self) -> None:
-        """Reset conversation history."""
-        self._messages.clear()
-
     def add_message(self, role: str, content: str) -> None:
-        """Add a message to conversation history."""
-        self._messages.append({"role": role, "content": content})
-
-    @property
-    def messages(self) -> list[dict[str, str]]:
-        """Get current conversation history."""
-        return self._messages.copy()
-
-    async def ainvoke(
-        self,
-        input: bytes,
-        config: Optional[RunnableConfig] = None,
-    ) -> AudioChunk:
-        """
-        Process audio input and return synthesized response.
-
-        Args:
-            input: Audio bytes (PCM16).
-            config: Optional configuration with callbacks.
-
-        Returns:
-            AudioChunk with synthesized response audio.
-        """
-        config = ensure_config(config)
-
-        # Collect all audio chunks
-        chunks: list[bytes] = []
-        async for chunk in self.astream(input, config):
-            chunks.append(chunk.data)
-
-        return AudioChunk(
-            data=b"".join(chunks),
-            sample_rate=24000,
-            channels=1,
-            format="pcm16",
-        )
+        """Add a message to conversation history (public API)."""
+        self._add_message(role, content)
 
     async def astream(
         self,

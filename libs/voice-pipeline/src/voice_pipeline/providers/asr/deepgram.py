@@ -195,6 +195,10 @@ class DeepgramASRProvider(BaseProvider, ASRInterface):
     provider_name: str = "deepgram"
     name: str = "DeepgramASR"
 
+    @property
+    def supports_streaming_input(self) -> bool:
+        return True
+
     def __init__(
         self,
         config: Optional[DeepgramASRConfig] = None,

@@ -1,7 +1,7 @@
 """Tests for Streaming ASR integration in the pipeline.
 
 Tests cover:
-- Detection of real-time ASR providers
+- Detection of real-time ASR providers via supports_streaming_input property
 - StreamingVoiceChain with streaming ASR
 - Fallback to batch ASR
 - Metrics collection
@@ -14,9 +14,8 @@ import pytest
 
 from voice_pipeline.chains.streaming import (
     StreamingVoiceChain,
-    _is_realtime_asr,
 )
-from voice_pipeline.interfaces.asr import TranscriptionResult
+from voice_pipeline.interfaces.asr import ASRInterface, TranscriptionResult
 
 
 # =============================================================================
@@ -26,41 +25,43 @@ from voice_pipeline.interfaces.asr import TranscriptionResult
 
 class MockASR:
     """Mock ASR for testing real-time detection."""
-    def __init__(self, provider_name: str, has_registry: bool = False, real_time: bool = False):
+    def __init__(self, provider_name: str, streaming_input: bool = False):
         self.provider_name = provider_name
-        if has_registry:
-            self._registry_info = MagicMock()
-            self._registry_info.capabilities = MagicMock()
-            self._registry_info.capabilities.real_time = real_time
+        self._streaming_input = streaming_input
+
+    @property
+    def supports_streaming_input(self) -> bool:
+        return self._streaming_input
 
 
 class TestRealtimeASRDetection:
-    """Tests for _is_realtime_asr function."""
+    """Tests for supports_streaming_input property."""
 
     def test_deepgram_is_realtime(self):
         """Deepgram should be detected as real-time."""
-        mock_asr = MockASR("deepgram")
-        assert _is_realtime_asr(mock_asr) is True
+        mock_asr = MockASR("deepgram", streaming_input=True)
+        assert mock_asr.supports_streaming_input is True
 
     def test_whisper_is_not_realtime(self):
         """Whisper.cpp should not be detected as real-time."""
         mock_asr = MockASR("whispercpp")
-        assert _is_realtime_asr(mock_asr) is False
+        assert mock_asr.supports_streaming_input is False
 
     def test_unknown_provider_is_not_realtime(self):
         """Unknown providers should not be detected as real-time."""
         mock_asr = MockASR("unknown")
-        assert _is_realtime_asr(mock_asr) is False
+        assert mock_asr.supports_streaming_input is False
 
-    def test_provider_with_registry_info(self):
-        """Provider with registry info should use capabilities."""
-        mock_asr = MockASR("custom", has_registry=True, real_time=True)
-        assert _is_realtime_asr(mock_asr) is True
+    def test_provider_with_streaming_input(self):
+        """Provider with streaming_input=True should be real-time."""
+        mock_asr = MockASR("custom", streaming_input=True)
+        assert mock_asr.supports_streaming_input is True
 
-    def test_assemblyai_is_realtime(self):
-        """AssemblyAI should be detected as real-time."""
-        mock_asr = MockASR("assemblyai")
-        assert _is_realtime_asr(mock_asr) is True
+    def test_asr_interface_default_is_false(self):
+        """ASRInterface default supports_streaming_input should be False."""
+        # MockASR without streaming_input flag defaults to False
+        mock = MockASR("generic")
+        assert mock.supports_streaming_input is False
 
 
 # =============================================================================
@@ -127,7 +128,7 @@ class TestStreamingASRMode:
 
     def test_streaming_flag_set_correctly_when_disabled(self):
         """_using_streaming_asr should be False when disabled."""
-        mock_asr = MockASR("deepgram")
+        mock_asr = MockASR("deepgram", streaming_input=True)
         mock_llm = MagicMock()
         mock_tts = MagicMock()
 
@@ -159,15 +160,15 @@ class TestStreamingASRMode:
         assert chain._using_streaming_asr is False
 
     def test_streaming_asr_mode_detection(self):
-        """Should detect streaming ASR capability."""
-        mock_asr_deepgram = MockASR("deepgram")
+        """Should detect streaming ASR capability via property."""
+        mock_asr_deepgram = MockASR("deepgram", streaming_input=True)
         mock_asr_whisper = MockASR("whispercpp")
 
-        # Deepgram is real-time
-        assert _is_realtime_asr(mock_asr_deepgram) is True
+        # Deepgram supports streaming input
+        assert mock_asr_deepgram.supports_streaming_input is True
 
-        # Whisper is not
-        assert _is_realtime_asr(mock_asr_whisper) is False
+        # Whisper does not
+        assert mock_asr_whisper.supports_streaming_input is False
 
 
 # =============================================================================

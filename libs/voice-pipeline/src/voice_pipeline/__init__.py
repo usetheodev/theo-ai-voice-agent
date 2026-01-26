@@ -130,8 +130,8 @@ from .callbacks import (
 
 # Chains
 from .chains import (
+    BaseVoiceChain,
     ConversationChain,
-    ConversationState as ChainConversationState,
     ParallelStreamingChain,
     SimpleVoiceChain,
     StreamingVoiceChain,
@@ -139,10 +139,6 @@ from .chains import (
     VoiceChainBuilder,  # Deprecated: use VoiceAgentBuilder
     voice_chain,
 )
-
-# Re-export ConversationState from chains for convenience
-# (this shadows the one from core.state_machine which is identical)
-from .chains.conversation import ConversationState
 
 # Memory
 from .memory import (
@@ -391,6 +387,7 @@ __all__ = [
     "StdOutHandler",
     "PipelineMetrics",
     # Chains
+    "BaseVoiceChain",
     "VoiceChain",
     "SimpleVoiceChain",
     "VoiceChainBuilder",  # Deprecated: use VoiceAgentBuilder

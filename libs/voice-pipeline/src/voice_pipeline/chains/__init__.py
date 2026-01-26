@@ -29,19 +29,25 @@ Available Chains:
 - ParallelStreamingChain: Parallel LLM/TTS processing
 """
 
+from voice_pipeline.chains.base_voice_chain import BaseVoiceChain
 from voice_pipeline.chains.base import SimpleVoiceChain, VoiceChain
 from voice_pipeline.chains.builder import VoiceChainBuilder, voice_chain
-from voice_pipeline.chains.conversation import ConversationChain, ConversationState
+from voice_pipeline.chains.conversation import ConversationChain
 from voice_pipeline.chains.streaming import (
     ParallelStreamingChain,
     StreamingVoiceChain,
 )
 
+# Re-export ConversationState from canonical location
+from voice_pipeline.core.state_machine import ConversationState
+
 # Add builder method to VoiceChain
 VoiceChain.builder = staticmethod(lambda: VoiceChainBuilder())
 
 __all__ = [
-    # Base chains
+    # Base
+    "BaseVoiceChain",
+    # Chains
     "VoiceChain",
     "SimpleVoiceChain",
     # Builder

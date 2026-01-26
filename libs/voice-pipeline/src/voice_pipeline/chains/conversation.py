@@ -6,8 +6,7 @@ and advanced features like barge-in handling.
 """
 
 import asyncio
-from enum import Enum
-from typing import Any, AsyncIterator, Callable, Optional
+from typing import AsyncIterator, Callable, Optional
 
 from voice_pipeline.callbacks.context import (
     emit_asr_end,
@@ -19,6 +18,8 @@ from voice_pipeline.callbacks.context import (
     emit_tts_end,
     emit_tts_start,
 )
+from voice_pipeline.chains.base_voice_chain import BaseVoiceChain
+from voice_pipeline.core.state_machine import ConversationState, ConversationStateMachine
 from voice_pipeline.interfaces import (
     ASRInterface,
     AudioChunk,
@@ -27,20 +28,11 @@ from voice_pipeline.interfaces import (
     TTSInterface,
     VADInterface,
 )
+from voice_pipeline.memory.base import VoiceMemory
 from voice_pipeline.runnable import RunnableConfig, VoiceRunnable, ensure_config
 
 
-class ConversationState(Enum):
-    """State of the conversation."""
-
-    IDLE = "idle"
-    LISTENING = "listening"
-    PROCESSING = "processing"
-    SPEAKING = "speaking"
-    INTERRUPTED = "interrupted"
-
-
-class ConversationChain(VoiceRunnable[bytes, AudioChunk]):
+class ConversationChain(BaseVoiceChain):
     """
     Advanced voice chain with conversation management.
 
@@ -79,7 +71,7 @@ class ConversationChain(VoiceRunnable[bytes, AudioChunk]):
         language: Optional[str] = None,
         tts_voice: Optional[str] = None,
         llm_temperature: float = 0.7,
-        memory: Optional[Any] = None,
+        memory: Optional[VoiceMemory] = None,
         max_history: Optional[int] = None,
         enable_barge_in: bool = True,
         barge_in_threshold_ms: int = 200,
@@ -107,14 +99,17 @@ class ConversationChain(VoiceRunnable[bytes, AudioChunk]):
             on_turn_end: Callback for turn end.
             on_state_change: Callback for state changes.
         """
-        self.asr = asr
-        self.llm = llm
-        self.tts = tts
-        self.vad = vad
-        self.system_prompt = system_prompt
-        self.language = language
-        self.tts_voice = tts_voice
-        self.llm_temperature = llm_temperature
+        super().__init__(
+            asr=asr,
+            llm=llm,
+            tts=tts,
+            vad=vad,
+            system_prompt=system_prompt,
+            language=language,
+            tts_voice=tts_voice,
+            llm_temperature=llm_temperature,
+            max_messages=max_history or 20,
+        )
         self.memory = memory
         self.max_history = max_history
         self.enable_barge_in = enable_barge_in
@@ -125,9 +120,12 @@ class ConversationChain(VoiceRunnable[bytes, AudioChunk]):
         self.on_turn_end = on_turn_end
         self.on_state_change = on_state_change
 
-        # State
-        self._state = ConversationState.IDLE
-        self._messages: list[dict[str, str]] = []
+        # State machine
+        self._state_machine = ConversationStateMachine()
+        if self.on_state_change:
+            self._state_machine.on_state_change(
+                lambda old, new: self.on_state_change(new)
+            )
         self._turn_count = 0
         self._interrupted = False
 
@@ -137,43 +135,27 @@ class ConversationChain(VoiceRunnable[bytes, AudioChunk]):
     @property
     def state(self) -> ConversationState:
         """Current conversation state."""
-        return self._state
+        return self._state_machine.state
 
     @property
     def turn_count(self) -> int:
         """Number of completed turns."""
         return self._turn_count
 
-    @property
-    def messages(self) -> list[dict[str, str]]:
-        """Current conversation history."""
-        return self._messages.copy()
-
-    def _set_state(self, new_state: ConversationState) -> None:
-        """Update state and trigger callback."""
-        if new_state != self._state:
-            self._state = new_state
-            if self.on_state_change:
-                self.on_state_change(new_state)
-
-    def _add_message(self, role: str, content: str) -> None:
-        """Add a message to history, respecting max_history."""
-        self._messages.append({"role": role, "content": content})
-
-        # Trim history if needed
-        if self.max_history and len(self._messages) > self.max_history:
-            # Keep first message (might be system) and trim from beginning
-            self._messages = self._messages[-self.max_history :]
-
     def reset(self) -> None:
         """Reset conversation state and history."""
-        self._messages.clear()
+        super().reset()
         self._turn_count = 0
         self._interrupted = False
-        self._set_state(ConversationState.IDLE)
+        self._state_machine.reset()
 
-        if self.memory and hasattr(self.memory, "clear"):
-            self.memory.clear()
+        # Note: memory.clear() is async; schedule if event loop is running
+        if self.memory:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self.memory.clear())
+            except RuntimeError:
+                pass
 
     def interrupt(self) -> None:
         """
@@ -182,27 +164,12 @@ class ConversationChain(VoiceRunnable[bytes, AudioChunk]):
         Call this when you detect the user is trying to speak
         while the assistant is talking.
         """
-        if self.enable_barge_in and self._state == ConversationState.SPEAKING:
+        if self.enable_barge_in and self._state_machine.is_speaking:
             self._interrupted = True
-            self._set_state(ConversationState.INTERRUPTED)
+            self._state_machine.force_transition(ConversationState.INTERRUPTED)
 
             if self._cancel_event:
                 self._cancel_event.set()
-
-    async def ainvoke(
-        self,
-        input: bytes,
-        config: Optional[RunnableConfig] = None,
-    ) -> AudioChunk:
-        """Process audio and return response."""
-        chunks: list[bytes] = []
-        async for chunk in self.astream(input, config):
-            chunks.append(chunk.data)
-
-        return AudioChunk(
-            data=b"".join(chunks),
-            sample_rate=24000,
-        )
 
     async def astream(
         self,
@@ -242,7 +209,7 @@ class ConversationChain(VoiceRunnable[bytes, AudioChunk]):
             await emit_custom_event("turn_start", {"turn": self._turn_count})
 
             # LISTENING -> PROCESSING
-            self._set_state(ConversationState.LISTENING)
+            self._state_machine.transition_to(ConversationState.LISTENING)
 
             # ASR
             await emit_asr_start(input)
@@ -255,7 +222,7 @@ class ConversationChain(VoiceRunnable[bytes, AudioChunk]):
             await emit_asr_end(transcription)
 
             if not transcription.text.strip():
-                self._set_state(ConversationState.IDLE)
+                self._state_machine.force_transition(ConversationState.IDLE)
                 return
 
             # Add user message
@@ -263,13 +230,13 @@ class ConversationChain(VoiceRunnable[bytes, AudioChunk]):
 
             # Load memory context if available
             messages = self._messages.copy()
-            if self.memory and hasattr(self.memory, "load_context"):
+            if self.memory:
                 context = await self.memory.load_context(transcription.text)
-                if context:
-                    messages = context.get("messages", messages)
+                if context and context.messages:
+                    messages = context.messages
 
             # PROCESSING
-            self._set_state(ConversationState.PROCESSING)
+            self._state_machine.transition_to(ConversationState.PROCESSING)
 
             await emit_llm_start(messages)
 
@@ -293,7 +260,7 @@ class ConversationChain(VoiceRunnable[bytes, AudioChunk]):
             await emit_llm_end(response_text)
 
             if self._interrupted:
-                self._set_state(ConversationState.IDLE)
+                self._state_machine.force_transition(ConversationState.IDLE)
                 await emit_custom_event("barge_in", {"partial_response": response_text})
                 return
 
@@ -301,12 +268,12 @@ class ConversationChain(VoiceRunnable[bytes, AudioChunk]):
             self._add_message("assistant", response_text)
 
             # Save to memory if available
-            if self.memory and hasattr(self.memory, "save_context"):
+            if self.memory:
                 await self.memory.save_context(transcription.text, response_text)
 
             # SPEAKING
             if response_text.strip():
-                self._set_state(ConversationState.SPEAKING)
+                self._state_machine.transition_to(ConversationState.SPEAKING)
 
                 await emit_tts_start(response_text)
 
@@ -327,7 +294,7 @@ class ConversationChain(VoiceRunnable[bytes, AudioChunk]):
             await emit_custom_event("turn_end", {"turn": self._turn_count})
 
         finally:
-            self._set_state(ConversationState.IDLE)
+            self._state_machine.force_transition(ConversationState.IDLE)
             self._cancel_event = None
 
     async def process_continuous(
@@ -367,7 +334,7 @@ class ConversationChain(VoiceRunnable[bytes, AudioChunk]):
                 speech_buffer.append(audio_chunk)
 
                 # If we're speaking, this might be barge-in
-                if self._state == ConversationState.SPEAKING:
+                if self._state_machine.is_speaking:
                     self.interrupt()
 
             else:

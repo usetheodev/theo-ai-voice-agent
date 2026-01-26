@@ -22,6 +22,8 @@ from voice_pipeline.providers.base import (
     ProviderConfig,
     ProviderHealth,
 )
+from voice_pipeline.providers.decorators import register_vad
+from voice_pipeline.providers.types import VADCapabilities
 
 
 @dataclass
@@ -62,6 +64,22 @@ class SileroVADConfig(ProviderConfig):
     """Number of samples per window (512 for 16kHz, 256 for 8kHz)."""
 
 
+@register_vad(
+    name="silero",
+    capabilities=VADCapabilities(
+        frame_size_ms=32,
+        sample_rates=[8000, 16000],
+        confidence_scores=True,
+    ),
+    description="Silero VAD using PyTorch for fast, accurate voice activity detection.",
+    version="1.0.0",
+    aliases=["silero-vad"],
+    tags=["local", "offline", "fast", "accurate"],
+    default_config={
+        "threshold": 0.5,
+        "min_silence_duration_ms": 500.0,
+    },
+)
 class SileroVADProvider(BaseProvider, VADInterface):
     """Silero VAD provider.
 

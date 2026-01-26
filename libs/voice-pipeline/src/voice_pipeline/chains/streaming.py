@@ -46,6 +46,7 @@ from voice_pipeline.interfaces import (
     TranscriptionResult,
     TurnTakingController,
 )
+from voice_pipeline.chains.base_voice_chain import BaseVoiceChain
 from voice_pipeline.runnable import RunnableConfig, VoiceRunnable, ensure_config
 from voice_pipeline.streaming import SentenceStreamer, SentenceStreamerConfig
 from voice_pipeline.streaming.metrics import StreamingMetrics
@@ -55,36 +56,9 @@ from voice_pipeline.streaming.sentence_strategy import SentenceStreamingStrategy
 logger = logging.getLogger(__name__)
 
 
-def _is_realtime_asr(asr: ASRInterface) -> bool:
-    """Check if ASR provider supports real-time streaming.
-
-    Real-time ASR providers (like Deepgram) can provide partial
-    transcriptions as audio is received, enabling lower latency.
-
-    Args:
-        asr: ASR provider instance.
-
-    Returns:
-        True if provider supports real-time streaming.
-    """
-    # Check for provider registry info
-    if hasattr(asr, '_registry_info'):
-        caps = asr._registry_info.capabilities
-        if hasattr(caps, 'real_time'):
-            return caps.real_time
-
-    # Legacy fallback: check by provider name patterns
-    # TODO: Remove in v0.2.0 when all providers use registry capabilities
-    provider_name = getattr(asr, 'provider_name', '').lower()
-    realtime_providers = {'deepgram', 'assemblyai', 'speechmatics', 'aws-transcribe'}
-    if provider_name in realtime_providers:
-        return True
-
-    # Default: not real-time (batch ASR)
-    return False
 
 
-class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
+class StreamingVoiceChain(BaseVoiceChain):
     """
     Voice chain optimized for streaming with minimal latency.
 
@@ -199,15 +173,18 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
                                   the chain uses the existing interrupt()
                                   behavior (caller-managed).
         """
-        self.asr = asr
-        self.llm = llm
-        self.tts = tts
+        super().__init__(
+            asr=asr,
+            llm=llm,
+            tts=tts,
+            system_prompt=system_prompt,
+            language=language,
+            tts_voice=tts_voice,
+            llm_temperature=llm_temperature,
+            max_messages=max_messages,
+        )
         self.rag = rag
         self.rag_k = rag_k
-        self.system_prompt = system_prompt
-        self.language = language
-        self.tts_voice = tts_voice
-        self.llm_temperature = llm_temperature
         self.auto_warmup = auto_warmup
         self.use_streaming_asr = use_streaming_asr
         self.streaming_asr_min_words = streaming_asr_min_words
@@ -222,8 +199,6 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
             sentence_end_chars=sentence_end_chars or [".", "!", "?", "\n"],
         )
 
-        self._messages: list[dict[str, str]] = []
-        self._max_messages: int = max_messages
         self._interrupted: bool = False
 
         # Metrics from last run
@@ -235,18 +210,6 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
 
         # Track if streaming ASR is being used
         self._using_streaming_asr: bool = False
-
-    @property
-    def messages(self) -> list[dict[str, str]]:
-        """Current conversation history."""
-        return self._messages.copy()
-
-    def _add_message(self, role: str, content: str) -> None:
-        """Add a message and trim history if over the limit."""
-        self._messages.append({"role": role, "content": content})
-        if self._max_messages > 0:
-            while len(self._messages) > self._max_messages:
-                self._messages.pop(0)
 
     def _get_strategy(self) -> StreamingStrategy:
         """Get the streaming strategy to use.
@@ -308,10 +271,6 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
         await self.disconnect()
         return False
 
-    def reset(self) -> None:
-        """Reset conversation history."""
-        self._messages.clear()
-
     def interrupt(self) -> None:
         """Interrupt current response (barge-in).
 
@@ -348,21 +307,6 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
 
         return user_text
 
-    async def ainvoke(
-        self,
-        input: bytes,
-        config: Optional[RunnableConfig] = None,
-    ) -> AudioChunk:
-        """Process audio and return response."""
-        chunks: list[bytes] = []
-        async for chunk in self.astream(input, config):
-            chunks.append(chunk.data)
-
-        return AudioChunk(
-            data=b"".join(chunks),
-            sample_rate=24000,
-        )
-
     async def astream(
         self,
         input: bytes,
@@ -391,7 +335,7 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
 
         # Check if we should use streaming ASR
         self._using_streaming_asr = (
-            self.use_streaming_asr and _is_realtime_asr(self.asr)
+            self.use_streaming_asr and self.asr.supports_streaming_input
         )
 
         if self._using_streaming_asr:
@@ -788,7 +732,7 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
             await producer_task
 
 
-class ParallelStreamingChain(VoiceRunnable[bytes, AudioChunk]):
+class ParallelStreamingChain(BaseVoiceChain):
     """
     Chain that processes LLM and TTS in parallel.
 
@@ -824,42 +768,16 @@ class ParallelStreamingChain(VoiceRunnable[bytes, AudioChunk]):
                          Older messages are trimmed. Default: 20.
                          Set to 0 for unlimited (not recommended).
         """
-        self.asr = asr
-        self.llm = llm
-        self.tts = tts
-        self.system_prompt = system_prompt
-        self.language = language
-        self.tts_voice = tts_voice
-        self.buffer_size = buffer_size
-
-        self._messages: list[dict[str, str]] = []
-        self._max_messages: int = max_messages
-
-    def _add_message(self, role: str, content: str) -> None:
-        """Add a message and trim history if over the limit."""
-        self._messages.append({"role": role, "content": content})
-        if self._max_messages > 0:
-            while len(self._messages) > self._max_messages:
-                self._messages.pop(0)
-
-    def reset(self) -> None:
-        """Reset conversation history."""
-        self._messages.clear()
-
-    async def ainvoke(
-        self,
-        input: bytes,
-        config: Optional[RunnableConfig] = None,
-    ) -> AudioChunk:
-        """Process audio and return response."""
-        chunks: list[bytes] = []
-        async for chunk in self.astream(input, config):
-            chunks.append(chunk.data)
-
-        return AudioChunk(
-            data=b"".join(chunks),
-            sample_rate=24000,
+        super().__init__(
+            asr=asr,
+            llm=llm,
+            tts=tts,
+            system_prompt=system_prompt,
+            language=language,
+            tts_voice=tts_voice,
+            max_messages=max_messages,
         )
+        self.buffer_size = buffer_size
 
     async def astream(
         self,

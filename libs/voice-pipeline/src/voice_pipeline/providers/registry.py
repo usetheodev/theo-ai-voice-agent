@@ -436,25 +436,14 @@ class ProviderRegistry:
         return count
 
 
-# Global registry instance
-_registry: Optional[ProviderRegistry] = None
-
-
 def get_registry() -> ProviderRegistry:
-    """
-    Get the global provider registry.
+    """Get the global provider registry.
 
-    Returns:
-        The singleton ProviderRegistry instance.
+    Returns the singleton ProviderRegistry instance (managed by __new__).
     """
-    global _registry
-    if _registry is None:
-        _registry = ProviderRegistry()
-    return _registry
+    return ProviderRegistry()
 
 
 def reset_registry() -> None:
     """Reset the global registry. Useful for testing."""
-    global _registry
-    if _registry is not None:
-        _registry.reset()
+    ProviderRegistry().reset()

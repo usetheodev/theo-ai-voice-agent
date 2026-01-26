@@ -55,6 +55,15 @@ class ASRInterface(VoiceRunnable[ASRInput, TranscriptionResult]):
 
     name: str = "ASR"
 
+    @property
+    def supports_streaming_input(self) -> bool:
+        """Whether this ASR supports real-time streaming input.
+
+        Real-time providers (Deepgram, AssemblyAI) return True.
+        Batch providers (Whisper, FasterWhisper) return False.
+        """
+        return False
+
     @abstractmethod
     async def transcribe_stream(
         self,

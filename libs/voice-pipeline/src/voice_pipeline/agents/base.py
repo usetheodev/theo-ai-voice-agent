@@ -580,22 +580,13 @@ class VoiceAgentBuilder:
         self._asr_provider = provider
         self._asr_kwargs = {"model": model, "language": language, **kwargs}
 
-        if provider == "whisper":
-            from voice_pipeline.providers.asr import WhisperCppASRProvider
-            self._asr = WhisperCppASRProvider(model=model, language=language, **kwargs)
-        elif provider == "openai":
-            from voice_pipeline.providers.asr import OpenAIASRProvider
-            self._asr = OpenAIASRProvider(model=model, language=language, **kwargs)
-        elif provider == "deepgram":
-            from voice_pipeline.providers.asr import DeepgramASRProvider
-            self._asr = DeepgramASRProvider(language=language, **kwargs)
-        elif provider == "faster-whisper":
-            from voice_pipeline.providers.asr import FasterWhisperProvider
-            self._asr = FasterWhisperProvider(model=model, language=language, **kwargs)
-        elif provider == "nemotron":
-            from voice_pipeline.providers.asr import NemotronASRProvider
-            self._asr = NemotronASRProvider(**kwargs)
-        else:
+        from voice_pipeline.providers.registry import get_registry
+        registry = get_registry()
+
+        try:
+            config = {"model": model, "language": language, **kwargs}
+            self._asr = registry.get_asr(provider, **config)
+        except KeyError:
             raise ValueError(f"Unknown ASR provider: {provider}")
         return self
 
@@ -611,13 +602,17 @@ class VoiceAgentBuilder:
             provider: "ollama" or "openai".
             model: Model to use.
         """
-        if provider == "ollama":
-            from voice_pipeline.providers.llm import OllamaLLMProvider
-            self._llm = OllamaLLMProvider(model=model or "qwen2.5:0.5b", **kwargs)
-        elif provider == "openai":
-            from voice_pipeline.providers.llm import OpenAILLMProvider
-            self._llm = OpenAILLMProvider(model=model or "gpt-4o-mini", **kwargs)
-        else:
+        from voice_pipeline.providers.registry import get_registry
+        registry = get_registry()
+
+        # Apply default models per provider
+        _default_models = {"ollama": "qwen2.5:0.5b", "openai": "gpt-4o-mini"}
+        resolved_model = model or _default_models.get(provider)
+
+        try:
+            config = {"model": resolved_model, **kwargs} if resolved_model else kwargs
+            self._llm = registry.get_llm(provider, **config)
+        except KeyError:
             raise ValueError(f"Unknown LLM provider: {provider}")
         return self
 
@@ -651,19 +646,19 @@ class VoiceAgentBuilder:
             >>> builder.tts("openai", voice="nova")
         """
         self._tts_voice = voice
-        if provider == "kokoro":
-            from voice_pipeline.providers.tts import KokoroTTSProvider
-            self._tts = KokoroTTSProvider(voice=voice, **kwargs)
-        elif provider == "piper":
-            from voice_pipeline.providers.tts import PiperTTSProvider
-            self._tts = PiperTTSProvider(voice=voice, **kwargs)
-        elif provider in ("qwen3-tts", "qwen3", "qwen"):
-            from voice_pipeline.providers.tts import Qwen3TTSProvider
-            self._tts = Qwen3TTSProvider(speaker=voice, **kwargs)
-        elif provider == "openai":
-            from voice_pipeline.providers.tts import OpenAITTSProvider
-            self._tts = OpenAITTSProvider(voice=voice, **kwargs)
+
+        from voice_pipeline.providers.registry import get_registry
+        registry = get_registry()
+
+        # Qwen3-TTS uses 'speaker' instead of 'voice'
+        if provider in ("qwen3-tts", "qwen3", "qwen"):
+            config = {"speaker": voice, **kwargs} if voice else kwargs
         else:
+            config = {"voice": voice, **kwargs} if voice else kwargs
+
+        try:
+            self._tts = registry.get_tts(provider, **config)
+        except KeyError:
             raise ValueError(f"Unknown TTS provider: {provider}")
         return self
 
@@ -677,13 +672,12 @@ class VoiceAgentBuilder:
         Args:
             provider: "silero" or "webrtc".
         """
-        if provider == "silero":
-            from voice_pipeline.providers.vad import SileroVADProvider
-            self._vad = SileroVADProvider(**kwargs)
-        elif provider == "webrtc":
-            from voice_pipeline.providers.vad import WebRTCVADProvider
-            self._vad = WebRTCVADProvider(**kwargs)
-        else:
+        from voice_pipeline.providers.registry import get_registry
+        registry = get_registry()
+
+        try:
+            self._vad = registry.get_vad(provider, **kwargs)
+        except KeyError:
             raise ValueError(f"Unknown VAD provider: {provider}")
         return self
 
@@ -724,20 +718,19 @@ class VoiceAgentBuilder:
             >>> # Semantic (maximum accuracy)
             >>> builder.turn_taking("semantic", backend="heuristic", language="en")
         """
-        if strategy == "fixed":
-            from voice_pipeline.providers.turn_taking import FixedSilenceTurnTaking
-            self._turn_taking_controller = FixedSilenceTurnTaking(**kwargs)
-        elif strategy == "adaptive":
-            from voice_pipeline.providers.turn_taking import AdaptiveSilenceTurnTaking
-            self._turn_taking_controller = AdaptiveSilenceTurnTaking(**kwargs)
-        elif strategy == "semantic":
-            from voice_pipeline.providers.turn_taking import SemanticTurnTaking
-            self._turn_taking_controller = SemanticTurnTaking(**kwargs)
-        else:
+        _turn_taking_map = {
+            "fixed": lambda: __import__("voice_pipeline.providers.turn_taking", fromlist=["FixedSilenceTurnTaking"]).FixedSilenceTurnTaking,
+            "adaptive": lambda: __import__("voice_pipeline.providers.turn_taking", fromlist=["AdaptiveSilenceTurnTaking"]).AdaptiveSilenceTurnTaking,
+            "semantic": lambda: __import__("voice_pipeline.providers.turn_taking", fromlist=["SemanticTurnTaking"]).SemanticTurnTaking,
+        }
+
+        factory = _turn_taking_map.get(strategy)
+        if factory is None:
             raise ValueError(
                 f"Unknown turn-taking strategy: {strategy}. "
                 f"Use 'fixed', 'adaptive' or 'semantic'."
             )
+        self._turn_taking_controller = factory()(**kwargs)
         return self
 
     def streaming_granularity(
@@ -786,23 +779,20 @@ class VoiceAgentBuilder:
             >>> # Sentence (default, maximum naturalness)
             >>> builder.streaming_granularity("sentence")
         """
-        if granularity == "sentence":
-            from voice_pipeline.streaming.sentence_strategy import SentenceStreamingStrategy
-            self._streaming_strategy = SentenceStreamingStrategy(**kwargs)
-        elif granularity == "clause":
-            from voice_pipeline.streaming.clause_strategy import ClauseStreamingStrategy
-            self._streaming_strategy = ClauseStreamingStrategy(**kwargs)
-        elif granularity == "word":
-            from voice_pipeline.streaming.word_strategy import WordStreamingStrategy
-            self._streaming_strategy = WordStreamingStrategy(**kwargs)
-        elif granularity == "adaptive":
-            from voice_pipeline.streaming.adaptive_strategy import AdaptiveStreamingStrategy
-            self._streaming_strategy = AdaptiveStreamingStrategy(**kwargs)
-        else:
+        _granularity_map = {
+            "sentence": lambda: __import__("voice_pipeline.streaming.sentence_strategy", fromlist=["SentenceStreamingStrategy"]).SentenceStreamingStrategy,
+            "clause": lambda: __import__("voice_pipeline.streaming.clause_strategy", fromlist=["ClauseStreamingStrategy"]).ClauseStreamingStrategy,
+            "word": lambda: __import__("voice_pipeline.streaming.word_strategy", fromlist=["WordStreamingStrategy"]).WordStreamingStrategy,
+            "adaptive": lambda: __import__("voice_pipeline.streaming.adaptive_strategy", fromlist=["AdaptiveStreamingStrategy"]).AdaptiveStreamingStrategy,
+        }
+
+        factory = _granularity_map.get(granularity)
+        if factory is None:
             raise ValueError(
                 f"Unknown streaming granularity: {granularity}. "
                 f"Use 'sentence', 'clause', 'word' or 'adaptive'."
             )
+        self._streaming_strategy = factory()(**kwargs)
         return self
 
     def interruption(
@@ -845,20 +835,19 @@ class VoiceAgentBuilder:
             >>> # Backchannel-aware (best for conversations)
             >>> builder.interruption("backchannel", language="en")
         """
-        if strategy == "immediate":
-            from voice_pipeline.providers.interruption import ImmediateInterruption
-            self._interruption_strategy = ImmediateInterruption(**kwargs)
-        elif strategy == "graceful":
-            from voice_pipeline.providers.interruption import GracefulInterruption
-            self._interruption_strategy = GracefulInterruption(**kwargs)
-        elif strategy == "backchannel":
-            from voice_pipeline.providers.interruption import BackchannelAwareInterruption
-            self._interruption_strategy = BackchannelAwareInterruption(**kwargs)
-        else:
+        _interruption_map = {
+            "immediate": lambda: __import__("voice_pipeline.providers.interruption", fromlist=["ImmediateInterruption"]).ImmediateInterruption,
+            "graceful": lambda: __import__("voice_pipeline.providers.interruption", fromlist=["GracefulInterruption"]).GracefulInterruption,
+            "backchannel": lambda: __import__("voice_pipeline.providers.interruption", fromlist=["BackchannelAwareInterruption"]).BackchannelAwareInterruption,
+        }
+
+        factory = _interruption_map.get(strategy)
+        if factory is None:
             raise ValueError(
                 f"Unknown interruption strategy: {strategy}. "
                 f"Use 'immediate', 'graceful' or 'backchannel'."
             )
+        self._interruption_strategy = factory()(**kwargs)
         return self
 
     def language(self, lang: str) -> "VoiceAgentBuilder":
@@ -1130,6 +1119,13 @@ class VoiceAgentBuilder:
 
         # If ASR and TTS are present, create voice pipeline
         if self._asr is not None and self._tts is not None:
+            import warnings
+            warnings.warn(
+                "For voice pipelines (ASR+TTS), prefer build_async() "
+                "which connects providers and performs warmup.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             if self._streaming:
                 # Streaming sentence-level (low latency)
                 from voice_pipeline.chains import StreamingVoiceChain

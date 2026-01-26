@@ -31,6 +31,8 @@ from voice_pipeline.providers.base import (
     ProviderConfig,
     ProviderHealth,
 )
+from voice_pipeline.providers.decorators import register_asr
+from voice_pipeline.providers.types import ASRCapabilities
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +150,26 @@ class FasterWhisperConfig(ProviderConfig):
     """Condition on previous output for better continuity."""
 
 
+@register_asr(
+    name="faster-whisper",
+    capabilities=ASRCapabilities(
+        streaming=True,
+        languages=["en", "pt", "es", "fr", "de", "it", "ja", "ko", "zh", "ru", "ar", "hi"],
+        real_time=False,
+        word_timestamps=True,
+        speaker_diarization=False,
+    ),
+    description="FasterWhisper ASR using CTranslate2 for 4x faster CPU inference.",
+    version="1.0.0",
+    aliases=["faster_whisper", "fasterwhisper"],
+    tags=["local", "offline", "cpu-optimized", "fast"],
+    default_config={
+        "model": "small",
+        "compute_type": "int8",
+        "beam_size": 5,
+        "vad_filter": True,
+    },
+)
 class FasterWhisperProvider(BaseProvider, ASRInterface):
     """FasterWhisper ASR provider.
 
@@ -196,6 +218,7 @@ class FasterWhisperProvider(BaseProvider, ASRInterface):
         compute_type: Optional[str] = None,
         beam_size: Optional[int] = None,
         vad_filter: Optional[bool] = None,
+        vad_parameters: Optional[dict] = None,
         **kwargs,
     ):
         """Initialize FasterWhisper provider.
@@ -208,6 +231,7 @@ class FasterWhisperProvider(BaseProvider, ASRInterface):
             compute_type: Compute type (shortcut): int8, float16, float32.
             beam_size: Beam search width (shortcut).
             vad_filter: Enable VAD filter (shortcut).
+            vad_parameters: Custom VAD parameters (shortcut).
             **kwargs: Additional configuration options.
         """
         if config is None:
@@ -226,6 +250,8 @@ class FasterWhisperProvider(BaseProvider, ASRInterface):
             config.beam_size = beam_size
         if vad_filter is not None:
             config.vad_filter = vad_filter
+        if vad_parameters is not None:
+            config.vad_parameters = vad_parameters
 
         super().__init__(config=config, **kwargs)
 

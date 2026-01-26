@@ -186,7 +186,6 @@ class Pipeline:
             # Start concurrent processing tasks
             vad_task = asyncio.create_task(self._vad_loop(audio_input))
             process_task = asyncio.create_task(self._process_loop())
-            output_task = asyncio.create_task(self._output_loop())
 
             self._current_task = process_task
 
@@ -213,7 +212,7 @@ class Pipeline:
             self._cancel_event.set()
 
             # Cancel tasks
-            for task in [vad_task, process_task, output_task]:
+            for task in [vad_task, process_task]:
                 if task and not task.done():
                     task.cancel()
                     try:
@@ -499,11 +498,6 @@ class Pipeline:
         sentences.append(current)
 
         return sentences
-
-    async def _output_loop(self) -> None:
-        """Output audio loop (placeholder for future enhancements)."""
-        # This loop is managed by the main process() generator
-        await asyncio.sleep(0)
 
     async def _handle_barge_in(self) -> None:
         """Handle user interruption (barge-in)."""

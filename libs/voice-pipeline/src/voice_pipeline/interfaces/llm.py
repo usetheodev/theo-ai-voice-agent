@@ -75,7 +75,7 @@ class LLMResponse:
 # - string (será convertida para mensagem de usuário)
 # - TranscriptionResult (extrai o texto)
 # - dict com messages e outras opções
-LLMInput = Union[list[dict[str, str]], str, dict[str, Any], Any]
+LLMInput = Union[list[dict[str, str]], str, dict[str, Any]]
 
 
 class LLMInterface(VoiceRunnable[LLMInput, str]):

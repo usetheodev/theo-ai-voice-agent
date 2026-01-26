@@ -354,6 +354,17 @@ class BaseProvider(ABC, Generic[T]):
 
     # ==================== Lifecycle ====================
 
+    def _ensure_connected(self) -> None:
+        """Raise warning if not connected. Call at start of operations."""
+        if not self._connected:
+            import warnings
+            warnings.warn(
+                f"{self.provider_name} is not connected. "
+                "Call await provider.connect() or use 'async with provider:'",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+
     async def connect(self) -> None:
         """Connect to the provider.
 
