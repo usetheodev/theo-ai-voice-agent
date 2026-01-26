@@ -17,11 +17,23 @@ from .optimized_buffer import (
     apply_gain_np,
     normalize_audio_np,
 )
+from .strategy import StreamingGranularity, StreamingStrategy
+from .sentence_strategy import SentenceStreamingStrategy
+from .clause_strategy import ClauseStreamingStrategy
+from .word_strategy import WordStreamingStrategy
+from .adaptive_strategy import AdaptiveStreamingStrategy
 
 __all__ = [
     # Sentence streaming
     "SentenceStreamer",
     "SentenceStreamerConfig",
+    # Streaming strategies (pluggable granularity)
+    "StreamingStrategy",
+    "StreamingGranularity",
+    "SentenceStreamingStrategy",
+    "ClauseStreamingStrategy",
+    "WordStreamingStrategy",
+    "AdaptiveStreamingStrategy",
     # Basic buffers
     "AudioBuffer",
     "TextBuffer",

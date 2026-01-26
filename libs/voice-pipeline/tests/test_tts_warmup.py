@@ -150,7 +150,7 @@ class TestStreamingVoiceChainWarmup:
         assert chain.auto_warmup is True
 
     async def test_connect_calls_warmup_when_enabled(self):
-        """connect() should call tts.warmup() when auto_warmup is True."""
+        """connect() should call tts.warmup() and llm.warmup() when auto_warmup is True."""
         from voice_pipeline.chains.streaming import StreamingVoiceChain
 
         # Create mocks
@@ -158,6 +158,7 @@ class TestStreamingVoiceChainWarmup:
         asr.connect = AsyncMock()
         llm = MagicMock()
         llm.connect = AsyncMock()
+        llm.warmup = AsyncMock(return_value=200.0)
         tts = MagicMock()
         tts.connect = AsyncMock()
         tts.warmup = AsyncMock(return_value=150.5)
@@ -172,7 +173,9 @@ class TestStreamingVoiceChainWarmup:
         await chain.connect()
 
         tts.warmup.assert_called_once()
+        llm.warmup.assert_called_once()
         assert chain.warmup_time_ms == 150.5
+        assert chain.llm_warmup_time_ms == 200.0
 
     async def test_connect_skips_warmup_when_disabled(self):
         """connect() should skip warmup when auto_warmup is False."""

@@ -172,6 +172,7 @@ class OllamaLLMProvider(BaseProvider, LLMInterface):
         model: Optional[str] = None,
         base_url: Optional[str] = None,
         temperature: Optional[float] = None,
+        keep_alive: Optional[str] = None,
         **kwargs,
     ):
         """Initialize Ollama LLM provider.
@@ -181,6 +182,8 @@ class OllamaLLMProvider(BaseProvider, LLMInterface):
             model: Model to use (shortcut).
             base_url: Ollama server URL (shortcut).
             temperature: Default temperature (shortcut).
+            keep_alive: How long to keep model loaded (shortcut).
+                        Use "-1" for forever (recommended for voice agents).
             **kwargs: Additional configuration options.
         """
         # Build config from parameters
@@ -194,6 +197,8 @@ class OllamaLLMProvider(BaseProvider, LLMInterface):
             config.base_url = base_url
         if temperature is not None:
             config.temperature = temperature
+        if keep_alive is not None:
+            config.keep_alive = keep_alive
 
         # Check for env var override
         env_base_url = os.environ.get("OLLAMA_HOST")
@@ -205,6 +210,25 @@ class OllamaLLMProvider(BaseProvider, LLMInterface):
         self._llm_config: OllamaLLMConfig = config
         self._client = None
         self._async_client = None
+
+    @staticmethod
+    def _parse_keep_alive(value: str):
+        """Convert keep_alive string to the format Ollama expects.
+
+        Ollama accepts either:
+        - Go duration strings: "5m", "1h", "300s"
+        - Integers (nanoseconds): -1 (forever), 0 (unload immediately)
+
+        The string "-1" is NOT a valid Go duration (needs a unit suffix).
+        This method converts pure numeric strings to integers.
+
+        Returns:
+            int if the value is a pure number, otherwise the original string.
+        """
+        try:
+            return int(value)
+        except ValueError:
+            return value
 
     async def connect(self) -> None:
         """Initialize HTTP client and ensure model is available.
@@ -333,6 +357,50 @@ class OllamaLLMProvider(BaseProvider, LLMInterface):
             raise RuntimeError(
                 f"Failed to download model '{self._llm_config.model}': {e}"
             ) from e
+
+    async def warmup(self) -> float:
+        """Warm up the model by sending a minimal prompt.
+
+        This loads the model into memory and eliminates cold start
+        latency on the first real request. The response is discarded.
+
+        Returns:
+            Warmup time in milliseconds.
+
+        Raises:
+            RuntimeError: If client is not connected.
+        """
+        if self._async_client is None:
+            raise RuntimeError("Client not connected. Call connect() first.")
+
+        start_time = time.perf_counter()
+
+        request_body = {
+            "model": self._llm_config.model,
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": False,
+            "options": {"num_predict": 1},
+        }
+
+        if self._llm_config.keep_alive:
+            request_body["keep_alive"] = self._parse_keep_alive(self._llm_config.keep_alive)
+
+        try:
+            response = await self._async_client.post(
+                "/api/chat",
+                json=request_body,
+            )
+            response.raise_for_status()
+        except Exception as e:
+            logger.warning(f"LLM warmup failed: {e}")
+            # Non-fatal: warmup is best-effort
+
+        warmup_ms = (time.perf_counter() - start_time) * 1000
+        logger.info(
+            f"LLM warmup completed in {warmup_ms:.1f}ms "
+            f"(model={self._llm_config.model}, keep_alive={self._llm_config.keep_alive})"
+        )
+        return warmup_ms
 
     async def _do_health_check(self) -> HealthCheckResult:
         """Check if Ollama server is accessible and model is available."""
@@ -490,7 +558,7 @@ class OllamaLLMProvider(BaseProvider, LLMInterface):
             request_body["format"] = self._llm_config.format
 
         if self._llm_config.keep_alive:
-            request_body["keep_alive"] = self._llm_config.keep_alive
+            request_body["keep_alive"] = self._parse_keep_alive(self._llm_config.keep_alive)
 
         # Add extra kwargs
         request_body.update(kwargs)
@@ -592,7 +660,7 @@ class OllamaLLMProvider(BaseProvider, LLMInterface):
             request_body["format"] = self._llm_config.format
 
         if self._llm_config.keep_alive:
-            request_body["keep_alive"] = self._llm_config.keep_alive
+            request_body["keep_alive"] = self._parse_keep_alive(self._llm_config.keep_alive)
 
         request_body.update(kwargs)
 
@@ -667,7 +735,7 @@ class OllamaLLMProvider(BaseProvider, LLMInterface):
             request_body["format"] = self._llm_config.format
 
         if self._llm_config.keep_alive:
-            request_body["keep_alive"] = self._llm_config.keep_alive
+            request_body["keep_alive"] = self._parse_keep_alive(self._llm_config.keep_alive)
 
         request_body.update(kwargs)
 

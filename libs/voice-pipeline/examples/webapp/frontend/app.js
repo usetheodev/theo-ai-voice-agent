@@ -4,9 +4,17 @@
  * Handles microphone capture, WebSocket communication,
  * and audio playback for real-time voice conversations.
  *
- * Otimizações:
- * - msgpack: Serialização binária ~10x mais rápida que JSON
- * - PCM16: Áudio binário direto (sem encoding overhead)
+ * Features (Phase 7-9):
+ * - Streaming Granularity display (clause/sentence/word)
+ * - Turn-Taking strategy display
+ * - Full-Duplex indicator (user + agent speaking)
+ * - Backchannel detection feedback
+ * - Interruption mode feedback (immediate/graceful)
+ * - Real-time metrics (TTFA, TTFT, RTF)
+ *
+ * Optimizations:
+ * - msgpack: Binary serialization ~10x faster than JSON
+ * - PCM16: Direct binary audio (no encoding overhead)
  */
 
 // Configuration
@@ -28,14 +36,13 @@ function checkBrowserSupport() {
     // Check for secure context (HTTPS or localhost)
     if (!window.isSecureContext) {
         issues.push(
-            'Esta página precisa ser acessada via HTTPS ou localhost. ' +
+            'Esta pagina precisa ser acessada via HTTPS ou localhost. ' +
             'Acesse: http://localhost:8000 ou http://127.0.0.1:8000'
         );
     }
 
     // Check for mediaDevices API
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        // Try legacy API
         const getUserMedia = navigator.getUserMedia ||
             navigator.webkitGetUserMedia ||
             navigator.mozGetUserMedia ||
@@ -43,7 +50,7 @@ function checkBrowserSupport() {
 
         if (!getUserMedia) {
             issues.push(
-                'Seu navegador não suporta acesso ao microfone. ' +
+                'Seu navegador nao suporta acesso ao microfone. ' +
                 'Use Chrome, Firefox ou Edge atualizado.'
             );
         }
@@ -51,12 +58,12 @@ function checkBrowserSupport() {
 
     // Check for AudioContext
     if (!window.AudioContext && !window.webkitAudioContext) {
-        issues.push('Seu navegador não suporta Web Audio API.');
+        issues.push('Seu navegador nao suporta Web Audio API.');
     }
 
     // Check for WebSocket
     if (!window.WebSocket) {
-        issues.push('Seu navegador não suporta WebSocket.');
+        issues.push('Seu navegador nao suporta WebSocket.');
     }
 
     return issues;
@@ -70,14 +77,20 @@ let audioProcessor = null;
 let isListening = false;
 let audioQueue = [];
 let isPlayingAudio = false;
+let isFullDuplex = false;
+let backchannelTimeout = null;
 
 // DOM Elements
 const statusIndicator = document.getElementById('statusIndicator');
 const statusText = document.getElementById('statusText');
+const statusBadge = document.getElementById('statusBadge');
 const chatContainer = document.getElementById('chatContainer');
 const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
+const shortcutHint = document.getElementById('shortcutHint');
 const visualizerBars = document.querySelectorAll('.visualizer-bar');
+const strategyPanel = document.getElementById('strategyPanel');
+const metricsBar = document.getElementById('metricsBar');
 
 // ==============================================================================
 // WebSocket Communication
@@ -85,19 +98,19 @@ const visualizerBars = document.querySelectorAll('.visualizer-bar');
 
 function connectWebSocket() {
     return new Promise((resolve, reject) => {
-        updateStatus('connecting', 'Connecting...');
+        updateStatus('connecting', 'Conectando...');
 
         websocket = new WebSocket(CONFIG.wsUrl);
 
         websocket.onopen = () => {
             console.log('WebSocket connected');
-            updateStatus('connected', 'Connected');
+            updateStatus('connected', 'Conectado');
 
             // Send configuration
             websocket.send(JSON.stringify({
                 type: 'config',
                 sample_rate: CONFIG.sampleRate,
-                language: 'pt'  // Português brasileiro
+                language: 'pt'
             }));
 
             resolve();
@@ -105,13 +118,13 @@ function connectWebSocket() {
 
         websocket.onclose = () => {
             console.log('WebSocket disconnected');
-            updateStatus('idle', 'Disconnected');
+            updateStatus('idle', 'Desconectado');
             stopConversation();
         };
 
         websocket.onerror = (error) => {
             console.error('WebSocket error:', error);
-            updateStatus('error', 'Connection error');
+            updateStatus('error', 'Erro de conexao');
             reject(error);
         };
 
@@ -121,7 +134,7 @@ function connectWebSocket() {
 
 function handleWebSocketMessage(event) {
     if (event.data instanceof Blob) {
-        // Binary data: pode ser msgpack (controle) ou PCM16 (áudio)
+        // Binary data: pode ser msgpack (controle) ou PCM16 (audio)
         event.data.arrayBuffer().then(buffer => {
             if (CONFIG.useMsgpack && typeof MessagePack !== 'undefined') {
                 // Tentar decodificar como msgpack
@@ -129,17 +142,17 @@ function handleWebSocketMessage(event) {
                     const uint8 = new Uint8Array(buffer);
                     const data = MessagePack.decode(uint8);
 
-                    // Se tem "type", é mensagem de controle
+                    // Se tem "type", eh mensagem de controle
                     if (data && typeof data === 'object' && data.type) {
                         handleControlMessage(data);
                         return;
                     }
                 } catch (e) {
-                    // Não é msgpack válido, é áudio PCM16
+                    // Nao eh msgpack valido, eh audio PCM16
                 }
             }
 
-            // Fallback: tratar como áudio
+            // Fallback: tratar como audio
             handleAudioBuffer(buffer);
         });
     } else {
@@ -156,9 +169,9 @@ function handleWebSocketMessage(event) {
 const AUDIO_QUEUE_MAX_SIZE = 50;
 
 async function handleAudioBuffer(arrayBuffer) {
-    // Limitar tamanho da fila para evitar consumo excessivo de memória
+    // Limitar tamanho da fila para evitar consumo excessivo de memoria
     if (audioQueue.length >= AUDIO_QUEUE_MAX_SIZE) {
-        audioQueue.shift(); // Descarta o mais antigo
+        audioQueue.shift();
         console.warn('Audio queue overflow: descartado chunk antigo');
     }
 
@@ -179,9 +192,9 @@ function handleControlMessage(data) {
 
         case 'vad':
             if (data.event === 'speech_start') {
-                updateStatus('listening', 'Listening...');
+                updateStatus('listening', 'Ouvindo...');
             } else if (data.event === 'speech_end') {
-                updateStatus('processing', 'Processing...');
+                updateStatus('processing', 'Processando...');
             }
             break;
 
@@ -190,27 +203,139 @@ function handleControlMessage(data) {
             break;
 
         case 'response_chunk':
-            // Update current assistant message
             updateAssistantMessage(data.text);
             break;
 
         case 'response':
-            // Final response
             finalizeAssistantMessage(data.text);
             break;
 
         case 'error':
             console.error('Server error:', data.message);
-            addSystemMessage(`Error: ${data.message}`);
+            addSystemMessage('Erro: ' + data.message);
             break;
 
         case 'interrupted':
-            addSystemMessage('Response interrupted');
+            addSystemMessage('Resposta interrompida');
+            break;
+
+        // === Phase 7-9: New event types ===
+
+        case 'strategy_info':
+            handleStrategyInfo(data);
+            break;
+
+        case 'full_duplex':
+            handleFullDuplex(data);
+            break;
+
+        case 'backchannel':
+            handleBackchannel(data);
+            break;
+
+        case 'interruption':
+            handleInterruption(data);
+            break;
+
+        case 'metrics':
+            handleMetrics(data);
             break;
     }
 }
 
-// handleAudioData removida - agora usa handleAudioBuffer diretamente
+// ==============================================================================
+// Phase 7-9: New Event Handlers
+// ==============================================================================
+
+function handleStrategyInfo(data) {
+    // Display active strategies
+    const panel = document.getElementById('strategyPanel');
+    panel.classList.add('active');
+
+    // Parse strategy names to friendly display
+    document.getElementById('strategyStreaming').textContent = formatStrategyName(data.streaming);
+    document.getElementById('strategyTurnTaking').textContent = formatStrategyName(data.turn_taking);
+    document.getElementById('strategyInterruption').textContent = formatStrategyName(data.interruption);
+}
+
+function formatStrategyName(name) {
+    if (!name) return '-';
+    // "ClauseStreamingStrategy(clause)" -> "Clause"
+    // "AdaptiveSilenceTurnTaking" -> "Adaptive"
+    // "BackchannelAwareInterruption" -> "Backchannel"
+    const mappings = {
+        'ClauseStreamingStrategy': 'Clause',
+        'SentenceStreamingStrategy': 'Sentence',
+        'WordStreamingStrategy': 'Word',
+        'AdaptiveStreamingStrategy': 'Adaptive',
+        'AdaptiveSilenceTurnTaking': 'Adaptive',
+        'FixedSilenceTurnTaking': 'Fixed',
+        'SemanticTurnTaking': 'Semantic',
+        'BackchannelAwareInterruption': 'Backchannel',
+        'ImmediateInterruption': 'Immediate',
+        'GracefulInterruption': 'Graceful',
+    };
+
+    for (const [key, value] of Object.entries(mappings)) {
+        if (name.includes(key)) return value;
+    }
+    return name;
+}
+
+function handleFullDuplex(data) {
+    if (data.event === 'start') {
+        isFullDuplex = true;
+        statusBadge.className = 'status-badge full-duplex';
+        statusBadge.textContent = 'Full-Duplex';
+        // Update indicator to full_duplex color
+        statusIndicator.className = 'status-indicator full_duplex';
+    } else if (data.event === 'end') {
+        isFullDuplex = false;
+        statusBadge.className = 'status-badge';
+        statusBadge.textContent = '';
+    }
+}
+
+function handleBackchannel(data) {
+    // Show backchannel badge briefly
+    statusBadge.className = 'status-badge backchannel';
+    statusBadge.textContent = 'Backchannel #' + data.count;
+
+    // Clear previous timeout
+    if (backchannelTimeout) clearTimeout(backchannelTimeout);
+
+    // Hide badge after 2 seconds
+    backchannelTimeout = setTimeout(() => {
+        if (!isFullDuplex) {
+            statusBadge.className = 'status-badge';
+            statusBadge.textContent = '';
+        }
+    }, 2000);
+
+    console.log('Backchannel detectado #' + data.count);
+}
+
+function handleInterruption(data) {
+    const modeText = data.mode === 'interrupt_graceful' ? 'graceful' : 'imediata';
+    addSystemMessage('Interrupcao ' + modeText + ' #' + data.count);
+}
+
+function handleMetrics(data) {
+    metricsBar.classList.add('active');
+
+    if (data.ttfa != null) {
+        document.getElementById('metricTTFA').textContent = (data.ttfa * 1000).toFixed(0) + 'ms';
+    }
+    if (data.ttft != null) {
+        document.getElementById('metricTTFT').textContent = (data.ttft * 1000).toFixed(0) + 'ms';
+    }
+    if (data.sentences != null) {
+        document.getElementById('metricChunks').textContent = data.sentences;
+    }
+    if (data.rtf != null) {
+        document.getElementById('metricRTF').textContent = data.rtf.toFixed(2) + 'x';
+    }
+}
 
 // ==============================================================================
 // Audio Capture
@@ -221,7 +346,7 @@ async function startAudioCapture() {
         // Check if mediaDevices is available
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             throw new Error(
-                'Acesso ao microfone indisponível. ' +
+                'Acesso ao microfone indisponivel. ' +
                 'Certifique-se de acessar via http://localhost:8000 ou http://127.0.0.1:8000'
             );
         }
@@ -248,7 +373,7 @@ async function startAudioCapture() {
         audioProcessor = audioContext.createScriptProcessor(CONFIG.bufferSize, 1, 1);
 
         audioProcessor.onaudioprocess = (event) => {
-            if (!isListening || !websocket || websocket.readyState !== WebSocket.OPEN) {
+            if (!isListening || isPlayingAudio || !websocket || websocket.readyState !== WebSocket.OPEN) {
                 return;
             }
 
@@ -318,7 +443,7 @@ async function playNextAudio() {
     }
 
     isPlayingAudio = true;
-    updateStatus('speaking', 'Speaking...');
+    updateStatus('speaking', 'Falando...');
 
     const arrayBuffer = audioQueue.shift();
 
@@ -368,16 +493,21 @@ function pcm16ToAudioBuffer(arrayBuffer, sampleRate) {
 // ==============================================================================
 
 function updateStatus(state, text) {
-    statusIndicator.className = `status-indicator ${state}`;
+    // Don't override full_duplex indicator while it's active
+    if (isFullDuplex && state === 'speaking') {
+        statusIndicator.className = 'status-indicator full_duplex';
+    } else {
+        statusIndicator.className = `status-indicator ${state}`;
+    }
     statusText.textContent = text;
 }
 
 function getStatusText(state) {
     const texts = {
-        'idle': 'Ready',
-        'listening': 'Listening...',
-        'processing': 'Thinking...',
-        'speaking': 'Speaking...',
+        'idle': 'Pronto',
+        'listening': 'Ouvindo...',
+        'processing': 'Pensando...',
+        'speaking': 'Falando...',
     };
     return texts[state] || state;
 }
@@ -385,8 +515,9 @@ function getStatusText(state) {
 function addMessage(role, text) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${role}`;
+    const label = role === 'user' ? 'Voce' : 'Assistente';
     messageDiv.innerHTML = `
-        <div class="message-label">${role === 'user' ? 'You' : 'Assistant'}</div>
+        <div class="message-label">${label}</div>
         <div class="message-bubble">${escapeHtml(text)}</div>
     `;
     chatContainer.appendChild(messageDiv);
@@ -401,7 +532,7 @@ function updateAssistantMessage(chunk) {
         currentAssistantMessage = document.createElement('div');
         currentAssistantMessage.className = 'message assistant';
         currentAssistantMessage.innerHTML = `
-            <div class="message-label">Assistant</div>
+            <div class="message-label">Assistente</div>
             <div class="message-bubble"></div>
         `;
         chatContainer.appendChild(currentAssistantMessage);
@@ -484,16 +615,18 @@ async function startConversation() {
         // Update UI
         startBtn.style.display = 'none';
         stopBtn.style.display = 'block';
+        shortcutHint.style.display = 'block';
 
     } catch (error) {
         console.error('Failed to start conversation:', error);
-        addSystemMessage('Failed to start: ' + error.message);
+        addSystemMessage('Falha ao iniciar: ' + error.message);
         startBtn.disabled = false;
     }
 }
 
 function stopConversation() {
     isListening = false;
+    isFullDuplex = false;
 
     // Stop audio
     stopAudioCapture();
@@ -513,7 +646,14 @@ function stopConversation() {
     startBtn.style.display = 'block';
     startBtn.disabled = false;
     stopBtn.style.display = 'none';
-    updateStatus('idle', 'Disconnected');
+    shortcutHint.style.display = 'none';
+    updateStatus('idle', 'Desconectado');
+
+    // Hide strategy panel and metrics
+    strategyPanel.classList.remove('active');
+    metricsBar.classList.remove('active');
+    statusBadge.className = 'status-badge';
+    statusBadge.textContent = '';
 
     // Reset visualizer
     visualizerBars.forEach(bar => bar.style.height = '10px');
@@ -545,7 +685,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const issues = checkBrowserSupport();
     if (issues.length > 0) {
         console.warn('Browser compatibility issues:', issues);
-        addSystemMessage('⚠️ ' + issues.join(' '));
+        addSystemMessage('Aviso: ' + issues.join(' '));
         startBtn.disabled = true;
         startBtn.title = issues.join('\n');
     }

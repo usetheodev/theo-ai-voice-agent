@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -23,18 +23,18 @@
 
         .container {
             width: 100%;
-            max-width: 600px;
+            max-width: 640px;
             padding: 20px;
         }
 
         .header {
             text-align: center;
-            margin-bottom: 30px;
+            margin-bottom: 24px;
         }
 
         .header h1 {
             font-size: 2rem;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
             background: linear-gradient(90deg, #00d9ff, #00ff88);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
@@ -42,18 +42,52 @@
 
         .header p {
             color: #888;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
         }
 
+        /* Strategy info panel */
+        .strategy-panel {
+            display: none;
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: 10px;
+            padding: 10px 14px;
+            margin-bottom: 14px;
+            font-size: 0.75rem;
+            color: #888;
+        }
+
+        .strategy-panel.active {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .strategy-tag {
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            padding: 3px 8px;
+            white-space: nowrap;
+        }
+
+        .strategy-tag .label {
+            color: #666;
+        }
+
+        .strategy-tag .value {
+            color: #aaa;
+        }
+
+        /* Status bar */
         .status-bar {
             display: flex;
             align-items: center;
             justify-content: center;
             gap: 10px;
-            padding: 15px;
+            padding: 12px 15px;
             background: rgba(255, 255, 255, 0.05);
             border-radius: 12px;
-            margin-bottom: 20px;
+            margin-bottom: 14px;
         }
 
         .status-indicator {
@@ -62,6 +96,7 @@
             border-radius: 50%;
             background: #666;
             transition: all 0.3s ease;
+            flex-shrink: 0;
         }
 
         .status-indicator.idle { background: #666; }
@@ -70,6 +105,7 @@
         .status-indicator.listening { background: #00d9ff; animation: pulse 0.5s infinite; }
         .status-indicator.processing { background: #ffaa00; animation: pulse 0.8s infinite; }
         .status-indicator.speaking { background: #ff6b6b; animation: pulse 0.3s infinite; }
+        .status-indicator.full_duplex { background: #ff00ff; animation: pulse 0.2s infinite; }
         .status-indicator.error { background: #ff4444; }
 
         @keyframes pulse {
@@ -82,13 +118,77 @@
             color: #aaa;
         }
 
+        /* Duplex/backchannel badge */
+        .status-badge {
+            display: none;
+            font-size: 0.7rem;
+            padding: 2px 8px;
+            border-radius: 10px;
+            margin-left: 4px;
+        }
+
+        .status-badge.backchannel {
+            display: inline-block;
+            background: rgba(0, 255, 136, 0.15);
+            color: #00ff88;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .status-badge.full-duplex {
+            display: inline-block;
+            background: rgba(255, 0, 255, 0.15);
+            color: #ff88ff;
+            animation: pulse 0.5s infinite;
+        }
+
+        /* Metrics bar */
+        .metrics-bar {
+            display: none;
+            justify-content: center;
+            gap: 12px;
+            padding: 6px 14px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            margin-bottom: 14px;
+            font-size: 0.7rem;
+            color: #666;
+        }
+
+        .metrics-bar.active {
+            display: flex;
+        }
+
+        .metric-item .metric-value {
+            color: #aaa;
+            font-weight: 600;
+        }
+
+        /* Visualizer */
+        .visualizer {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            height: 40px;
+            margin-bottom: 14px;
+        }
+
+        .visualizer-bar {
+            width: 4px;
+            height: 10px;
+            background: #00d9ff;
+            border-radius: 2px;
+            transition: height 0.1s ease;
+        }
+
+        /* Chat */
         .chat-container {
             background: rgba(255, 255, 255, 0.05);
             border-radius: 16px;
             padding: 20px;
-            height: 400px;
+            height: 380px;
             overflow-y: auto;
-            margin-bottom: 20px;
+            margin-bottom: 16px;
         }
 
         .message {
@@ -166,6 +266,7 @@
             50% { transform: translateY(-5px); }
         }
 
+        /* Controls */
         .controls {
             display: flex;
             gap: 15px;
@@ -226,33 +327,23 @@
             height: 24px;
         }
 
-        .visualizer {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 4px;
-            height: 40px;
-            margin-bottom: 20px;
-        }
-
-        .visualizer-bar {
-            width: 4px;
-            height: 10px;
-            background: #00d9ff;
-            border-radius: 2px;
-            transition: height 0.1s ease;
-        }
-
         .footer {
             text-align: center;
-            margin-top: 30px;
-            color: #666;
-            font-size: 0.8rem;
+            margin-top: 24px;
+            color: #555;
+            font-size: 0.75rem;
         }
 
         .footer a {
             color: #00d9ff;
             text-decoration: none;
+        }
+
+        .shortcut-hint {
+            color: #555;
+            font-size: 0.7rem;
+            text-align: center;
+            margin-top: 10px;
         }
     </style>
 </head>
@@ -263,11 +354,38 @@
             <p>Powered by voice-pipeline framework</p>
         </div>
 
-        <div class="status-bar">
-            <div class="status-indicator idle" id="statusIndicator"></div>
-            <span class="status-text" id="statusText">Disconnected</span>
+        <!-- Strategy info (populated from server) -->
+        <div class="strategy-panel" id="strategyPanel">
+            <span class="strategy-tag">
+                <span class="label">Streaming:</span>
+                <span class="value" id="strategyStreaming">-</span>
+            </span>
+            <span class="strategy-tag">
+                <span class="label">Turn-Taking:</span>
+                <span class="value" id="strategyTurnTaking">-</span>
+            </span>
+            <span class="strategy-tag">
+                <span class="label">Interruption:</span>
+                <span class="value" id="strategyInterruption">-</span>
+            </span>
         </div>
 
+        <!-- Status bar -->
+        <div class="status-bar">
+            <div class="status-indicator idle" id="statusIndicator"></div>
+            <span class="status-text" id="statusText">Desconectado</span>
+            <span class="status-badge" id="statusBadge"></span>
+        </div>
+
+        <!-- Metrics bar -->
+        <div class="metrics-bar" id="metricsBar">
+            <span class="metric-item">TTFA: <span class="metric-value" id="metricTTFA">-</span></span>
+            <span class="metric-item">TTFT: <span class="metric-value" id="metricTTFT">-</span></span>
+            <span class="metric-item">Chunks: <span class="metric-value" id="metricChunks">-</span></span>
+            <span class="metric-item">RTF: <span class="metric-value" id="metricRTF">-</span></span>
+        </div>
+
+        <!-- Visualizer -->
         <div class="visualizer" id="visualizer">
             <div class="visualizer-bar"></div>
             <div class="visualizer-bar"></div>
@@ -279,29 +397,35 @@
             <div class="visualizer-bar"></div>
         </div>
 
+        <!-- Chat -->
         <div class="chat-container" id="chatContainer">
             <div class="message assistant">
-                <div class="message-label">Assistant</div>
+                <div class="message-label">Assistente</div>
                 <div class="message-bubble">
-                    Hello! Click "Start Conversation" and speak to begin.
+                    Clique em "Iniciar Conversa" e fale para comecar.
                 </div>
             </div>
         </div>
 
+        <!-- Controls -->
         <div class="controls">
             <button class="btn btn-primary" id="startBtn" onclick="startConversation()">
                 <svg class="mic-icon" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm-1 1.93c-3.94-.49-7-3.85-7-7.93h2c0 3.31 2.69 6 6 6s6-2.69 6-6h2c0 4.08-3.06 7.44-7 7.93V20h4v2H8v-2h4v-4.07z"/>
                 </svg>
-                Start Conversation
+                Iniciar Conversa
             </button>
             <button class="btn btn-danger" id="stopBtn" onclick="stopConversation()" style="display: none;">
-                Stop
+                Parar
             </button>
         </div>
 
+        <div class="shortcut-hint" id="shortcutHint" style="display: none;">
+            Pressione <b>Espaco</b> para interromper a resposta
+        </div>
+
         <div class="footer">
-            <p>Built with <a href="#">voice-pipeline</a></p>
+            <p>Built with <a href="#">voice-pipeline</a> | Phases 7-9: Turn-Taking + Streaming + Full-Duplex</p>
         </div>
     </div>
 

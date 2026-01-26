@@ -536,6 +536,12 @@ class VoiceAgentBuilder:
         self._max_messages = 20  # Max conversation messages (0 = unlimited)
         # RAG config
         self._rag_k = 5  # Number of documents to retrieve
+        # Turn-taking config
+        self._turn_taking_controller = None
+        # Streaming strategy config
+        self._streaming_strategy = None
+        # Interruption strategy config
+        self._interruption_strategy = None
 
     def asr(
         self,
@@ -626,14 +632,18 @@ class VoiceAgentBuilder:
 
         Args:
             provider: Provider TTS a usar:
-                - "kokoro": Kokoro local TTS (82M params, CPU-friendly)
+                - "kokoro": Kokoro local TTS (82M params, qualidade alta)
+                - "piper": Piper ultra-fast CPU TTS (5-32M params, mínima latência)
                 - "qwen3-tts": Qwen3-TTS (97ms latência, português nativo)
                 - "openai": OpenAI TTS API
             voice: Voz a usar (speaker para qwen3-tts).
 
         Example:
-            >>> # Kokoro (padrão, CPU)
+            >>> # Kokoro (padrão, qualidade alta)
             >>> builder.tts("kokoro", voice="pf_dora")
+            >>>
+            >>> # Piper (ultra-rápido no CPU, ~30ms)
+            >>> builder.tts("piper", voice="pt_BR-faber-medium")
             >>>
             >>> # Qwen3-TTS (melhor português, requer mais recursos)
             >>> builder.tts("qwen3-tts", voice="Ryan", language="Portuguese")
@@ -645,6 +655,9 @@ class VoiceAgentBuilder:
         if provider == "kokoro":
             from voice_pipeline.providers.tts import KokoroTTSProvider
             self._tts = KokoroTTSProvider(voice=voice, **kwargs)
+        elif provider == "piper":
+            from voice_pipeline.providers.tts import PiperTTSProvider
+            self._tts = PiperTTSProvider(voice=voice, **kwargs)
         elif provider in ("qwen3-tts", "qwen3", "qwen"):
             from voice_pipeline.providers.tts import Qwen3TTSProvider
             self._tts = Qwen3TTSProvider(speaker=voice, **kwargs)
@@ -673,6 +686,180 @@ class VoiceAgentBuilder:
             self._vad = WebRTCVADProvider(**kwargs)
         else:
             raise ValueError(f"VAD provider desconhecido: {provider}")
+        return self
+
+    def turn_taking(
+        self,
+        strategy: str = "fixed",
+        **kwargs,
+    ) -> "VoiceAgentBuilder":
+        """Configura estratégia de turn-taking.
+
+        Turn-taking determina quando o usuário terminou de falar
+        e o agente deve começar a responder.
+
+        Args:
+            strategy: Estratégia a usar:
+                - "fixed": Silêncio fixo (default, mais simples).
+                    kwargs: silence_threshold_ms (default 800)
+                - "adaptive": Silêncio adaptativo por contexto.
+                    kwargs: base_threshold_ms (default 600),
+                            min_threshold_ms (default 400),
+                            max_threshold_ms (default 1500)
+                - "semantic": Detecção semântica de fim de turno.
+                    kwargs: backend ("heuristic"|"transformers"),
+                            min_silence_ms (default 300),
+                            language (default "pt")
+            **kwargs: Argumentos adicionais para a estratégia.
+
+        Returns:
+            Self for chaining.
+
+        Example:
+            >>> # Silêncio fixo rápido
+            >>> builder.turn_taking("fixed", silence_threshold_ms=600)
+            >>>
+            >>> # Adaptativo (melhor balanço)
+            >>> builder.turn_taking("adaptive", base_threshold_ms=500)
+            >>>
+            >>> # Semântico (máxima precisão)
+            >>> builder.turn_taking("semantic", backend="heuristic", language="pt")
+        """
+        if strategy == "fixed":
+            from voice_pipeline.providers.turn_taking import FixedSilenceTurnTaking
+            self._turn_taking_controller = FixedSilenceTurnTaking(**kwargs)
+        elif strategy == "adaptive":
+            from voice_pipeline.providers.turn_taking import AdaptiveSilenceTurnTaking
+            self._turn_taking_controller = AdaptiveSilenceTurnTaking(**kwargs)
+        elif strategy == "semantic":
+            from voice_pipeline.providers.turn_taking import SemanticTurnTaking
+            self._turn_taking_controller = SemanticTurnTaking(**kwargs)
+        else:
+            raise ValueError(
+                f"Turn-taking strategy desconhecida: {strategy}. "
+                f"Use 'fixed', 'adaptive' ou 'semantic'."
+            )
+        return self
+
+    def streaming_granularity(
+        self,
+        granularity: str = "sentence",
+        **kwargs,
+    ) -> "VoiceAgentBuilder":
+        """Configura granularidade de streaming LLM → TTS.
+
+        Controla como os tokens do LLM são bufferizados antes de
+        serem enviados ao TTS. Granularidades menores reduzem latência
+        mas podem afetar a naturalidade da fala.
+
+        Args:
+            granularity: Nível de granularidade:
+                - "sentence": Sentenças completas (~600-800ms TTFA).
+                    Melhor naturalidade. Padrão.
+                    kwargs: config (SentenceStreamerConfig)
+                - "clause": Cláusulas (~200-400ms TTFA).
+                    Bom balanço latência/naturalidade.
+                    kwargs: min_chars (default 8),
+                            max_chars (default 150),
+                            language (default "pt")
+                - "word": Palavras individuais (~45ms TTFA).
+                    Mínima latência, prosódia menos natural.
+                    kwargs: min_word_length (default 1),
+                            group_size (default 1)
+                - "adaptive": Word-level no primeiro chunk, clause depois.
+                    Melhor TTFA com naturalidade (~100-200ms TTFA).
+                    kwargs: first_chunk_words (default 3),
+                            clause_min_chars (default 10),
+                            clause_max_chars (default 150),
+                            language (default "pt")
+            **kwargs: Argumentos adicionais para a estratégia.
+
+        Returns:
+            Self for chaining.
+
+        Example:
+            >>> # Cláusula (balanço latência/naturalidade)
+            >>> builder.streaming_granularity("clause", min_chars=10)
+            >>>
+            >>> # Palavra (mínima latência)
+            >>> builder.streaming_granularity("word", group_size=2)
+            >>>
+            >>> # Sentença (padrão, máxima naturalidade)
+            >>> builder.streaming_granularity("sentence")
+        """
+        if granularity == "sentence":
+            from voice_pipeline.streaming.sentence_strategy import SentenceStreamingStrategy
+            self._streaming_strategy = SentenceStreamingStrategy(**kwargs)
+        elif granularity == "clause":
+            from voice_pipeline.streaming.clause_strategy import ClauseStreamingStrategy
+            self._streaming_strategy = ClauseStreamingStrategy(**kwargs)
+        elif granularity == "word":
+            from voice_pipeline.streaming.word_strategy import WordStreamingStrategy
+            self._streaming_strategy = WordStreamingStrategy(**kwargs)
+        elif granularity == "adaptive":
+            from voice_pipeline.streaming.adaptive_strategy import AdaptiveStreamingStrategy
+            self._streaming_strategy = AdaptiveStreamingStrategy(**kwargs)
+        else:
+            raise ValueError(
+                f"Streaming granularity desconhecida: {granularity}. "
+                f"Use 'sentence', 'clause', 'word' ou 'adaptive'."
+            )
+        return self
+
+    def interruption(
+        self,
+        strategy: str = "immediate",
+        **kwargs,
+    ) -> "VoiceAgentBuilder":
+        """Configura estratégia de interrupção (barge-in).
+
+        Controla como o sistema responde quando o usuário fala
+        enquanto o agente está falando.
+
+        Args:
+            strategy: Estratégia a usar:
+                - "immediate": Para TTS imediatamente (padrão).
+                    kwargs: min_speech_ms (default 200),
+                            min_confidence (default 0.5),
+                            debounce_ms (default 500)
+                - "graceful": Termina chunk atual antes de parar.
+                    kwargs: min_speech_ms (default 300),
+                            finish_threshold (default 0.3),
+                            max_wait_ms (default 500)
+                - "backchannel": Distingue backchannels de interrupções.
+                    kwargs: backchannel_max_ms (default 500),
+                            interruption_min_ms (default 800),
+                            language (default "pt"),
+                            use_transcript (default True)
+            **kwargs: Argumentos adicionais para a estratégia.
+
+        Returns:
+            Self for chaining.
+
+        Example:
+            >>> # Imediato (padrão, menor latência)
+            >>> builder.interruption("immediate", min_speech_ms=150)
+            >>>
+            >>> # Graceful (áudio mais suave)
+            >>> builder.interruption("graceful", finish_threshold=0.5)
+            >>>
+            >>> # Backchannel-aware (melhor para português)
+            >>> builder.interruption("backchannel", language="pt")
+        """
+        if strategy == "immediate":
+            from voice_pipeline.providers.interruption import ImmediateInterruption
+            self._interruption_strategy = ImmediateInterruption(**kwargs)
+        elif strategy == "graceful":
+            from voice_pipeline.providers.interruption import GracefulInterruption
+            self._interruption_strategy = GracefulInterruption(**kwargs)
+        elif strategy == "backchannel":
+            from voice_pipeline.providers.interruption import BackchannelAwareInterruption
+            self._interruption_strategy = BackchannelAwareInterruption(**kwargs)
+        else:
+            raise ValueError(
+                f"Interruption strategy desconhecida: {strategy}. "
+                f"Use 'immediate', 'graceful' ou 'backchannel'."
+            )
         return self
 
     def language(self, lang: str) -> "VoiceAgentBuilder":
@@ -961,6 +1148,9 @@ class VoiceAgentBuilder:
                     min_sentence_chars=self._min_sentence_chars,
                     max_sentence_chars=self._max_sentence_chars,
                     max_messages=self._max_messages,
+                    turn_taking_controller=self._turn_taking_controller,
+                    streaming_strategy=self._streaming_strategy,
+                    interruption_strategy=self._interruption_strategy,
                 )
             else:
                 # Batch (padrão)

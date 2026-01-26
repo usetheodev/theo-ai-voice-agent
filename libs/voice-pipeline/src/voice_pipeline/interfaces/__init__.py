@@ -38,6 +38,16 @@ from .rag import (
     RAGInterface,
     SimpleRAG,
 )
+from .turn_taking import (
+    TurnTakingContext,
+    TurnTakingController,
+    TurnTakingDecision,
+)
+from .interruption import (
+    InterruptionContext,
+    InterruptionDecision,
+    InterruptionStrategy,
+)
 
 __all__ = [
     # ASR
@@ -78,4 +88,12 @@ __all__ = [
     "VectorStoreInterface",
     "RAGInterface",
     "SimpleRAG",
+    # Turn-Taking
+    "TurnTakingController",
+    "TurnTakingContext",
+    "TurnTakingDecision",
+    # Interruption
+    "InterruptionStrategy",
+    "InterruptionContext",
+    "InterruptionDecision",
 ]

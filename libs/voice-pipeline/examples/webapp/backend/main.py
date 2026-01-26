@@ -57,11 +57,30 @@ async def root():
 @app.get("/health")
 async def health():
     """Health check endpoint."""
-    from agent import _active_sessions, MAX_CONCURRENT_SESSIONS
+    from agent import _active_sessions, _shared_chain, MAX_CONCURRENT_SESSIONS
+
+    strategies = {}
+    if _shared_chain:
+        strategies = {
+            "turn_taking": (
+                type(_shared_chain.turn_taking_controller).__name__
+                if _shared_chain.turn_taking_controller else "None"
+            ),
+            "streaming": (
+                _shared_chain.streaming_strategy.name
+                if _shared_chain.streaming_strategy else "SentenceStreamer"
+            ),
+            "interruption": (
+                _shared_chain.interruption_strategy.name
+                if _shared_chain.interruption_strategy else "None"
+            ),
+        }
+
     return {
         "status": "healthy",
         "active_sessions": len(_active_sessions),
         "max_sessions": MAX_CONCURRENT_SESSIONS,
+        "strategies": strategies,
     }
 
 
@@ -73,17 +92,23 @@ async def voice_websocket(websocket: WebSocket):
         Client -> Server: Binary audio data (PCM16, 16kHz, mono)
         Server -> Client: Binary audio data (PCM16, 24kHz, mono)
 
-        Control messages (JSON):
+        Control messages (JSON) - Client to Server:
         - {"type": "config", "sample_rate": 16000, "language": "en"}
         - {"type": "start"} - Start listening
         - {"type": "stop"} - Stop listening
         - {"type": "interrupt"} - Interrupt current response (barge-in)
+        - {"type": "reset"} - Reset conversation
 
-        Status messages (JSON):
+        Status messages (JSON) - Server to Client:
         - {"type": "status", "state": "listening|processing|speaking|idle"}
         - {"type": "transcript", "text": "...", "is_final": true}
         - {"type": "response", "text": "..."}
         - {"type": "error", "message": "..."}
+        - {"type": "strategy_info", "turn_taking": "...", "streaming": "...", "interruption": "..."}
+        - {"type": "full_duplex", "event": "start|end"}
+        - {"type": "backchannel", "count": N}
+        - {"type": "interruption", "mode": "interrupt_immediate|interrupt_graceful", "count": N}
+        - {"type": "metrics", "ttfa": ..., "ttft": ..., "streaming_strategy": "..."}
     """
     await websocket.accept()
     logger.info("WebSocket connection established")

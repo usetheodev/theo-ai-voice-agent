@@ -13,11 +13,18 @@ logger = logging.getLogger(__name__)
 class ConversationState(Enum):
     """States of a voice conversation.
 
-    State flow:
+    State flow (half-duplex):
         IDLE → LISTENING → PROCESSING → SPEAKING → IDLE
                    ↑                         │
                    └─────────────────────────┘
                         (barge-in)
+
+    State flow (full-duplex):
+        SPEAKING → FULL_DUPLEX → LISTENING (user takes floor)
+                        │
+                        └──→ SPEAKING (backchannel, agent continues)
+                        │
+                        └──→ IDLE (both stop)
     """
 
     IDLE = "idle"
@@ -34,6 +41,15 @@ class ConversationState(Enum):
 
     INTERRUPTED = "interrupted"
     """User interrupted (barge-in), canceling current response."""
+
+    FULL_DUPLEX = "full_duplex"
+    """Both user and agent are speaking simultaneously.
+    Entered when user speech is detected during SPEAKING.
+    The InterruptionStrategy decides the next transition:
+    - LISTENING: user is taking the floor (real interruption)
+    - SPEAKING: user gave backchannel, agent continues
+    - IDLE: conversation ended
+    """
 
 
 # Valid state transitions
@@ -52,10 +68,17 @@ VALID_TRANSITIONS = {
     ConversationState.SPEAKING: {
         ConversationState.IDLE,
         ConversationState.INTERRUPTED,
+        ConversationState.FULL_DUPLEX,  # User speaks during agent output
     },
     ConversationState.INTERRUPTED: {
         ConversationState.LISTENING,
         ConversationState.IDLE,
+    },
+    ConversationState.FULL_DUPLEX: {
+        ConversationState.LISTENING,     # User takes floor (real interruption)
+        ConversationState.SPEAKING,      # Backchannel — agent continues
+        ConversationState.INTERRUPTED,   # Immediate interruption decided
+        ConversationState.IDLE,          # Both stop
     },
 }
 
@@ -109,6 +132,11 @@ class ConversationStateMachine:
     def is_speaking(self) -> bool:
         """Whether assistant is speaking."""
         return self._state == ConversationState.SPEAKING
+
+    @property
+    def is_full_duplex(self) -> bool:
+        """Whether both user and agent are speaking."""
+        return self._state == ConversationState.FULL_DUPLEX
 
     @property
     def is_active(self) -> bool:

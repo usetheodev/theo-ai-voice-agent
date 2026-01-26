@@ -207,6 +207,8 @@ class Qwen3TTSProvider(BaseProvider, TTSInterface):
         device: Optional[str] = None,
         dtype: Optional[str] = None,
         voice: Optional[str] = None,  # Alias for speaker
+        ref_audio: Optional[str] = None,
+        ref_text: Optional[str] = None,
         **kwargs,
     ):
         """Initialize Qwen3-TTS provider.
@@ -220,6 +222,8 @@ class Qwen3TTSProvider(BaseProvider, TTSInterface):
             device: Device to use (shortcut).
             dtype: Model dtype (shortcut).
             voice: Alias for speaker (for compatibility).
+            ref_audio: Reference audio path for voice cloning (shortcut).
+            ref_text: Reference text matching the ref_audio (shortcut).
             **kwargs: Additional configuration options.
         """
         if config is None:
@@ -240,6 +244,10 @@ class Qwen3TTSProvider(BaseProvider, TTSInterface):
             config.device = device
         if dtype is not None:
             config.dtype = dtype
+        if ref_audio is not None:
+            config.ref_audio = ref_audio
+        if ref_text is not None:
+            config.ref_text = ref_text
 
         # Auto-detect dtype based on device
         if config.device == "cuda" and config.dtype == "float32":

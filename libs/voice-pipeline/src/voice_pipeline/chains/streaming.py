@@ -38,15 +38,19 @@ from voice_pipeline.callbacks.context import (
 from voice_pipeline.interfaces import (
     ASRInterface,
     AudioChunk,
+    InterruptionStrategy,
     LLMChunk,
     LLMInterface,
     RAGInterface,
     TTSInterface,
     TranscriptionResult,
+    TurnTakingController,
 )
 from voice_pipeline.runnable import RunnableConfig, VoiceRunnable, ensure_config
 from voice_pipeline.streaming import SentenceStreamer, SentenceStreamerConfig
 from voice_pipeline.streaming.metrics import StreamingMetrics
+from voice_pipeline.streaming.strategy import StreamingStrategy
+from voice_pipeline.streaming.sentence_strategy import SentenceStreamingStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +145,9 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
         use_streaming_asr: bool = True,
         streaming_asr_min_words: int = 3,
         max_messages: int = 20,
+        turn_taking_controller: Optional[TurnTakingController] = None,
+        streaming_strategy: Optional[StreamingStrategy] = None,
+        interruption_strategy: Optional[InterruptionStrategy] = None,
     ):
         """
         Initialize the streaming chain.
@@ -169,6 +176,21 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
             max_messages: Maximum conversation messages to retain in history.
                          Older messages are trimmed. Default: 20.
                          Set to 0 for unlimited (not recommended).
+            turn_taking_controller: Optional pluggable turn-taking strategy.
+                                   Controls when user's turn ends. If None,
+                                   the chain does not manage turn-taking
+                                   (caller is responsible).
+            streaming_strategy: Optional pluggable streaming strategy.
+                               Controls how LLM tokens are buffered and
+                               emitted to TTS (word, clause, or sentence
+                               granularity). If None, defaults to sentence-level
+                               streaming using SentenceStreamer config.
+            interruption_strategy: Optional pluggable interruption strategy.
+                                  Controls how the chain responds to user
+                                  speech during agent output (immediate,
+                                  graceful, or backchannel-aware). If None,
+                                  the chain uses the existing interrupt()
+                                  behavior (caller-managed).
         """
         self.asr = asr
         self.llm = llm
@@ -182,6 +204,9 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
         self.auto_warmup = auto_warmup
         self.use_streaming_asr = use_streaming_asr
         self.streaming_asr_min_words = streaming_asr_min_words
+        self.turn_taking_controller = turn_taking_controller
+        self.streaming_strategy = streaming_strategy
+        self.interruption_strategy = interruption_strategy
 
         # Sentence streamer config
         self.streamer_config = SentenceStreamerConfig(
@@ -198,6 +223,7 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
 
         # Warmup metrics
         self.warmup_time_ms: Optional[float] = None
+        self.llm_warmup_time_ms: Optional[float] = None
 
         # Track if streaming ASR is being used
         self._using_streaming_asr: bool = False
@@ -214,6 +240,18 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
             while len(self._messages) > self._max_messages:
                 self._messages.pop(0)
 
+    def _get_strategy(self) -> StreamingStrategy:
+        """Get the streaming strategy to use.
+
+        Returns the configured strategy if set, otherwise creates
+        a default SentenceStreamingStrategy from streamer_config.
+        The strategy is reset before returning to ensure clean state.
+        """
+        if self.streaming_strategy is not None:
+            self.streaming_strategy.reset()
+            return self.streaming_strategy
+        return SentenceStreamingStrategy(self.streamer_config)
+
     async def connect(self) -> None:
         """Connect all providers and optionally warm up TTS.
 
@@ -226,10 +264,19 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
         await self.llm.connect()
         await self.tts.connect()
 
+        # Connect turn-taking controller (may load models)
+        if self.turn_taking_controller is not None:
+            await self.turn_taking_controller.connect()
+
         # Warm up TTS to eliminate cold-start latency
         if self.auto_warmup and hasattr(self.tts, 'warmup'):
             self.warmup_time_ms = await self.tts.warmup()
             logger.info(f"TTS warmed up in {self.warmup_time_ms:.1f}ms")
+
+        # Warm up LLM to eliminate cold-start latency
+        if self.auto_warmup and hasattr(self.llm, 'warmup'):
+            self.llm_warmup_time_ms = await self.llm.warmup()
+            logger.info(f"LLM warmed up in {self.llm_warmup_time_ms:.1f}ms")
 
     async def disconnect(self) -> None:
         """Disconnect all providers."""
@@ -239,6 +286,8 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
             await self.llm.disconnect()
         if hasattr(self.tts, 'disconnect'):
             await self.tts.disconnect()
+        if self.turn_taking_controller is not None:
+            await self.turn_taking_controller.disconnect()
 
     def reset(self) -> None:
         """Reset conversation history."""
@@ -461,7 +510,7 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
             response_text = ""
 
             self.metrics.mark_llm_start()
-            streamer = SentenceStreamer(self.streamer_config)
+            strategy = self._get_strategy()
 
             async for chunk in self.llm.astream(self._messages, llm_config):
                 token = chunk.text if isinstance(chunk, LLMChunk) else str(chunk)
@@ -472,14 +521,14 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
                 self.metrics.mark_first_token()
                 self.metrics.add_token()
 
-                # Check for complete sentences
-                sentences = streamer.process(token)
-                for sentence in sentences:
+                # Check for complete chunks (sentences/clauses/words)
+                chunks = strategy.process(token)
+                for text_chunk in chunks:
                     self.metrics.add_sentence()
-                    await sentence_queue.put(sentence)
+                    await sentence_queue.put(text_chunk)
 
             # Flush remaining text
-            remaining = streamer.flush()
+            remaining = strategy.flush()
             if remaining:
                 self.metrics.add_sentence()
                 await sentence_queue.put(remaining)
@@ -613,7 +662,7 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
             nonlocal response_text
 
             metrics.mark_llm_start()
-            streamer = SentenceStreamer(self.streamer_config)
+            strategy = self._get_strategy()
 
             async for chunk in self.llm.astream(self._messages, llm_config):
                 token = chunk.text if isinstance(chunk, LLMChunk) else str(chunk)
@@ -624,14 +673,14 @@ class StreamingVoiceChain(VoiceRunnable[bytes, AudioChunk]):
                 metrics.mark_first_token()
                 metrics.add_token()
 
-                # Check for complete sentences
-                sentences = streamer.process(token)
-                for sentence in sentences:
+                # Check for complete chunks (sentences/clauses/words)
+                chunks = strategy.process(token)
+                for text_chunk in chunks:
                     metrics.add_sentence()
-                    await sentence_queue.put(sentence)
+                    await sentence_queue.put(text_chunk)
 
             # Flush remaining text
-            remaining = streamer.flush()
+            remaining = strategy.flush()
             if remaining:
                 metrics.add_sentence()
                 await sentence_queue.put(remaining)
@@ -829,8 +878,9 @@ class ParallelStreamingChain(VoiceRunnable[bytes, AudioChunk]):
             async for chunk in self.llm.astream(self._messages, llm_config):
                 token = chunk.text if isinstance(chunk, LLMChunk) else str(chunk)
                 response_text += token
-                buffer += token
                 await emit_llm_token(token)
+
+                buffer += token
 
                 # Check for sentence boundary
                 for i, char in enumerate(buffer):
