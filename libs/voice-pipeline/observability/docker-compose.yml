@@ -1,0 +1,69 @@
+services:
+  # ============================================================
+  # OpenTelemetry Collector
+  # Receives OTLP from the voice pipeline and fans out to
+  # Jaeger (traces) and Prometheus (metrics).
+  # ============================================================
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.119.0
+    command: ["--config=/etc/otelcol/config.yml"]
+    volumes:
+      - ./otel-collector-config.yml:/etc/otelcol/config.yml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC  (application sends here)
+      - "4318:4318"   # OTLP HTTP
+      - "8889:8889"   # Prometheus metrics endpoint (scraped by Prometheus)
+    depends_on:
+      - jaeger
+
+  # ============================================================
+  # Jaeger — Distributed Tracing UI
+  # View span hierarchy: Pipeline → Turn → VAD/ASR/LLM/TTS
+  # ============================================================
+  jaeger:
+    image: jaegertracing/all-in-one:1.67.0
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14268:14268"  # Jaeger collector HTTP
+
+  # ============================================================
+  # Prometheus — Metrics Storage
+  # Scrapes OTel Collector for histograms and counters.
+  # ============================================================
+  prometheus:
+    image: prom/prometheus:v3.4.0
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - otel-collector
+
+  # ============================================================
+  # Grafana — Dashboards
+  # Pre-configured with Jaeger + Prometheus datasources
+  # and the Voice Pipeline dashboard.
+  # ============================================================
+  grafana:
+    image: grafana/grafana:11.5.2
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3030:3000"
+    depends_on:
+      - prometheus
+      - jaeger
+
+volumes:
+  prometheus-data:
+  grafana-data:
