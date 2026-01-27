@@ -300,6 +300,37 @@ class TestToolExecutor:
         executor.unregister("my_tool")
         assert "my_tool" not in executor.list_tools()
 
+    def test_register_duplicate_raises(self):
+        """Test that registering a duplicate tool raises ValueError."""
+
+        @voice_tool
+        def dup_tool() -> str:
+            return "v1"
+
+        executor = ToolExecutor()
+        executor.register(dup_tool)
+
+        with pytest.raises(ValueError, match="already registered"):
+            executor.register(dup_tool)
+
+    def test_register_duplicate_with_overwrite(self):
+        """Test that overwrite=True allows replacing a tool."""
+
+        @voice_tool
+        def dup_tool() -> str:
+            return "v1"
+
+        @voice_tool(name="dup_tool")
+        def dup_tool_v2() -> str:
+            return "v2"
+
+        executor = ToolExecutor()
+        executor.register(dup_tool)
+        executor.register(dup_tool_v2, overwrite=True)
+
+        assert "dup_tool" in executor.list_tools()
+        assert executor.get("dup_tool") is dup_tool_v2
+
     @pytest.mark.asyncio
     async def test_execute_call(self):
         """Test executing ToolCall."""
@@ -382,6 +413,111 @@ class TestToolExecutor:
         anthropic_msg = executor.format_result_for_llm(call, result, format="anthropic")
         assert anthropic_msg["type"] == "tool_result"
         assert anthropic_msg["is_error"] is False
+
+
+class TestExecuteManyCancel:
+    """Tests for execute_many with cancel_event (I-02)."""
+
+    @pytest.mark.asyncio
+    async def test_cancel_event_cancels_slow_parallel_tools(self):
+        """Test that cancel_event cancels slow parallel tools."""
+        import asyncio
+
+        @voice_tool
+        async def slow_tool() -> str:
+            await asyncio.sleep(10)
+            return "done"
+
+        @voice_tool
+        async def fast_tool() -> str:
+            return "fast"
+
+        executor = ToolExecutor(tools=[slow_tool, fast_tool])
+
+        cancel_event = asyncio.Event()
+
+        calls = [
+            ToolCall(id="1", name="slow_tool", arguments={}),
+            ToolCall(id="2", name="fast_tool", arguments={}),
+        ]
+
+        # Set cancel after a short delay
+        async def set_cancel():
+            await asyncio.sleep(0.1)
+            cancel_event.set()
+
+        cancel_task = asyncio.create_task(set_cancel())
+
+        results = await executor.execute_many(
+            calls, parallel=True, cancel_event=cancel_event
+        )
+
+        await cancel_task
+
+        # fast_tool should succeed, slow_tool should be cancelled
+        assert len(results) == 2
+        # At least one result should have "Cancelled" error
+        cancelled = [r for r in results if not r.success and r.error == "Cancelled"]
+        assert len(cancelled) >= 1
+
+    @pytest.mark.asyncio
+    async def test_cancel_event_sequential(self):
+        """Test that cancel_event stops sequential execution."""
+        import asyncio
+
+        call_count = 0
+
+        @voice_tool
+        async def counting_tool() -> str:
+            nonlocal call_count
+            call_count += 1
+            return f"call {call_count}"
+
+        executor = ToolExecutor(tools=[counting_tool])
+
+        cancel_event = asyncio.Event()
+        cancel_event.set()  # Already cancelled
+
+        calls = [
+            ToolCall(id="1", name="counting_tool", arguments={}),
+            ToolCall(id="2", name="counting_tool", arguments={}),
+        ]
+
+        results = await executor.execute_many(
+            calls, parallel=False, cancel_event=cancel_event
+        )
+
+        # All calls should be cancelled since event was set before start
+        assert all(not r.success for r in results)
+        assert all(r.error == "Cancelled" for r in results)
+        assert call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_gather_return_exceptions(self):
+        """Test that parallel execution without cancel handles exceptions gracefully."""
+
+        @voice_tool
+        def good_tool() -> str:
+            return "ok"
+
+        @voice_tool
+        def bad_tool() -> str:
+            raise RuntimeError("boom")
+
+        executor = ToolExecutor(tools=[good_tool, bad_tool])
+
+        calls = [
+            ToolCall(id="1", name="good_tool", arguments={}),
+            ToolCall(id="2", name="bad_tool", arguments={}),
+        ]
+
+        results = await executor.execute_many(calls, parallel=True)
+
+        assert len(results) == 2
+        assert results[0].success is True
+        assert results[0].output == "ok"
+        # bad_tool should have error but not crash the entire gather
+        assert results[1].success is False
 
 
 class TestCreateExecutor:

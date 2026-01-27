@@ -4,6 +4,7 @@ Provides data structures for managing agent state during
 the ReAct (Reasoning + Acting) execution loop.
 """
 
+import copy as _copy
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal, Optional
@@ -328,18 +329,21 @@ class AgentState:
         self.metadata = {}
 
     def copy(self) -> "AgentState":
-        """Create a copy of the state.
+        """Create a deep copy of the state.
+
+        Mutable fields (messages, pending_tool_calls, metadata) are
+        deep-copied so mutations on the copy never affect the original.
 
         Returns:
-            New AgentState with copied data.
+            New AgentState with deep-copied data.
         """
         return AgentState(
-            messages=self.messages.copy(),
-            pending_tool_calls=self.pending_tool_calls.copy(),
+            messages=_copy.deepcopy(self.messages),
+            pending_tool_calls=_copy.deepcopy(self.pending_tool_calls),
             status=self.status,
             iteration=self.iteration,
             max_iterations=self.max_iterations,
             final_response=self.final_response,
             error=self.error,
-            metadata=self.metadata.copy(),
+            metadata=_copy.deepcopy(self.metadata),
         )

@@ -701,6 +701,174 @@ class TestCreateMCPAgent:
 # ==================== Test Client Config ====================
 
 
+# ==================== Test Client Retry Logic ====================
+
+
+class TestMCPClientRetry:
+    """Tests for MCPClient retry with exponential backoff (I-06)."""
+
+    @pytest.mark.asyncio
+    async def test_retry_on_connection_error(self):
+        """Test that _request_with_retry retries on CONNECTION_ERROR."""
+        from unittest.mock import AsyncMock, patch
+
+        client = MCPClient("http://localhost:9999/mcp")
+        client.config.retry_attempts = 3
+
+        call_count = 0
+
+        async def mock_request(method, params=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise MCPError(
+                    code=MCPErrorCode.CONNECTION_ERROR,
+                    message="Connection refused",
+                )
+            return {"tools": []}
+
+        with patch.object(client, "_request", side_effect=mock_request):
+            result = await client._request_with_retry("tools/list")
+
+        assert result == {"tools": []}
+        assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_retry_on_timeout(self):
+        """Test that _request_with_retry retries on TIMEOUT."""
+        from unittest.mock import patch
+
+        client = MCPClient("http://localhost:9999/mcp")
+        client.config.retry_attempts = 2
+
+        call_count = 0
+
+        async def mock_request(method, params=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise MCPError(
+                    code=MCPErrorCode.TIMEOUT,
+                    message="Request timed out",
+                )
+            return {"ok": True}
+
+        with patch.object(client, "_request", side_effect=mock_request):
+            result = await client._request_with_retry("test")
+
+        assert result == {"ok": True}
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_no_retry_on_logic_error(self):
+        """Test that non-retryable errors propagate immediately."""
+        from unittest.mock import patch
+
+        client = MCPClient("http://localhost:9999/mcp")
+        client.config.retry_attempts = 3
+
+        call_count = 0
+
+        async def mock_request(method, params=None):
+            nonlocal call_count
+            call_count += 1
+            raise MCPError(
+                code=MCPErrorCode.TOOL_NOT_FOUND,
+                message="Tool xyz not found",
+            )
+
+        with patch.object(client, "_request", side_effect=mock_request):
+            with pytest.raises(MCPError) as exc_info:
+                await client._request_with_retry("tools/call", {"name": "xyz"})
+
+        assert exc_info.value.code == MCPErrorCode.TOOL_NOT_FOUND
+        assert call_count == 1  # No retry
+
+    @pytest.mark.asyncio
+    async def test_retry_exhausted_raises(self):
+        """Test that all retries exhausted raises the last error."""
+        from unittest.mock import patch
+
+        client = MCPClient("http://localhost:9999/mcp")
+        client.config.retry_attempts = 2
+
+        call_count = 0
+
+        async def mock_request(method, params=None):
+            nonlocal call_count
+            call_count += 1
+            raise MCPError(
+                code=MCPErrorCode.CONNECTION_ERROR,
+                message=f"Fail #{call_count}",
+            )
+
+        with patch.object(client, "_request", side_effect=mock_request):
+            with pytest.raises(MCPError) as exc_info:
+                await client._request_with_retry("tools/list")
+
+        assert exc_info.value.code == MCPErrorCode.CONNECTION_ERROR
+        assert call_count == 2
+
+
+# ==================== Test Client HTTP Fallback ====================
+
+
+class TestMCPClientHTTPFallback:
+    """Tests for MCPClient HTTP fallback (C-04)."""
+
+    @pytest.mark.asyncio
+    async def test_sync_fallback_runs_in_thread(self):
+        """Test that urllib fallback runs via asyncio.to_thread."""
+        import asyncio
+        from unittest.mock import patch, MagicMock
+
+        client = MCPClient("http://localhost:9999/mcp")
+        client.config.timeout = 5.0
+
+        request = {"jsonrpc": "2.0", "id": 1, "method": "test"}
+
+        # Mock _sync_request_http to verify it's called via to_thread
+        expected_result = {"status": "ok"}
+
+        with patch.object(client, "_sync_request_http", return_value=expected_result) as mock_sync:
+            with patch("voice_pipeline.mcp.client.aiohttp", None):
+                result = await asyncio.to_thread(client._sync_request_http, request)
+
+        assert result == expected_result
+        mock_sync.assert_called_once_with(request)
+
+    def test_sync_request_http_raises_on_url_error(self):
+        """Test that _sync_request_http raises MCPError on URL error."""
+        client = MCPClient("http://localhost:1/invalid")
+        client.config.timeout = 0.5
+
+        request = {"jsonrpc": "2.0", "id": 1, "method": "test"}
+
+        with pytest.raises(MCPError) as exc_info:
+            client._sync_request_http(request)
+
+        assert exc_info.value.code == MCPErrorCode.CONNECTION_ERROR
+
+    @pytest.mark.asyncio
+    async def test_aiohttp_none_uses_thread_fallback(self):
+        """Test that when aiohttp is None, _request_http uses to_thread."""
+        from unittest.mock import patch, AsyncMock
+
+        client = MCPClient("http://localhost:9999/mcp")
+        request = {"jsonrpc": "2.0", "id": 1, "method": "test"}
+        expected = {"tools": []}
+
+        with patch("voice_pipeline.mcp.client.aiohttp", None):
+            with patch.object(client, "_sync_request_http", return_value=expected) as mock_sync:
+                result = await client._request_http(request)
+
+        assert result == expected
+        mock_sync.assert_called_once_with(request)
+
+
+# ==================== Test Client Config ====================
+
+
 class TestMCPClientConfig:
     """Tests for MCPClientConfig."""
 

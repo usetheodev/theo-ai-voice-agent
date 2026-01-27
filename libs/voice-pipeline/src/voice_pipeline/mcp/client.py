@@ -5,9 +5,17 @@ Allows connecting to MCP servers and calling their tools.
 
 import asyncio
 import json
+import logging
 import subprocess
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Optional, Union
+
+try:
+    import aiohttp
+except ImportError:
+    aiohttp = None
 
 from voice_pipeline.mcp.types import (
     MCPCapabilities,
@@ -20,6 +28,8 @@ from voice_pipeline.mcp.types import (
     MCPToolCall,
     TransportType,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -309,44 +319,58 @@ class MCPClient:
 
         return response.get("result", {})
 
-    async def _request_http(self, request: dict) -> dict[str, Any]:
-        """Send request via HTTP."""
-        try:
-            import aiohttp
-        except ImportError:
-            # Fallback to urllib for basic HTTP
-            import urllib.request
-            import urllib.error
+    def _sync_request_http(self, request: dict) -> dict[str, Any]:
+        """Send request via HTTP using urllib (sync, thread-safe fallback).
 
-            data = json.dumps(request).encode()
-            req = urllib.request.Request(
-                self.url,
-                data=data,
-                headers={
-                    "Content-Type": "application/json",
-                    **self.config.headers,
-                },
-                method="POST",
+        Args:
+            request: JSON-RPC request dict.
+
+        Returns:
+            Response result.
+
+        Raises:
+            MCPError: If request fails.
+        """
+        data = json.dumps(request).encode()
+        req = urllib.request.Request(
+            self.url,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                **self.config.headers,
+            },
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
+                response = json.loads(resp.read().decode())
+        except urllib.error.URLError as e:
+            raise MCPError(
+                code=MCPErrorCode.CONNECTION_ERROR,
+                message=str(e),
             )
 
-            try:
-                with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
-                    response = json.loads(resp.read().decode())
-            except urllib.error.URLError as e:
-                raise MCPError(
-                    code=MCPErrorCode.CONNECTION_ERROR,
-                    message=str(e),
-                )
+        if "error" in response:
+            raise MCPError(
+                code=MCPErrorCode.INTERNAL_ERROR,
+                message=response["error"].get("message", "Unknown error"),
+            )
 
-            if "error" in response:
-                raise MCPError(
-                    code=MCPErrorCode.INTERNAL_ERROR,
-                    message=response["error"].get("message", "Unknown error"),
-                )
+        return response.get("result", {})
 
-            return response.get("result", {})
+    async def _request_http(self, request: dict) -> dict[str, Any]:
+        """Send request via HTTP.
 
-        # Use aiohttp if available
+        Uses aiohttp if available (fully async); otherwise falls back
+        to urllib in a worker thread via ``asyncio.to_thread`` so the
+        event loop is never blocked.
+        """
+        if aiohttp is None:
+            # Fallback: run blocking urllib in a thread
+            return await asyncio.to_thread(self._sync_request_http, request)
+
+        # Async path with aiohttp
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 self.url,
@@ -367,6 +391,56 @@ class MCPClient:
 
         return response.get("result", {})
 
+    # ==================== Retry Logic ====================
+
+    _RETRYABLE_CODES = frozenset({
+        MCPErrorCode.CONNECTION_ERROR,
+        MCPErrorCode.TIMEOUT,
+    })
+
+    async def _request_with_retry(
+        self,
+        method: str,
+        params: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """Send a request with exponential-backoff retry.
+
+        Only retries on transient errors (CONNECTION_ERROR, TIMEOUT).
+        Logic errors propagate immediately.
+
+        Uses ``config.retry_attempts`` (default 3).
+
+        Args:
+            method: RPC method name.
+            params: Method parameters.
+
+        Returns:
+            Response result.
+
+        Raises:
+            MCPError: After all retries exhausted, or on non-retryable error.
+        """
+        max_attempts = max(self.config.retry_attempts, 1)
+        last_error: Optional[MCPError] = None
+
+        for attempt in range(max_attempts):
+            try:
+                return await self._request(method, params)
+            except MCPError as e:
+                last_error = e
+                if e.code not in self._RETRYABLE_CODES:
+                    raise
+                if attempt < max_attempts - 1:
+                    delay = (2 ** attempt) * 0.1  # 0.1s, 0.2s, 0.4s …
+                    logger.warning(
+                        "MCP request '%s' failed (attempt %d/%d): %s — retrying in %.1fs",
+                        method, attempt + 1, max_attempts, e.message, delay,
+                    )
+                    await asyncio.sleep(delay)
+
+        # All attempts exhausted
+        raise last_error  # type: ignore[misc]
+
     # ==================== Tool Operations ====================
 
     async def list_tools(self) -> list[MCPTool]:
@@ -380,7 +454,7 @@ class MCPClient:
             >>> for tool in tools:
             ...     print(f"{tool.name}: {tool.description}")
         """
-        response = await self._request("tools/list")
+        response = await self._request_with_retry("tools/list")
         tools_data = response.get("tools", [])
 
         return [MCPTool.from_mcp_schema(t) for t in tools_data]
@@ -408,7 +482,7 @@ class MCPClient:
         """
         call = MCPToolCall(name=name, arguments=arguments or {})
 
-        response = await self._request("tools/call", call.to_mcp_request())
+        response = await self._request_with_retry("tools/call", call.to_mcp_request())
 
         # Parse response content
         content = response.get("content", [])
@@ -432,7 +506,7 @@ class MCPClient:
         Returns:
             List of MCPResource objects.
         """
-        response = await self._request("resources/list")
+        response = await self._request_with_retry("resources/list")
         resources_data = response.get("resources", [])
 
         return [
@@ -454,7 +528,7 @@ class MCPClient:
         Returns:
             Resource content.
         """
-        response = await self._request("resources/read", {"uri": uri})
+        response = await self._request_with_retry("resources/read", {"uri": uri})
         contents = response.get("contents", [])
 
         if contents:
@@ -469,7 +543,7 @@ class MCPClient:
         Returns:
             List of MCPPrompt objects.
         """
-        response = await self._request("prompts/list")
+        response = await self._request_with_retry("prompts/list")
         prompts_data = response.get("prompts", [])
 
         return [
@@ -495,7 +569,7 @@ class MCPClient:
         Returns:
             Prompt messages.
         """
-        response = await self._request(
+        response = await self._request_with_retry(
             "prompts/get",
             {
                 "name": name,

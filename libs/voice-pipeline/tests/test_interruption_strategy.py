@@ -624,7 +624,7 @@ class TestBuilderInterruption:
     def test_invalid_strategy_raises(self):
         from voice_pipeline.agents.base import VoiceAgentBuilder
         b = VoiceAgentBuilder()
-        with pytest.raises(ValueError, match="Interruption strategy desconhecida"):
+        with pytest.raises(ValueError, match="Unknown interruption strategy"):
             b.interruption("unknown")
 
     def test_chaining_with_other_methods(self):

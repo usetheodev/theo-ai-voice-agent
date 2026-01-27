@@ -296,6 +296,22 @@ class TestAgentState:
         assert len(state.messages) == 1
         assert len(copy.messages) == 2
 
+    def test_copy_deep_messages(self):
+        """Test that copy() deep-copies messages (mutating copy doesn't affect original)."""
+        state = AgentState()
+        state.add_user_message("Hello")
+        state.metadata["key"] = [1, 2, 3]
+
+        copy = state.copy()
+
+        # Mutate message content in the copy
+        copy.messages[0].content = "Changed"
+        assert state.messages[0].content == "Hello"
+
+        # Mutate metadata in the copy
+        copy.metadata["key"].append(4)
+        assert state.metadata["key"] == [1, 2, 3]
+
 
 # ==================== Test ToolNode ====================
 

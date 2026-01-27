@@ -269,28 +269,23 @@ class VoiceAgent(VoiceRunnable[str, str]):
         # Normalize input
         user_input = self._normalize_input(input)
 
-        # Load context from memory
-        context_messages = []
-        if self.memory:
-            context = await self.memory.load_context(user_input)
-            context_messages = context.messages
-
-        # Create state with context
+        # Build state with memory context
         state = AgentState(max_iterations=self.max_iterations)
 
-        # Add context messages
-        for msg in context_messages:
-            if msg.get("role") == "user":
-                state.add_user_message(msg.get("content", ""))
-            elif msg.get("role") == "assistant":
-                state.add_assistant_message(msg.get("content", ""))
+        if self.memory:
+            context = await self.memory.load_context(user_input)
+            for msg in context.messages:
+                if msg.get("role") == "user":
+                    state.add_user_message(msg.get("content", ""))
+                elif msg.get("role") == "assistant":
+                    state.add_assistant_message(msg.get("content", ""))
 
         # Add current user input
         state.add_user_message(user_input)
 
-        # Execute loop
+        # Execute loop with pre-built state
         try:
-            response = await self._loop.run(user_input)
+            response = await self._loop.run(user_input, initial_state=state)
         except Exception as e:
             response = f"I encountered an error: {str(e)}"
 
@@ -320,16 +315,24 @@ class VoiceAgent(VoiceRunnable[str, str]):
         # Normalize input
         user_input = self._normalize_input(input)
 
-        # Load context from memory
-        context_messages = []
+        # Build state with memory context
+        state = AgentState(max_iterations=self.max_iterations)
+
         if self.memory:
             context = await self.memory.load_context(user_input)
-            context_messages = context.messages
+            for msg in context.messages:
+                if msg.get("role") == "user":
+                    state.add_user_message(msg.get("content", ""))
+                elif msg.get("role") == "assistant":
+                    state.add_assistant_message(msg.get("content", ""))
+
+        # Add current user input
+        state.add_user_message(user_input)
 
         # Build full response for memory
         full_response = []
 
-        async for token in self._loop.run_stream(user_input):
+        async for token in self._loop.run_stream(user_input, initial_state=state):
             full_response.append(token)
             yield token
 
@@ -360,14 +363,21 @@ class VoiceAgent(VoiceRunnable[str, str]):
             return input.text
         return str(input)
 
-    def add_tool(self, tool: VoiceTool) -> None:
+    def add_tool(self, tool: VoiceTool, overwrite: bool = False) -> None:
         """Add a tool to the agent.
 
         Args:
             tool: Tool to add.
+            overwrite: If True, allows overwriting an existing tool.
+
+        Raises:
+            ValueError: If a tool with the same name is already registered
+                and overwrite is False.
         """
+        if overwrite:
+            self.tools = [t for t in self.tools if t.name != tool.name]
         self.tools.append(tool)
-        self._loop.add_tool(tool)
+        self._loop.add_tool(tool, overwrite=overwrite)
 
     def remove_tool(self, name: str) -> None:
         """Remove a tool from the agent.
@@ -1111,6 +1121,10 @@ class VoiceAgentBuilder:
         - If ASR + TTS + streaming=False -> ConversationChain (batch)
         - If only LLM -> VoiceAgent (text -> text)
 
+        Note:
+            For voice pipelines (ASR+TTS), prefer ``build_async()``
+            which connects providers and performs warmup.
+
         Returns:
             VoiceAgent, ConversationChain or StreamingVoiceChain.
         """
@@ -1119,13 +1133,6 @@ class VoiceAgentBuilder:
 
         # If ASR and TTS are present, create voice pipeline
         if self._asr is not None and self._tts is not None:
-            import warnings
-            warnings.warn(
-                "For voice pipelines (ASR+TTS), prefer build_async() "
-                "which connects providers and performs warmup.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
             if self._streaming:
                 # Streaming sentence-level (low latency)
                 from voice_pipeline.chains import StreamingVoiceChain

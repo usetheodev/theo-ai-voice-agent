@@ -228,9 +228,9 @@ class VoiceAgentSession:
                     .interruption("backchannel", language=VP_LANGUAGE or "en")
                     .system_prompt(
                         VP_SYSTEM_PROMPT or
-                        "You are a helpful voice assistant. "
-                        "Respond very briefly (1-2 short sentences). "
-                        "Be direct and concise."
+                        "Voce é um assistente de voz útil. "
+                        "Responda muito brevemente (1-2 frases curtas). "
+                        "Seja direto e conciso. Evite cumprimentos longos. Responda em português brasileiro."
                     )
                     .streaming(True)
                 )

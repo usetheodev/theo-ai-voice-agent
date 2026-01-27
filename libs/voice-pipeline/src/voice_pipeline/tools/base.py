@@ -297,10 +297,9 @@ class FunctionTool(VoiceTool):
                     timeout=self.timeout_seconds,
                 )
             else:
-                # Run sync function in executor
-                loop = asyncio.get_event_loop()
+                # Run sync function in thread
                 result = await asyncio.wait_for(
-                    loop.run_in_executor(None, lambda: self._func(**kwargs)),
+                    asyncio.to_thread(self._func, **kwargs),
                     timeout=self.timeout_seconds,
                 )
 

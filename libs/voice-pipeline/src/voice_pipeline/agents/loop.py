@@ -82,11 +82,15 @@ class AgentLoop:
             parallel=parallel_tool_execution,
         )
 
-    async def run(self, input: str) -> str:
+    async def run(
+        self, input: str, initial_state: Optional[AgentState] = None
+    ) -> str:
         """Execute the agent loop and return the final response.
 
         Args:
             input: User input to process.
+            initial_state: Optional pre-built state with context (e.g. memory).
+                If provided, used as-is (input should already be in the state).
 
         Returns:
             Final response from the agent.
@@ -94,8 +98,11 @@ class AgentLoop:
         Raises:
             RuntimeError: If max iterations reached without response.
         """
-        state = AgentState(max_iterations=self.max_iterations)
-        state.add_user_message(input)
+        if initial_state is not None:
+            state = initial_state
+        else:
+            state = AgentState(max_iterations=self.max_iterations)
+            state.add_user_message(input)
 
         while state.should_continue():
             # THINK + ACT: LLM generates response or tool calls
@@ -116,7 +123,9 @@ class AgentLoop:
 
         return state.final_response
 
-    async def run_stream(self, input: str) -> AsyncIterator[str]:
+    async def run_stream(
+        self, input: str, initial_state: Optional[AgentState] = None
+    ) -> AsyncIterator[str]:
         """Execute the agent loop with streaming output.
 
         Yields tokens as they're generated during the final response.
@@ -124,17 +133,40 @@ class AgentLoop:
 
         Args:
             input: User input to process.
+            initial_state: Optional pre-built state with context (e.g. memory).
+                If provided, used as-is (input should already be in the state).
 
         Yields:
             Tokens from the final response.
         """
-        # For streaming, we use the non-streaming version and yield the final result
-        # This is a simpler approach that still provides streaming output
-        result = await self.run(input)
-        for char in result:
-            yield char
+        if initial_state is not None:
+            state = initial_state
+        else:
+            state = AgentState(max_iterations=self.max_iterations)
+            state.add_user_message(input)
 
-    async def run_with_state(self, input: str) -> AgentState:
+        while state.should_continue():
+            # THINK + ACT with streaming
+            async for token, is_final in self._think_and_act_stream(state):
+                if is_final and token:
+                    yield token
+
+            if state.status == AgentStatus.COMPLETED:
+                break
+
+            # OBSERVE: Execute pending tool calls
+            if state.pending_tool_calls:
+                state = await self.tool_node.ainvoke(state)
+
+        if state.final_response is None:
+            if state.error:
+                yield f"Error: {state.error}"
+            else:
+                yield "I was unable to complete the request within the allowed iterations."
+
+    async def run_with_state(
+        self, input: str, initial_state: Optional[AgentState] = None
+    ) -> AgentState:
         """Execute the loop and return the full state.
 
         Useful for debugging or when you need access to
@@ -142,12 +174,17 @@ class AgentLoop:
 
         Args:
             input: User input to process.
+            initial_state: Optional pre-built state with context (e.g. memory).
+                If provided, used as-is (input should already be in the state).
 
         Returns:
             Final AgentState with all messages.
         """
-        state = AgentState(max_iterations=self.max_iterations)
-        state.add_user_message(input)
+        if initial_state is not None:
+            state = initial_state
+        else:
+            state = AgentState(max_iterations=self.max_iterations)
+            state.add_user_message(input)
 
         while state.should_continue():
             state = await self._think_and_act(state)
@@ -250,8 +287,16 @@ class AgentLoop:
                         yield (char, True)
             else:
                 # No tools, stream directly
+                collected: list[str] = []
                 async for chunk in self.llm.astream(messages):
+                    collected.append(chunk.text)
                     yield (chunk.text, True)
+
+                full_content = "".join(collected)
+                state.add_assistant_message(content=full_content)
+                state.final_response = full_content
+                state.status = AgentStatus.COMPLETED
+                state.iteration += 1
 
         except Exception as e:
             state.status = AgentStatus.ERROR
@@ -290,13 +335,18 @@ class AgentLoop:
 
         return state
 
-    def add_tool(self, tool: VoiceTool) -> None:
+    def add_tool(self, tool: VoiceTool, overwrite: bool = False) -> None:
         """Add a tool to the executor.
 
         Args:
             tool: Tool to add.
+            overwrite: If True, allows overwriting an existing tool.
+
+        Raises:
+            ValueError: If a tool with the same name is already registered
+                and overwrite is False.
         """
-        self.executor.register(tool)
+        self.executor.register(tool, overwrite=overwrite)
 
     def remove_tool(self, name: str) -> None:
         """Remove a tool from the executor.

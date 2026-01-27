@@ -4,6 +4,7 @@ Provides a VoiceRunnable-compatible node for executing tools,
 similar to LangGraph's ToolNode.
 """
 
+import asyncio
 from typing import Optional
 
 from voice_pipeline.agents.state import AgentState, AgentStatus
@@ -55,6 +56,7 @@ class ToolNode(VoiceRunnable[AgentState, AgentState]):
         executor: ToolExecutor,
         parallel: bool = True,
         handle_errors: bool = True,
+        cancel_event: Optional[asyncio.Event] = None,
     ):
         """Initialize ToolNode.
 
@@ -62,15 +64,18 @@ class ToolNode(VoiceRunnable[AgentState, AgentState]):
             executor: ToolExecutor with registered tools.
             parallel: Run tools in parallel when possible.
             handle_errors: Catch tool errors and format as results.
+            cancel_event: Optional event for cancelling tool execution.
         """
         self.executor = executor
         self.parallel = parallel
         self.handle_errors = handle_errors
+        self.cancel_event = cancel_event
 
     async def ainvoke(
         self,
         state: AgentState,
         config: Optional[RunnableConfig] = None,
+        cancel_event: Optional[asyncio.Event] = None,
     ) -> AgentState:
         """Execute all pending tool calls in the state.
 
@@ -80,6 +85,8 @@ class ToolNode(VoiceRunnable[AgentState, AgentState]):
         Args:
             state: Agent state with pending_tool_calls.
             config: Optional runnable configuration.
+            cancel_event: Optional event for cancelling execution.
+                Overrides the instance-level cancel_event if provided.
 
         Returns:
             Updated state with tool results in messages.
@@ -87,15 +94,19 @@ class ToolNode(VoiceRunnable[AgentState, AgentState]):
         if not state.pending_tool_calls:
             return state
 
+        effective_cancel = cancel_event or self.cancel_event
+
         # Execute tools
         if self.handle_errors:
             results = await self._execute_with_error_handling(
-                state.pending_tool_calls
+                state.pending_tool_calls,
+                cancel_event=effective_cancel,
             )
         else:
             results = await self.executor.execute_many(
                 state.pending_tool_calls,
                 parallel=self.parallel,
+                cancel_event=effective_cancel,
             )
 
         # Add results to state
@@ -115,18 +126,26 @@ class ToolNode(VoiceRunnable[AgentState, AgentState]):
     async def _execute_with_error_handling(
         self,
         calls: list[ToolCall],
+        cancel_event: Optional[asyncio.Event] = None,
     ) -> list[ToolResult]:
         """Execute tools with error handling.
 
         Args:
             calls: Tool calls to execute.
+            cancel_event: Optional cancellation event.
 
         Returns:
             List of results (errors formatted as results).
         """
-        if self.parallel:
-            import asyncio
+        if cancel_event is not None:
+            # Delegate to executor which handles cancel natively
+            return await self.executor.execute_many(
+                calls,
+                parallel=self.parallel,
+                cancel_event=cancel_event,
+            )
 
+        if self.parallel:
             async def safe_execute(call: ToolCall) -> ToolResult:
                 try:
                     return await self.executor.execute_call(call)
