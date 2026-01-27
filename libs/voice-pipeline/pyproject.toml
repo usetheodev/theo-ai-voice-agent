@@ -56,10 +56,17 @@ sqlite = [
     "aiosqlite>=0.19.0",
 ]
 
-# Observability
+# Observability (basic tracing)
 tracing = [
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
+]
+
+# Full observability (tracing + metrics + OTLP export)
+observability = [
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
 ]
 
 # Audio processing
@@ -129,6 +136,7 @@ all = [
     "aiosqlite>=0.19.0",
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
     "numpy>=1.24.0",
     "scipy>=1.10.0",
     "typer>=0.9.0",
