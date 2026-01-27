@@ -442,7 +442,7 @@ class WhisperCppASRProvider(BaseProvider, ASRInterface):
                 yield TranscriptionResult(
                     text=segment.text.strip(),
                     is_final=is_final,
-                    confidence=1.0,  # whisper.cpp doesn't provide confidence
+                    confidence=None,  # whisper.cpp doesn't provide confidence
                     language=effective_language,
                     start_time=segment.t0 / 100.0 if hasattr(segment, 't0') else None,
                     end_time=segment.t1 / 100.0 if hasattr(segment, 't1') else None,
@@ -534,7 +534,7 @@ class WhisperCppASRProvider(BaseProvider, ASRInterface):
                 return TranscriptionResult(
                     text=full_text.strip(),
                     is_final=True,
-                    confidence=1.0,
+                    confidence=None,
                     language=effective_language,
                     start_time=start_time_audio,
                     end_time=end_time_audio,

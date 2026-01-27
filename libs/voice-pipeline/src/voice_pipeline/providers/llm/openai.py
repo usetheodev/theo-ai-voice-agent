@@ -210,6 +210,7 @@ class OpenAILLMProvider(BaseProvider, LLMInterface):
         system_prompt: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        stop: Optional[list[str]] = None,
         **kwargs,
     ) -> AsyncIterator[LLMChunk]:
         """Generate streaming response from OpenAI.
@@ -257,6 +258,9 @@ class OpenAILLMProvider(BaseProvider, LLMInterface):
             request_kwargs["max_tokens"] = (
                 max_tokens or self._llm_config.default_max_tokens
             )
+
+        if stop:
+            request_kwargs["stop"] = stop
 
         # Add any extra kwargs
         request_kwargs.update(kwargs)
@@ -311,6 +315,7 @@ class OpenAILLMProvider(BaseProvider, LLMInterface):
         system_prompt: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        stop: Optional[list[str]] = None,
         **kwargs,
     ) -> str:
         """Generate complete response.
@@ -355,6 +360,9 @@ class OpenAILLMProvider(BaseProvider, LLMInterface):
             request_kwargs["max_tokens"] = (
                 max_tokens or self._llm_config.default_max_tokens
             )
+
+        if stop:
+            request_kwargs["stop"] = stop
 
         request_kwargs.update(kwargs)
 
@@ -429,6 +437,9 @@ class OpenAILLMProvider(BaseProvider, LLMInterface):
             request_kwargs["max_tokens"] = (
                 max_tokens or self._llm_config.default_max_tokens
             )
+
+        if kwargs.get("stop"):
+            request_kwargs["stop"] = kwargs.pop("stop")
 
         request_kwargs.update(kwargs)
 

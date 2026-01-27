@@ -89,6 +89,11 @@ huggingface = [
     "torch>=2.0.0",
 ]
 
+# Tokenizer for accurate token counting
+tokenizer = [
+    "tiktoken>=0.5.0",
+]
+
 # Binary serialization (msgpack)
 msgpack = [
     "msgpack>=1.0.0",
@@ -133,6 +138,7 @@ all = [
     "accelerate>=0.25.0",
     "bitsandbytes>=0.41.0",
     "msgpack>=1.0.0",
+    "tiktoken>=0.5.0",
 ]
 
 [project.scripts]

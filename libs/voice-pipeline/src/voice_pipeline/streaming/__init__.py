@@ -23,6 +23,7 @@ from .clause_strategy import ClauseStreamingStrategy
 from .word_strategy import WordStreamingStrategy
 from .adaptive_strategy import AdaptiveStreamingStrategy
 from .filler import FillerInjector, FillerConfig
+from .normalizer import TextNormalizer, BasicTextNormalizer
 
 __all__ = [
     # Sentence streaming
@@ -59,4 +60,7 @@ __all__ = [
     # Filler injection
     "FillerInjector",
     "FillerConfig",
+    # Text normalization
+    "TextNormalizer",
+    "BasicTextNormalizer",
 ]

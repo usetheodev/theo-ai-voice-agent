@@ -575,7 +575,7 @@ class TestWhisperCppASRProviderTranscribe:
             assert isinstance(result, TranscriptionResult)
             assert result.text == "Hello world"
             assert result.is_final is True
-            assert result.confidence == 1.0
+            assert result.confidence is None  # whisper.cpp doesn't provide confidence
 
         await provider.disconnect()
 

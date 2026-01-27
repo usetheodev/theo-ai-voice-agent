@@ -428,7 +428,7 @@ class FasterWhisperProvider(BaseProvider, ASRInterface):
             return TranscriptionResult(
                 text=text,
                 is_final=True,
-                confidence=1.0 - (info.language_probability if hasattr(info, 'language_probability') else 0),
+                confidence=None,  # language_probability != ASR confidence
                 language=info.language if hasattr(info, 'language') else effective_language,
                 start_time=0.0,
                 end_time=audio_duration,

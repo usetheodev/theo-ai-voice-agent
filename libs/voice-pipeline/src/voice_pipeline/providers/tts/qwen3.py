@@ -357,6 +357,26 @@ class Qwen3TTSProvider(BaseProvider, TTSInterface):
 
         return elapsed_ms
 
+    async def reconnect_with_device(self, device: str) -> None:
+        """Reconnect with a different device (e.g., CPU fallback)."""
+        import logging
+        logging.getLogger(__name__).warning(
+            f"Qwen3-TTS: switching from {self._tts_config.device} to {device}"
+        )
+        if self._tts_config.device and "cuda" in self._tts_config.device:
+            try:
+                import torch
+                if self._model is not None:
+                    del self._model
+                    self._model = None
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+        self._tts_config.device = device
+        await self.disconnect()
+        await self.connect()
+
     async def _do_health_check(self) -> HealthCheckResult:
         """Check if Qwen3-TTS is ready."""
         if self._model is None:
@@ -369,14 +389,23 @@ class Qwen3TTSProvider(BaseProvider, TTSInterface):
             # Quick synthesis test
             _ = await self.synthesize("Test.")
 
+            details = {
+                "model": self._tts_config.model,
+                "language": self._tts_config.language,
+                "device": self._tts_config.device,
+            }
+
+            if self._tts_config.device and "cuda" in self._tts_config.device:
+                from voice_pipeline.utils.gpu import collect_gpu_metrics
+
+                gpu_metrics = collect_gpu_metrics(self._tts_config.device)
+                if gpu_metrics:
+                    details["gpu"] = gpu_metrics.to_dict()
+
             return HealthCheckResult(
                 status=ProviderHealth.HEALTHY,
                 message=f"Qwen3-TTS ready. Model: {self._tts_config.model}",
-                details={
-                    "model": self._tts_config.model,
-                    "language": self._tts_config.language,
-                    "device": self._tts_config.device,
-                },
+                details=details,
             )
 
         except Exception as e:

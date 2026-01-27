@@ -221,13 +221,22 @@ class ConversationSummaryBufferMemory(VoiceMemory):
     _summary: Optional[str] = None
     """Summary of older messages."""
 
+    token_estimator: Any = None
+    """Optional TokenEstimator for accurate token counting."""
+
     def __post_init__(self):
         """Initialize internal state."""
         self._messages = []
         self._summary = None
 
     def _estimate_tokens(self, text: str) -> int:
-        """Estimate token count (roughly 4 chars per token)."""
+        """Estimate token count.
+
+        Uses TokenEstimator if available, otherwise falls back
+        to heuristic (roughly 4 chars per token).
+        """
+        if self.token_estimator is not None:
+            return self.token_estimator.estimate(text)
         return len(text) // 4
 
     def _total_tokens(self) -> int:

@@ -526,6 +526,7 @@ class OllamaLLMProvider(BaseProvider, LLMInterface):
         system_prompt: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        stop: Optional[list[str]] = None,
         **kwargs,
     ) -> AsyncIterator[LLMChunk]:
         """Generate streaming response from Ollama.
@@ -555,6 +556,8 @@ class OllamaLLMProvider(BaseProvider, LLMInterface):
             options["temperature"] = temperature
         if max_tokens is not None:
             options["num_predict"] = max_tokens
+        if stop:
+            options["stop"] = stop
 
         request_body = {
             "model": self._llm_config.model,
@@ -630,6 +633,7 @@ class OllamaLLMProvider(BaseProvider, LLMInterface):
         system_prompt: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        stop: Optional[list[str]] = None,
         **kwargs,
     ) -> str:
         """Generate complete response.
@@ -657,6 +661,8 @@ class OllamaLLMProvider(BaseProvider, LLMInterface):
             options["temperature"] = temperature
         if max_tokens is not None:
             options["num_predict"] = max_tokens
+        if stop:
+            options["stop"] = stop
 
         request_body = {
             "model": self._llm_config.model,
@@ -731,6 +737,8 @@ class OllamaLLMProvider(BaseProvider, LLMInterface):
             options["temperature"] = temperature
         if max_tokens is not None:
             options["num_predict"] = max_tokens
+        if kwargs.get("stop"):
+            options["stop"] = kwargs.pop("stop")
 
         request_body = {
             "model": self._llm_config.model,

@@ -438,7 +438,7 @@ class DeepgramASRProvider(BaseProvider, ASRInterface):
                         if alternatives:
                             alt = alternatives[0]
                             text = alt.get("transcript", "")
-                            confidence = alt.get("confidence", 1.0)
+                            confidence = alt.get("confidence")
 
                             is_final = data.get("is_final", False)
 

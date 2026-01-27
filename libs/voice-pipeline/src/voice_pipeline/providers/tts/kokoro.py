@@ -312,6 +312,23 @@ class KokoroTTSProvider(BaseProvider, TTSInterface):
 
         return elapsed_ms
 
+    async def reconnect_with_device(self, device: str) -> None:
+        """Reconnect with a different device (e.g., CPU fallback)."""
+        import logging
+        logging.getLogger(__name__).warning(
+            f"Kokoro TTS: switching from {self._tts_config.device} to {device}"
+        )
+        if self._tts_config.device and "cuda" in self._tts_config.device:
+            try:
+                import torch
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+        self._tts_config.device = device
+        await self.disconnect()
+        await self.connect()
+
     async def _do_health_check(self) -> HealthCheckResult:
         """Check if Kokoro is ready."""
         if self._pipeline is None:
@@ -335,13 +352,22 @@ class KokoroTTSProvider(BaseProvider, TTSInterface):
             success = await loop.run_in_executor(self._executor, _test_synth)
 
             if success:
+                details = {
+                    "voice": self._tts_config.voice,
+                    "lang_code": self._tts_config.lang_code,
+                }
+
+                if self._tts_config.device and "cuda" in self._tts_config.device:
+                    from voice_pipeline.utils.gpu import collect_gpu_metrics
+
+                    gpu_metrics = collect_gpu_metrics(self._tts_config.device)
+                    if gpu_metrics:
+                        details["gpu"] = gpu_metrics.to_dict()
+
                 return HealthCheckResult(
                     status=ProviderHealth.HEALTHY,
                     message=f"Kokoro ready. Voice: {self._tts_config.voice}",
-                    details={
-                        "voice": self._tts_config.voice,
-                        "lang_code": self._tts_config.lang_code,
-                    },
+                    details=details,
                 )
             else:
                 return HealthCheckResult(

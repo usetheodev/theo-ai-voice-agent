@@ -409,7 +409,7 @@ class Pipeline:
                     transcription_text = result.text
                     await self._emit(
                         PipelineEventType.ASR_FINAL,
-                        {"text": result.text, "confidence": result.confidence},
+                        {"text": result.text, "confidence": result.confidence},  # None is valid
                     )
                 else:
                     await self._emit(

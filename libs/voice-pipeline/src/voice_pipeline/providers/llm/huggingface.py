@@ -417,6 +417,26 @@ class HuggingFaceLLMProvider(BaseProvider, LLMInterface):
         self._executor.shutdown(wait=False)
         await super().disconnect()
 
+    async def reconnect_with_device(self, device: str) -> None:
+        """Reconnect with a different device (e.g., CPU fallback)."""
+        import logging
+        logging.getLogger(__name__).warning(
+            f"HuggingFace LLM: switching from {self._llm_config.device} to {device}"
+        )
+        if "cuda" in self._llm_config.device:
+            try:
+                import torch
+                if self._model is not None:
+                    del self._model
+                    self._model = None
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+        self._llm_config.device = device
+        await self.disconnect()
+        await self.connect()
+
     async def _do_health_check(self) -> HealthCheckResult:
         """Check if model is loaded and ready."""
         if self._model is None or self._tokenizer is None:
@@ -430,14 +450,23 @@ class HuggingFaceLLMProvider(BaseProvider, LLMInterface):
             test_input = self._tokenizer("Hello", return_tensors="pt")
             device = self._get_device_info()
 
+            details = {
+                "model": self._llm_config.model,
+                "quantization": self._llm_config.quantization.value,
+                "device": device,
+            }
+
+            if device and "cuda" in str(device):
+                from voice_pipeline.utils.gpu import collect_gpu_metrics
+
+                gpu_metrics = collect_gpu_metrics(str(device))
+                if gpu_metrics:
+                    details["gpu"] = gpu_metrics.to_dict()
+
             return HealthCheckResult(
                 status=ProviderHealth.HEALTHY,
                 message=f"Model loaded: {self._llm_config.model}",
-                details={
-                    "model": self._llm_config.model,
-                    "quantization": self._llm_config.quantization.value,
-                    "device": device,
-                },
+                details=details,
             )
         except Exception as e:
             return HealthCheckResult(
@@ -507,6 +536,7 @@ class HuggingFaceLLMProvider(BaseProvider, LLMInterface):
         system_prompt: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        stop: Optional[list[str]] = None,
         **kwargs,
     ) -> AsyncIterator[LLMChunk]:
         """Generate streaming response.
@@ -516,6 +546,7 @@ class HuggingFaceLLMProvider(BaseProvider, LLMInterface):
             system_prompt: Optional system prompt.
             temperature: Sampling temperature (overrides config).
             max_tokens: Maximum tokens to generate (overrides config).
+            stop: Optional list of stop sequences that will halt generation.
             **kwargs: Additional generation parameters.
 
         Yields:
@@ -538,6 +569,33 @@ class HuggingFaceLLMProvider(BaseProvider, LLMInterface):
             "pad_token_id": self._tokenizer.pad_token_id,
             "eos_token_id": self._tokenizer.eos_token_id,
         }
+
+        # Add stop sequence criteria if provided
+        if stop:
+            try:
+                from transformers import StoppingCriteria, StoppingCriteriaList
+
+                class _StopSequenceCriteria(StoppingCriteria):
+                    """Stops generation when any stop sequence is found."""
+
+                    def __init__(self, tokenizer, stop_sequences: list[str]):
+                        self.tokenizer = tokenizer
+                        self.stop_sequences = stop_sequences
+
+                    def __call__(self, input_ids, scores, **kw) -> bool:
+                        generated_text = self.tokenizer.decode(
+                            input_ids[0], skip_special_tokens=True
+                        )
+                        return any(
+                            seq in generated_text for seq in self.stop_sequences
+                        )
+
+                criteria = _StopSequenceCriteria(self._tokenizer, stop)
+                existing = gen_kwargs.get("stopping_criteria", StoppingCriteriaList())
+                existing.append(criteria)
+                gen_kwargs["stopping_criteria"] = existing
+            except ImportError:
+                pass
 
         # Override with kwargs
         gen_kwargs.update(kwargs)

@@ -187,19 +187,21 @@ class StdOutHandler(VoiceCallbackHandler):
         self, ctx: RunContext, result: TranscriptionResult
     ) -> None:
         preview = result.text[:40] + "..." if len(result.text) > 40 else result.text
+        conf_str = f"{result.confidence:.2f}" if result.confidence is not None else "N/A"
         self._print(
             ctx,
             "ASR_PARTIAL",
-            f'"{preview}" (conf: {result.confidence:.2f})',
+            f'"{preview}" (conf: {conf_str})',
         )
 
     async def on_asr_end(
         self, ctx: RunContext, result: TranscriptionResult
     ) -> None:
+        conf_str = f"{result.confidence:.2f}" if result.confidence is not None else "N/A"
         self._print(
             ctx,
             "ASR_END",
-            f'"{result.text}" (conf: {result.confidence:.2f})',
+            f'"{result.text}" (conf: {conf_str})',
         )
 
     async def on_asr_error(self, ctx: RunContext, error: Exception) -> None:

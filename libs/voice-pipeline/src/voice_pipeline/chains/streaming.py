@@ -53,6 +53,7 @@ from voice_pipeline.streaming.metrics import StreamingMetrics
 from voice_pipeline.streaming.strategy import StreamingStrategy
 from voice_pipeline.streaming.sentence_strategy import SentenceStreamingStrategy
 from voice_pipeline.streaming.filler import FillerConfig, FillerInjector
+from voice_pipeline.streaming.normalizer import TextNormalizer
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +133,7 @@ class StreamingVoiceChain(BaseVoiceChain):
         streaming_strategy: Optional[StreamingStrategy] = None,
         interruption_strategy: Optional[InterruptionStrategy] = None,
         filler_config: Optional[FillerConfig] = None,
+        text_normalizer: Optional[TextNormalizer] = None,
     ):
         """
         Initialize the streaming chain.
@@ -202,6 +204,9 @@ class StreamingVoiceChain(BaseVoiceChain):
         self.turn_taking_controller = turn_taking_controller
         self.streaming_strategy = streaming_strategy
         self.interruption_strategy = interruption_strategy
+
+        # Text normalizer (applied before TTS)
+        self.text_normalizer = text_normalizer
 
         # Filler injector
         self._filler_injector: Optional[FillerInjector] = None
@@ -585,6 +590,12 @@ class StreamingVoiceChain(BaseVoiceChain):
                     await emit_tts_start(sentence)
                     tts_started = True
 
+                # Apply text normalization if configured
+                if self.text_normalizer:
+                    sentence = self.text_normalizer.normalize(
+                        sentence, self.language or "en"
+                    )
+
                 logger.debug(f"TTS synthesizing: {sentence[:50]}...")
 
                 async for audio_chunk in self.tts.astream(sentence, tts_config):
@@ -770,6 +781,12 @@ class StreamingVoiceChain(BaseVoiceChain):
 
                 if not sentence.strip():
                     continue
+
+                # Apply text normalization if configured
+                if self.text_normalizer:
+                    sentence = self.text_normalizer.normalize(
+                        sentence, self.language or "en"
+                    )
 
                 if not tts_started:
                     await emit_tts_start(sentence)

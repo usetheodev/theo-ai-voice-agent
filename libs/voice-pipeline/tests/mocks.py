@@ -170,7 +170,7 @@ class MockASR(ASRInterface):
                     yield TranscriptionResult(
                         text=partial,
                         is_final=is_final,
-                        confidence=0.95 if is_final else 0.8,
+                        confidence=None,
                         language=language,
                     )
         else:
@@ -178,14 +178,14 @@ class MockASR(ASRInterface):
                 yield TranscriptionResult(
                     text=self.config.response[:len(self.config.response) // 2],
                     is_final=False,
-                    confidence=0.7,
+                    confidence=None,
                     language=language,
                 )
 
             yield TranscriptionResult(
                 text=self.config.response,
                 is_final=True,
-                confidence=0.95,
+                confidence=None,
                 language=language,
             )
 
