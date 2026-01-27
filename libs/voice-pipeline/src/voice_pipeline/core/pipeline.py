@@ -113,11 +113,49 @@ class Pipeline:
         # Control
         self._running = False
         self._cancel_event = asyncio.Event()
+        self._processing_event = asyncio.Event()
         self._current_task: Optional[asyncio.Task] = None
+        self._barge_in_cooldown_until: float = 0.0
 
         # Audio buffers
-        self._input_buffer: asyncio.Queue[bytes] = asyncio.Queue()
-        self._output_buffer: asyncio.Queue[AudioChunk] = asyncio.Queue()
+        self._input_buffer: asyncio.Queue[bytes] = asyncio.Queue(maxsize=self.config.buffer_maxsize)
+        self._output_buffer: asyncio.Queue[AudioChunk] = asyncio.Queue(maxsize=self.config.buffer_maxsize)
+
+        # Audio preprocessor (AGC + Noise Gate)
+        self._preprocessor = None
+        if self.config.enable_audio_preprocessing:
+            from voice_pipeline.audio.preprocessor import (
+                AudioPreprocessor,
+                AudioPreprocessorConfig,
+            )
+            self._preprocessor = AudioPreprocessor(AudioPreprocessorConfig(
+                enable_agc=self.config.enable_agc,
+                agc_target_db=self.config.agc_target_db,
+                enable_noise_gate=self.config.enable_noise_gate,
+                noise_gate_threshold_db=self.config.noise_gate_threshold_db,
+                sample_rate=self.config.sample_rate,
+            ))
+
+        # Echo suppressor
+        self._echo_suppressor = None
+        if self.config.echo_suppression_mode != "none":
+            from voice_pipeline.audio.echo_suppressor import (
+                EchoSuppressor,
+                EchoSuppressionConfig,
+                EchoSuppressionMode,
+            )
+            mode = EchoSuppressionMode(self.config.echo_suppression_mode)
+            self._echo_suppressor = EchoSuppressor(EchoSuppressionConfig(
+                mode=mode,
+                ducking_attenuation_db=self.config.echo_ducking_attenuation_db,
+                ducking_release_ms=self.config.echo_ducking_release_ms,
+                barge_in_energy_threshold_db=self.config.echo_barge_in_energy_threshold_db,
+                sample_rate=self.config.sample_rate,
+            ))
+
+        # Inactivity tracking
+        self._last_activity_time: float = 0.0
+        self._reprompt_count: int = 0
 
     # =========================================================================
     # EVENT HANDLERS
@@ -230,12 +268,33 @@ class Pipeline:
         speech_start_time: Optional[float] = None
         last_speech_time: float = 0.0
 
+        self._last_activity_time = time.time()
+
         async for chunk in audio_input:
             if not self._running:
                 break
 
+            # Audio preprocessing (AGC + Noise Gate)
+            if self._preprocessor:
+                chunk = self._preprocessor.process(chunk)
+
+            # Echo suppression on mic input
+            if self._echo_suppressor:
+                chunk = self._echo_suppressor.process_input(chunk)
+                if not self._echo_suppressor.should_process_vad():
+                    continue
+
+            # Check for inactivity timeout
+            if self.state_machine.is_idle:
+                elapsed_ms = (time.time() - self._last_activity_time) * 1000
+                if elapsed_ms >= self.config.inactivity_timeout_ms:
+                    await self._handle_inactivity()
+
             # Check for barge-in during speaking
             if self.state_machine.is_speaking and self.config.enable_barge_in:
+                # Skip barge-in during cooldown
+                if time.monotonic() < self._barge_in_cooldown_until:
+                    continue
                 event = await self.vad.process(chunk, self.config.sample_rate)
                 if event.is_speech:
                     if speech_start_time is None:
@@ -265,6 +324,7 @@ class Pipeline:
 
                 if event.is_speech:
                     last_speech_time = time.time()
+                    self._last_activity_time = time.time()
                 else:
                     # Check for end of speech
                     silence_ms = (time.time() - last_speech_time) * 1000
@@ -273,13 +333,17 @@ class Pipeline:
                         # Signal end of input
                         await self._input_buffer.put(None)
                         self.state_machine.transition_to(ConversationState.PROCESSING)
+                        self._processing_event.set()
 
     async def _process_loop(self) -> None:
         """Main processing loop: ASR → LLM → TTS."""
         while self._running:
-            # Wait for processing state
+            # Wait for processing state (event-driven, no polling)
             if not self.state_machine.is_processing:
-                await asyncio.sleep(0.01)
+                self._processing_event.clear()
+                await self._processing_event.wait()
+                if not self._running:
+                    break
                 continue
 
             try:
@@ -322,7 +386,13 @@ class Pipeline:
         # Collect audio from buffer
         async def audio_generator():
             while True:
-                chunk = await self._input_buffer.get()
+                try:
+                    chunk = await asyncio.wait_for(
+                        self._input_buffer.get(), timeout=30.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("Input buffer timeout - ending ASR collection")
+                    break
                 if chunk is None:
                     break
                 yield chunk
@@ -339,7 +409,7 @@ class Pipeline:
                     transcription_text = result.text
                     await self._emit(
                         PipelineEventType.ASR_FINAL,
-                        {"text": result.text, "confidence": result.confidence},
+                        {"text": result.text, "confidence": result.confidence},  # None is valid
                     )
                 else:
                     await self._emit(
@@ -378,7 +448,7 @@ class Pipeline:
         response_text = ""
 
         # TTS queue
-        tts_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        tts_queue: asyncio.Queue[Optional[str]] = asyncio.Queue(maxsize=self.config.tts_queue_maxsize)
 
         # Start TTS consumer task
         async def tts_consumer():
@@ -388,7 +458,13 @@ class Pipeline:
 
             async def sentence_generator():
                 while True:
-                    sentence = await tts_queue.get()
+                    try:
+                        sentence = await asyncio.wait_for(
+                            tts_queue.get(), timeout=30.0
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning("TTS queue timeout")
+                        break
                     if sentence is None:
                         break
                     yield sentence
@@ -412,6 +488,10 @@ class Pipeline:
 
             except Exception as e:
                 await self._emit(PipelineEventType.TTS_ERROR, {"error": str(e)})
+
+        # Notify echo suppressor that TTS is starting
+        if self._echo_suppressor:
+            self._echo_suppressor.notify_tts_start()
 
         tts_task = asyncio.create_task(tts_consumer())
 
@@ -472,6 +552,13 @@ class Pipeline:
 
         finally:
             await tts_task
+            # Notify echo suppressor that TTS stopped
+            if self._echo_suppressor:
+                self._echo_suppressor.notify_tts_stop()
+
+        # Reset activity timer after response
+        self._last_activity_time = time.time()
+        self._reprompt_count = 0
 
         # Record total latency
         self.metrics.total_latency_ms = (time.time() - self.context.turn_start_time) * 1000
@@ -499,8 +586,69 @@ class Pipeline:
 
         return sentences
 
+    async def _handle_inactivity(self) -> None:
+        """Handle session inactivity timeout.
+
+        Depending on config.inactivity_action:
+        - reprompt: Synthesize and play a re-prompt, up to max_reprompt_count
+        - disconnect: Stop the pipeline
+        - event_only: Emit event and reset timer
+        """
+        action = self.config.inactivity_action
+
+        await self._emit(
+            PipelineEventType.INACTIVITY_DETECTED,
+            {"action": action, "reprompt_count": self._reprompt_count},
+        )
+
+        if action == "event_only":
+            self._last_activity_time = time.time()
+            return
+
+        if action == "disconnect" or self._reprompt_count >= self.config.max_reprompt_count:
+            await self._emit(PipelineEventType.INACTIVITY_DISCONNECT)
+            self.stop()
+            return
+
+        # Reprompt
+        if action == "reprompt":
+            self._reprompt_count += 1
+            default_texts = {
+                "pt": "Você ainda está aí?",
+                "en": "Are you still there?",
+            }
+            lang_key = "pt" if self.config.language.startswith("pt") else "en"
+            reprompt = self.config.reprompt_text or default_texts.get(lang_key, default_texts["en"])
+
+            await self._emit(
+                PipelineEventType.INACTIVITY_REPROMPT,
+                {"text": reprompt, "count": self._reprompt_count},
+            )
+
+            # Synthesize reprompt via TTS
+            try:
+                self.state_machine.transition_to(ConversationState.SPEAKING)
+                async for audio_chunk in self.tts.synthesize_stream(
+                    iter([reprompt]),
+                    voice=self.config.tts_voice,
+                ):
+                    if self._cancel_event.is_set():
+                        break
+                    await self._output_buffer.put(audio_chunk)
+
+                self.state_machine.transition_to(ConversationState.IDLE)
+            except Exception as e:
+                logger.warning(f"Reprompt TTS error: {e}")
+                self.state_machine.force_transition(ConversationState.IDLE)
+
+            self._last_activity_time = time.time()
+
     async def _handle_barge_in(self) -> None:
-        """Handle user interruption (barge-in)."""
+        """Handle user interruption (barge-in).
+
+        Uses a non-blocking cooldown timestamp instead of sleep,
+        so VAD continues reading frames during the backoff period.
+        """
         logger.info("Barge-in detected")
 
         self.metrics.barge_in_count += 1
@@ -520,8 +668,10 @@ class Pipeline:
         # Transition to listening
         self.state_machine.force_transition(ConversationState.LISTENING)
 
-        # Wait for backoff
-        await asyncio.sleep(self.config.barge_in_backoff_ms / 1000)
+        # Non-blocking backoff: store timestamp instead of sleeping
+        self._barge_in_cooldown_until = (
+            time.monotonic() + self.config.barge_in_backoff_ms / 1000
+        )
 
         self._cancel_event.clear()
         self.vad.reset()
@@ -534,6 +684,7 @@ class Pipeline:
         """Stop the pipeline."""
         self._running = False
         self._cancel_event.set()
+        self._processing_event.set()  # Unblock _process_loop
 
     def reset(self) -> None:
         """Reset pipeline state."""

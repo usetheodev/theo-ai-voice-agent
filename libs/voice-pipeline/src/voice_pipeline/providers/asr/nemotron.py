@@ -261,6 +261,27 @@ class NemotronASRProvider(BaseProvider, ASRInterface):
 
         await super().disconnect()
 
+    async def reconnect_with_device(self, device: str) -> None:
+        """Reconnect with a different device (e.g., CPU fallback)."""
+        import logging
+        logging.getLogger(__name__).warning(
+            f"Nemotron ASR: switching from {self._asr_config.device} to {device}"
+        )
+        # Clear CUDA cache before switching
+        if "cuda" in self._asr_config.device:
+            try:
+                import torch
+                if self._model is not None:
+                    del self._model
+                    self._model = None
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+        self._asr_config.device = device
+        await self.disconnect()
+        await self.connect()
+
     async def _do_health_check(self) -> HealthCheckResult:
         """Check if model is loaded and functional."""
         if self._model is None:
@@ -283,14 +304,23 @@ class NemotronASRProvider(BaseProvider, ASRInterface):
                     batch_size=1,
                 )
 
+            details = {
+                "model": self._asr_config.model,
+                "device": self._asr_config.device,
+                "chunk_size_ms": self.chunk_size_ms,
+            }
+
+            if "cuda" in self._asr_config.device:
+                from voice_pipeline.utils.gpu import collect_gpu_metrics
+
+                gpu_metrics = collect_gpu_metrics(self._asr_config.device)
+                if gpu_metrics:
+                    details["gpu"] = gpu_metrics.to_dict()
+
             return HealthCheckResult(
                 status=ProviderHealth.HEALTHY,
                 message=f"Nemotron ASR ready. Latency mode: {self._asr_config.latency_mode.value}",
-                details={
-                    "model": self._asr_config.model,
-                    "device": self._asr_config.device,
-                    "chunk_size_ms": self.chunk_size_ms,
-                },
+                details=details,
             )
         except Exception as e:
             return HealthCheckResult(
@@ -343,7 +373,7 @@ class NemotronASRProvider(BaseProvider, ASRInterface):
             return TranscriptionResult(
                 text=text,
                 is_final=True,
-                confidence=1.0,
+                confidence=None,
                 language="en",
                 start_time=0.0,
                 end_time=audio_duration,
@@ -417,7 +447,7 @@ class NemotronASRProvider(BaseProvider, ASRInterface):
                         yield TranscriptionResult(
                             text=text,
                             is_final=False,
-                            confidence=0.9,
+                            confidence=None,
                             language="en",
                         )
 
@@ -461,7 +491,7 @@ class NemotronASRProvider(BaseProvider, ASRInterface):
                 yield TranscriptionResult(
                     text=text,
                     is_final=True,
-                    confidence=1.0,
+                    confidence=None,
                     language="en",
                     start_time=0.0,
                     end_time=audio_duration,

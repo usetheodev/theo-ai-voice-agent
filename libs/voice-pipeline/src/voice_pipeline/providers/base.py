@@ -14,6 +14,21 @@ from typing import Any, Callable, Generic, Optional, TypeVar
 T = TypeVar("T")
 
 
+class DeviceFallbackStrategy(Enum):
+    """Strategy for device fallback when GPU fails.
+
+    Attributes:
+        NONE: No fallback, propagate error.
+        GPU_TO_CPU: Fall back from GPU to CPU on OOM errors.
+    """
+
+    NONE = "none"
+    """No fallback, propagate error."""
+
+    GPU_TO_CPU = "gpu_to_cpu"
+    """Fall back from GPU to CPU on OOM errors."""
+
+
 class ProviderHealth(Enum):
     """Health status of a provider.
 
@@ -84,6 +99,12 @@ class ProviderConfig:
 
     retry_max_delay: float = 30.0
     """Maximum delay between retries in seconds."""
+
+    device_fallback: DeviceFallbackStrategy = DeviceFallbackStrategy.NONE
+    """Strategy for device fallback (e.g., GPU to CPU)."""
+
+    device_fallback_after_retries: int = 2
+    """Number of retries before attempting device fallback."""
 
     extra: dict[str, Any] = field(default_factory=dict)
     """Additional provider-specific configuration."""
@@ -158,6 +179,9 @@ class ProviderMetrics:
     last_success_time: Optional[float] = None
     """Timestamp of last successful request (Unix time)."""
 
+    gpu: Optional[Any] = None
+    """Optional GPU metrics (GPUMetrics instance)."""
+
     @property
     def avg_latency_ms(self) -> float:
         """Average latency in milliseconds."""
@@ -212,6 +236,7 @@ class ProviderMetrics:
         self.last_error = None
         self.last_error_time = None
         self.last_success_time = None
+        self.gpu = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert metrics to dictionary.
@@ -231,6 +256,7 @@ class ProviderMetrics:
             "last_error": self.last_error,
             "last_error_time": self.last_error_time,
             "last_success_time": self.last_success_time,
+            "gpu": self.gpu.to_dict() if self.gpu and hasattr(self.gpu, "to_dict") else None,
         }
 
 
@@ -331,6 +357,7 @@ class BaseProvider(ABC, Generic[T]):
         self._metrics = ProviderMetrics()
         self._connected = False
         self._health_status = ProviderHealth.UNKNOWN
+        self._fallback_attempted = False
 
     @property
     def config(self) -> ProviderConfig:
@@ -393,6 +420,27 @@ class BaseProvider(ABC, Generic[T]):
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Async context manager exit."""
         await self.disconnect()
+
+    # ==================== Device Fallback ====================
+
+    async def reconnect_with_device(self, device: str) -> None:
+        """Reconnect the provider with a different device.
+
+        Disconnects, updates the device configuration, and reconnects.
+        Subclasses should override this to handle device-specific logic
+        (e.g., moving models, clearing CUDA cache).
+
+        Args:
+            device: New device string (e.g., "cpu", "cuda:0").
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            f"{self.provider_name}: Falling back to device '{device}'"
+        )
+        await self.disconnect()
+        # Subclasses should override to update their device config
+        await self.connect()
 
     # ==================== Health Checking ====================
 
@@ -484,6 +532,32 @@ class BaseProvider(ABC, Generic[T]):
 
                 # Last attempt, don't retry
                 if attempt >= self._config.retry_attempts:
+                    # Check for GPU→CPU fallback
+                    if (
+                        not self._fallback_attempted
+                        and self._config.device_fallback == DeviceFallbackStrategy.GPU_TO_CPU
+                        and self._is_gpu_error(e)
+                    ):
+                        self._fallback_attempted = True
+                        import logging
+                        logging.getLogger(__name__).warning(
+                            f"{self.provider_name}: GPU error after retries, "
+                            "attempting CPU fallback"
+                        )
+                        await self.reconnect_with_device("cpu")
+                        # One more attempt on CPU
+                        try:
+                            if asyncio.iscoroutinefunction(operation):
+                                result = await operation()
+                            else:
+                                result = operation()
+                            latency_ms = (time.perf_counter() - start_time) * 1000
+                            self._metrics.record_success(latency_ms)
+                            return result
+                        except Exception as cpu_err:
+                            self._metrics.record_failure(str(cpu_err))
+                            raise
+
                     self._metrics.record_failure(str(e))
                     raise
 
@@ -508,6 +582,22 @@ class BaseProvider(ABC, Generic[T]):
         if last_exception:
             raise last_exception
         raise RuntimeError("Retry logic error")
+
+    @staticmethod
+    def _is_gpu_error(error: Exception) -> bool:
+        """Check if error is GPU-related (OOM, CUDA error).
+
+        Args:
+            error: Exception to check.
+
+        Returns:
+            True if this looks like a GPU memory or CUDA error.
+        """
+        error_str = str(error).lower()
+        return any(
+            keyword in error_str
+            for keyword in ["cuda", "oom", "out of memory", "gpu memory"]
+        )
 
     # ==================== Utilities ====================
 

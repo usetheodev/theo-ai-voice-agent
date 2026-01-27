@@ -4,6 +4,54 @@ import math
 from typing import Optional
 
 
+def _resample_with_filter(samples: list[float], source_rate: int, target_rate: int) -> list[float]:
+    """Resample with anti-aliasing filter.
+
+    Uses scipy.signal.resample_poly when available, otherwise falls back
+    to a windowed-sinc (FIR Hamming 63 taps) filter with numpy.
+
+    Args:
+        samples: Float samples in range [-1.0, 1.0].
+        source_rate: Source sample rate in Hz.
+        target_rate: Target sample rate in Hz.
+
+    Returns:
+        Resampled float samples.
+    """
+    import numpy as np
+    arr = np.asarray(samples, dtype=np.float32)
+
+    try:
+        from scipy.signal import resample_poly
+        from math import gcd
+        g = gcd(source_rate, target_rate)
+        result = resample_poly(arr, target_rate // g, source_rate // g).astype(np.float32)
+        return result.tolist()
+    except ImportError:
+        pass
+
+    # Fallback: windowed-sinc FIR filter + linear interpolation
+    ratio = target_rate / source_rate
+    if ratio < 1.0:
+        # Downsampling: apply anti-alias lowpass filter
+        num_taps = 63
+        n = np.arange(num_taps)
+        mid = (num_taps - 1) / 2
+        sinc_vals = np.sinc(ratio * (n - mid))
+        window = np.hamming(num_taps)
+        fir = sinc_vals * window
+        fir = fir / np.sum(fir)
+        arr = np.convolve(arr, fir, mode='same').astype(np.float32)
+
+    new_len = int(len(arr) * ratio)
+    if new_len == 0:
+        return []
+    new_positions = np.linspace(0, len(arr) - 1, new_len)
+    old_positions = np.arange(len(arr))
+    result = np.interp(new_positions, old_positions, arr)
+    return result.tolist()
+
+
 def audio_to_numpy(audio_data, sample_rate: int = 24000):
     """Convert various audio formats to numpy float32 array.
 
@@ -117,10 +165,11 @@ def resample_audio(
     source_rate: int,
     target_rate: int,
 ) -> bytes:
-    """Simple audio resampling using linear interpolation.
+    """Resample audio with anti-aliasing filter.
 
-    For production use, consider using a proper resampling library
-    like librosa or scipy for better quality.
+    Uses scipy.signal.resample_poly when available for high-quality
+    resampling. Falls back to a windowed-sinc FIR filter (Hamming, 63 taps)
+    with numpy to prevent aliasing during downsampling.
 
     Args:
         audio_bytes: PCM16 audio data.
@@ -137,21 +186,5 @@ def resample_audio(
     if not samples:
         return b""
 
-    # Calculate ratio
-    ratio = source_rate / target_rate
-    new_length = int(len(samples) / ratio)
-
-    # Linear interpolation
-    resampled = []
-    for i in range(new_length):
-        pos = i * ratio
-        idx = int(pos)
-        frac = pos - idx
-
-        if idx + 1 < len(samples):
-            value = samples[idx] * (1 - frac) + samples[idx + 1] * frac
-        else:
-            value = samples[-1]
-        resampled.append(value)
-
+    resampled = _resample_with_filter(samples, source_rate, target_rate)
     return float_to_pcm16(resampled)

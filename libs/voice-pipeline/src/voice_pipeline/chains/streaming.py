@@ -52,6 +52,8 @@ from voice_pipeline.streaming import SentenceStreamer, SentenceStreamerConfig
 from voice_pipeline.streaming.metrics import StreamingMetrics
 from voice_pipeline.streaming.strategy import StreamingStrategy
 from voice_pipeline.streaming.sentence_strategy import SentenceStreamingStrategy
+from voice_pipeline.streaming.filler import FillerConfig, FillerInjector
+from voice_pipeline.streaming.normalizer import TextNormalizer
 
 logger = logging.getLogger(__name__)
 
@@ -125,10 +127,13 @@ class StreamingVoiceChain(BaseVoiceChain):
         auto_warmup: bool = True,
         use_streaming_asr: bool = True,
         streaming_asr_min_words: int = 3,
+        queue_maxsize: int = 5,
         max_messages: int = 20,
         turn_taking_controller: Optional[TurnTakingController] = None,
         streaming_strategy: Optional[StreamingStrategy] = None,
         interruption_strategy: Optional[InterruptionStrategy] = None,
+        filler_config: Optional[FillerConfig] = None,
+        text_normalizer: Optional[TextNormalizer] = None,
     ):
         """
         Initialize the streaming chain.
@@ -154,6 +159,9 @@ class StreamingVoiceChain(BaseVoiceChain):
                               latency by ~200-300ms. Default: True.
             streaming_asr_min_words: Minimum words before starting LLM
                                     (only for streaming ASR). Default: 3.
+            queue_maxsize: Maximum size for internal queues (sentence,
+                          transcription). Bounds memory usage by applying
+                          backpressure when consumers are slow. Default: 5.
             max_messages: Maximum conversation messages to retain in history.
                          Older messages are trimmed. Default: 20.
                          Set to 0 for unlimited (not recommended).
@@ -172,6 +180,10 @@ class StreamingVoiceChain(BaseVoiceChain):
                                   graceful, or backchannel-aware). If None,
                                   the chain uses the existing interrupt()
                                   behavior (caller-managed).
+            filler_config: Optional filler injection configuration.
+                          When provided and enabled, pre-synthesized filler
+                          sounds are played before the main TTS response
+                          to reduce perceived latency.
         """
         super().__init__(
             asr=asr,
@@ -188,9 +200,18 @@ class StreamingVoiceChain(BaseVoiceChain):
         self.auto_warmup = auto_warmup
         self.use_streaming_asr = use_streaming_asr
         self.streaming_asr_min_words = streaming_asr_min_words
+        self.queue_maxsize = queue_maxsize
         self.turn_taking_controller = turn_taking_controller
         self.streaming_strategy = streaming_strategy
         self.interruption_strategy = interruption_strategy
+
+        # Text normalizer (applied before TTS)
+        self.text_normalizer = text_normalizer
+
+        # Filler injector
+        self._filler_injector: Optional[FillerInjector] = None
+        if filler_config and filler_config.enabled:
+            self._filler_injector = FillerInjector(filler_config)
 
         # Sentence streamer config
         self.streamer_config = SentenceStreamerConfig(
@@ -199,7 +220,8 @@ class StreamingVoiceChain(BaseVoiceChain):
             sentence_end_chars=sentence_end_chars or [".", "!", "?", "\n"],
         )
 
-        self._interrupted: bool = False
+        self._cancel_event = asyncio.Event()
+        self._active_sentence_queue: Optional[asyncio.Queue] = None
 
         # Metrics from last run
         self.metrics: Optional[StreamingMetrics] = None
@@ -210,6 +232,20 @@ class StreamingVoiceChain(BaseVoiceChain):
 
         # Track if streaming ASR is being used
         self._using_streaming_asr: bool = False
+
+    @property
+    def _interrupted(self) -> bool:
+        """Backward-compatible property for interrupt state."""
+        return self._cancel_event.is_set()
+
+    @staticmethod
+    def _drain_queue(queue: asyncio.Queue) -> None:
+        """Drain all items from a queue."""
+        while not queue.empty():
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
 
     def _get_strategy(self) -> StreamingStrategy:
         """Get the streaming strategy to use.
@@ -250,6 +286,11 @@ class StreamingVoiceChain(BaseVoiceChain):
             self.llm_warmup_time_ms = await self.llm.warmup()
             logger.info(f"LLM warmed up in {self.llm_warmup_time_ms:.1f}ms")
 
+        # Warm up filler sounds
+        if self._filler_injector:
+            filler_ms = await self._filler_injector.warmup(self.tts)
+            logger.info(f"Fillers warmed up in {filler_ms:.1f}ms")
+
     async def disconnect(self) -> None:
         """Disconnect all providers."""
         if hasattr(self.asr, 'disconnect'):
@@ -274,11 +315,15 @@ class StreamingVoiceChain(BaseVoiceChain):
     def interrupt(self) -> None:
         """Interrupt current response (barge-in).
 
-        Sets an interruption flag that is checked by the LLM producer
+        Sets a cancel event that is checked by the LLM producer
         and TTS consumer loops, causing them to stop processing.
-        The flag is automatically reset at the start of each astream() call.
+        Also drains any pending sentences from the queue and cancels
+        running tasks. The event is automatically cleared at the start
+        of each astream() call.
         """
-        self._interrupted = True
+        self._cancel_event.set()
+        if self._active_sentence_queue:
+            self._drain_queue(self._active_sentence_queue)
         logger.info("Interrupt requested")
 
     async def _augment_with_rag(self, user_text: str) -> str:
@@ -326,8 +371,9 @@ class StreamingVoiceChain(BaseVoiceChain):
         """
         config = ensure_config(config)
 
-        # Reset interrupt flag for new stream
-        self._interrupted = False
+        # Reset interrupt event for new stream
+        self._cancel_event.clear()
+        self._active_sentence_queue = None
 
         # Initialize metrics
         self.metrics = StreamingMetrics()
@@ -436,10 +482,10 @@ class StreamingVoiceChain(BaseVoiceChain):
         llm_task: Optional[asyncio.Task] = None
 
         # Queue for partial/final transcriptions
-        transcription_queue: asyncio.Queue[Optional[TranscriptionResult]] = asyncio.Queue()
+        transcription_queue: asyncio.Queue[Optional[TranscriptionResult]] = asyncio.Queue(maxsize=self.queue_maxsize)
 
         # Queue for sentences (from LLM)
-        sentence_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        sentence_queue: asyncio.Queue[Optional[str]] = asyncio.Queue(maxsize=self.queue_maxsize)
 
         async def asr_producer():
             """Stream audio through ASR and collect transcriptions."""
@@ -459,6 +505,7 @@ class StreamingVoiceChain(BaseVoiceChain):
                     else:
                         partial_text = result.text
 
+                    self.metrics.record_asr_chunk()
                     await transcription_queue.put(result)
 
                 # Signal completion
@@ -481,7 +528,7 @@ class StreamingVoiceChain(BaseVoiceChain):
             strategy = self._get_strategy()
 
             async for chunk in self.llm.astream(self._messages, llm_config):
-                if self._interrupted:
+                if self._cancel_event.is_set():
                     logger.info("LLM producer interrupted")
                     break
                 token = chunk.text if isinstance(chunk, LLMChunk) else str(chunk)
@@ -498,13 +545,14 @@ class StreamingVoiceChain(BaseVoiceChain):
                     self.metrics.add_sentence()
                     await sentence_queue.put(text_chunk)
 
-            # Flush remaining text
-            remaining = strategy.flush()
-            if remaining:
-                self.metrics.add_sentence()
-                await sentence_queue.put(remaining)
+            # Flush remaining text (only if not interrupted)
+            if not self._cancel_event.is_set():
+                remaining = strategy.flush()
+                if remaining:
+                    self.metrics.add_sentence()
+                    await sentence_queue.put(remaining)
 
-            # Signal completion
+            # Signal completion (always, to unblock consumer)
             await sentence_queue.put(None)
             await emit_llm_end(response_text)
             self.metrics.mark_llm_end()
@@ -531,7 +579,7 @@ class StreamingVoiceChain(BaseVoiceChain):
                 if sentence is None:
                     break
 
-                if self._interrupted:
+                if self._cancel_event.is_set():
                     logger.info("TTS consumer interrupted")
                     break
 
@@ -542,14 +590,24 @@ class StreamingVoiceChain(BaseVoiceChain):
                     await emit_tts_start(sentence)
                     tts_started = True
 
+                # Apply text normalization if configured
+                if self.text_normalizer:
+                    sentence = self.text_normalizer.normalize(
+                        sentence, self.language or "en"
+                    )
+
                 logger.debug(f"TTS synthesizing: {sentence[:50]}...")
 
                 async for audio_chunk in self.tts.astream(sentence, tts_config):
+                    if self._cancel_event.is_set():
+                        logger.info("TTS synthesis interrupted mid-chunk")
+                        break
                     self.metrics.mark_first_audio()
                     self.metrics.add_audio_chunk(
                         len(audio_chunk.data),
                         audio_chunk.sample_rate,
                     )
+                    self.metrics.record_tts_chunk()
 
                     await emit_tts_chunk(audio_chunk)
                     yield audio_chunk
@@ -558,6 +616,9 @@ class StreamingVoiceChain(BaseVoiceChain):
                 await emit_tts_end()
 
             self.metrics.mark_tts_end()
+
+        # Track active queue for drain on interrupt
+        self._active_sentence_queue = sentence_queue
 
         # Start ASR streaming
         asr_task = asyncio.create_task(asr_producer())
@@ -611,10 +672,16 @@ class StreamingVoiceChain(BaseVoiceChain):
                 yield audio_chunk
 
         finally:
-            # Ensure tasks complete
-            await asr_task
-            if llm_task:
-                await llm_task
+            # Cancel tasks on interrupt instead of waiting
+            if self._cancel_event.is_set():
+                asr_task.cancel()
+                if llm_task:
+                    llm_task.cancel()
+            for t in filter(None, [asr_task, llm_task]):
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
 
     async def _stream_with_buffer(
         self,
@@ -627,7 +694,8 @@ class StreamingVoiceChain(BaseVoiceChain):
         Uses asyncio.Queue to connect LLM streaming to TTS processing.
         This is the producer-consumer pattern for low-latency streaming.
         """
-        sentence_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        sentence_queue: asyncio.Queue[Optional[str]] = asyncio.Queue(maxsize=self.queue_maxsize)
+        self._active_sentence_queue = sentence_queue
         response_text = ""
         tts_started = False
         metrics = self.metrics  # Capture for closures
@@ -640,7 +708,7 @@ class StreamingVoiceChain(BaseVoiceChain):
             strategy = self._get_strategy()
 
             async for chunk in self.llm.astream(self._messages, llm_config):
-                if self._interrupted:
+                if self._cancel_event.is_set():
                     logger.info("LLM producer interrupted")
                     break
                 token = chunk.text if isinstance(chunk, LLMChunk) else str(chunk)
@@ -657,13 +725,14 @@ class StreamingVoiceChain(BaseVoiceChain):
                     metrics.add_sentence()
                     await sentence_queue.put(text_chunk)
 
-            # Flush remaining text
-            remaining = strategy.flush()
-            if remaining:
-                metrics.add_sentence()
-                await sentence_queue.put(remaining)
+            # Flush remaining text (only if not interrupted)
+            if not self._cancel_event.is_set():
+                remaining = strategy.flush()
+                if remaining:
+                    metrics.add_sentence()
+                    await sentence_queue.put(remaining)
 
-            # Signal completion
+            # Signal completion (always, to unblock consumer)
             await sentence_queue.put(None)
             await emit_llm_end(response_text)
             metrics.mark_llm_end()
@@ -678,6 +747,21 @@ class StreamingVoiceChain(BaseVoiceChain):
 
             metrics.mark_tts_start()
 
+            # Inject filler before main response
+            if self._filler_injector and self._filler_injector.is_ready:
+                filler = self._filler_injector.get_filler()
+                if filler:
+                    metrics.mark_first_audio()
+                    metrics.add_audio_chunk(
+                        len(filler.data),
+                        filler.sample_rate,
+                    )
+                    metrics.record_tts_chunk()
+                    if not tts_started:
+                        await emit_tts_start("filler")
+                        tts_started = True
+                    yield filler
+
             while True:
                 try:
                     sentence = await asyncio.wait_for(
@@ -691,12 +775,18 @@ class StreamingVoiceChain(BaseVoiceChain):
                 if sentence is None:
                     break
 
-                if self._interrupted:
+                if self._cancel_event.is_set():
                     logger.info("TTS consumer interrupted")
                     break
 
                 if not sentence.strip():
                     continue
+
+                # Apply text normalization if configured
+                if self.text_normalizer:
+                    sentence = self.text_normalizer.normalize(
+                        sentence, self.language or "en"
+                    )
 
                 if not tts_started:
                     await emit_tts_start(sentence)
@@ -705,12 +795,16 @@ class StreamingVoiceChain(BaseVoiceChain):
                 logger.debug(f"TTS synthesizing: {sentence[:50]}...")
 
                 async for audio_chunk in self.tts.astream(sentence, tts_config):
+                    if self._cancel_event.is_set():
+                        logger.info("TTS synthesis interrupted mid-chunk")
+                        break
                     # Mark first audio
                     metrics.mark_first_audio()
                     metrics.add_audio_chunk(
                         len(audio_chunk.data),
                         audio_chunk.sample_rate,
                     )
+                    metrics.record_tts_chunk()
 
                     await emit_tts_chunk(audio_chunk)
                     yield audio_chunk
@@ -728,8 +822,13 @@ class StreamingVoiceChain(BaseVoiceChain):
             async for audio_chunk in tts_consumer():
                 yield audio_chunk
         finally:
-            # Ensure producer completes
-            await producer_task
+            # Cancel task on interrupt instead of waiting
+            if self._cancel_event.is_set():
+                producer_task.cancel()
+            try:
+                await producer_task
+            except asyncio.CancelledError:
+                pass
 
 
 class ParallelStreamingChain(BaseVoiceChain):

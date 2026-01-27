@@ -142,9 +142,9 @@ class LoggingHandler(VoiceCallbackHandler):
         self._log(
             ctx,
             "ASR_PARTIAL",
-            f"Partial: '{result.text[:50]}...' (conf: {result.confidence:.2f})",
+            f"Partial: '{result.text[:50]}...' (conf: {result.confidence:.2f})" if result.confidence is not None else f"Partial: '{result.text[:50]}...' (conf: N/A)",
             text=result.text,
-            confidence=result.confidence,
+            confidence=result.confidence if result.confidence is not None else "N/A",
             level=logging.DEBUG,
         )
 
@@ -154,9 +154,9 @@ class LoggingHandler(VoiceCallbackHandler):
         self._log(
             ctx,
             "ASR_END",
-            f"Transcription: '{result.text}' (conf: {result.confidence:.2f})",
+            f"Transcription: '{result.text}' (conf: {result.confidence:.2f})" if result.confidence is not None else f"Transcription: '{result.text}' (conf: N/A)",
             text=result.text,
-            confidence=result.confidence,
+            confidence=result.confidence if result.confidence is not None else "N/A",
             language=result.language,
         )
 

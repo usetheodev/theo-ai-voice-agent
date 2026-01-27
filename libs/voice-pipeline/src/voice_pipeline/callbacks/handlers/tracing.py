@@ -233,21 +233,17 @@ class OpenTelemetryHandler(VoiceCallbackHandler):
         spans = self._get_spans(ctx)
         span = spans.get("asr")
         if span:
-            span.add_event(
-                "partial_result",
-                attributes={
-                    "text_length": len(result.text),
-                    "confidence": result.confidence,
-                },
-            )
+            attrs = {"text_length": len(result.text)}
+            if result.confidence is not None:
+                attrs["confidence"] = result.confidence
+            span.add_event("partial_result", attributes=attrs)
 
     async def on_asr_end(
         self, ctx: RunContext, result: TranscriptionResult
     ) -> None:
-        attrs = {
-            "confidence": result.confidence,
-            "text_length": len(result.text),
-        }
+        attrs = {"text_length": len(result.text)}
+        if result.confidence is not None:
+            attrs["confidence"] = result.confidence
 
         if self.record_output:
             attrs["text"] = result.text

@@ -14,6 +14,7 @@ perform poorly on pause handling.
 """
 
 import logging
+import re
 from typing import Optional
 
 from voice_pipeline.interfaces.turn_taking import (
@@ -23,6 +24,26 @@ from voice_pipeline.interfaces.turn_taking import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Hesitation patterns by language
+_HESITATION_PATTERNS = {
+    "pt": [
+        r"\b[eé]{2,}\b",      # "eee", "ééé"
+        r"\b[aà]{2,}\b",      # "aaa"
+        r"\btipo\b",           # "tipo"
+        r"\bassim\b",          # "assim"
+        r"\bné\b",             # "né"
+        r"\bhmm+\b",           # "hmm"
+        r"\buhm?\b",           # "uh", "uhm"
+    ],
+    "en": [
+        r"\buh+\b",            # "uh", "uhh"
+        r"\bum+\b",            # "um", "umm"
+        r"\bhmm+\b",           # "hmm"
+        r"\blike\b",           # "like"
+        r"\byou know\b",       # "you know"
+    ],
+}
 
 
 class AdaptiveSilenceTurnTaking(TurnTakingController):
@@ -63,15 +84,50 @@ class AdaptiveSilenceTurnTaking(TurnTakingController):
         max_threshold_ms: int = 1500,
         barge_in_confidence: float = 0.6,
         min_speech_ms: float = 200.0,
+        hesitation_multiplier: float = 1.5,
+        language: str = "en",
     ):
         self.base_threshold_ms = base_threshold_ms
         self.min_threshold_ms = min_threshold_ms
         self.max_threshold_ms = max_threshold_ms
         self.barge_in_confidence = barge_in_confidence
         self.min_speech_ms = min_speech_ms
+        self.hesitation_multiplier = hesitation_multiplier
+        self.language = language
+
+        # Compile hesitation regex patterns
+        lang_key = "pt" if language.startswith("pt") else "en"
+        patterns = _HESITATION_PATTERNS.get(lang_key, _HESITATION_PATTERNS["en"])
+        self._hesitation_regexes = [
+            re.compile(p, re.IGNORECASE) for p in patterns
+        ]
 
         self._had_speech = False
         self._current_threshold_ms: Optional[float] = None
+
+    def _detect_hesitation(self, context: TurnTakingContext) -> bool:
+        """Detect if the user's speech contains hesitation patterns.
+
+        Checks the last ~30 characters of the partial transcript against
+        known hesitation patterns (e.g., "eee", "tipo", "uh", "umm").
+
+        Args:
+            context: Turn-taking context with partial transcript.
+
+        Returns:
+            True if hesitation is detected at the end of transcript.
+        """
+        transcript = context.partial_transcript
+        if not transcript:
+            return False
+        # Check last ~30 chars for hesitation
+        tail = transcript[-30:].strip().lower()
+        if not tail:
+            return False
+        for pattern in self._hesitation_regexes:
+            if pattern.search(tail):
+                return True
+        return False
 
     def _compute_threshold(self, context: TurnTakingContext) -> float:
         """Compute adaptive threshold based on context.
@@ -111,6 +167,15 @@ class AdaptiveSilenceTurnTaking(TurnTakingController):
         # First few turns → be more patient
         if context.conversation_turn_count <= 2:
             multiplier *= 1.1
+
+        # Factor 5: Hesitation detection
+        # If user is hesitating, give more time before ending turn
+        if self._detect_hesitation(context):
+            multiplier *= self.hesitation_multiplier
+            logger.debug(
+                f"Hesitation detected → multiplier increased by "
+                f"{self.hesitation_multiplier}x"
+            )
 
         # Compute and clamp
         threshold = self.base_threshold_ms * multiplier
@@ -165,6 +230,11 @@ class AdaptiveSilenceTurnTaking(TurnTakingController):
         """Reset for new turn."""
         self._had_speech = False
         self._current_threshold_ms = None
+
+    @property
+    def requires_transcript(self) -> bool:
+        """Requires transcript for hesitation detection."""
+        return True
 
     @property
     def name(self) -> str:

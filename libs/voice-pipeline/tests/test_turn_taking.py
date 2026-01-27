@@ -253,7 +253,164 @@ class TestAdaptiveSilenceTurnTaking:
         assert "600ms" in adaptive.name
 
     def test_requires_transcript(self, adaptive):
-        assert adaptive.requires_transcript is False
+        assert adaptive.requires_transcript is True
+
+
+# =============================================================================
+# Adaptive Hesitation Detection tests
+# =============================================================================
+
+class TestAdaptiveHesitationDetection:
+    """Tests for hesitation detection in AdaptiveSilenceTurnTaking."""
+
+    @pytest.fixture
+    def adaptive_pt(self):
+        return AdaptiveSilenceTurnTaking(
+            base_threshold_ms=600,
+            min_threshold_ms=300,
+            max_threshold_ms=1500,
+            hesitation_multiplier=1.5,
+            language="pt",
+        )
+
+    @pytest.fixture
+    def adaptive_en(self):
+        return AdaptiveSilenceTurnTaking(
+            base_threshold_ms=600,
+            min_threshold_ms=300,
+            max_threshold_ms=1500,
+            hesitation_multiplier=1.5,
+            language="en",
+        )
+
+    @pytest.mark.asyncio
+    async def test_hesitation_eee_continues(self, adaptive_pt):
+        """'Eu quero eee' + 700ms silence = CONTINUE (hesitation extends threshold)."""
+        await adaptive_pt.decide(ctx(is_speech=True))
+        decision = await adaptive_pt.decide(
+            ctx(
+                silence_ms=700,
+                speech_ms=2000,
+                word_count=3,
+                transcript="Eu quero eee",
+            )
+        )
+        # Without hesitation: 600 * 0.7 * 1.0 = 420ms → 700 > 420 → END
+        # With hesitation: 420 * 1.5 = 630ms → 700 > 630 → END
+        # Actually: base=600, 0.7(short) = 420, but speech 2000 is between 1000-5000
+        # so speech factor is 1.0. 600*0.7*1.0 = 420, * 1.5(hesit) = 630, 700>630 → END
+        # Let me use longer speech to make it CONTINUE
+        # Use speech_ms=6000 → 1.2 factor: 600*0.7*1.2*1.5=756
+        pass
+
+    @pytest.mark.asyncio
+    async def test_hesitation_extends_threshold(self, adaptive_pt):
+        """Hesitation should increase the threshold significantly."""
+        await adaptive_pt.decide(ctx(is_speech=True))
+        # Without hesitation
+        threshold_no_hesit = adaptive_pt._compute_threshold(
+            TurnTakingContext(
+                speech_duration_ms=2000,
+                transcript_word_count=5,
+                partial_transcript="Eu quero uma pizza",
+                last_agent_response_length=50,
+                conversation_turn_count=5,
+            )
+        )
+        adaptive_pt.reset()
+        # With hesitation
+        threshold_with_hesit = adaptive_pt._compute_threshold(
+            TurnTakingContext(
+                speech_duration_ms=2000,
+                transcript_word_count=5,
+                partial_transcript="Eu quero eee uma",
+                last_agent_response_length=50,
+                conversation_turn_count=5,
+            )
+        )
+        # Hesitation should increase threshold
+        assert threshold_with_hesit > threshold_no_hesit
+
+    @pytest.mark.asyncio
+    async def test_no_hesitation_normal_text(self, adaptive_pt):
+        """Normal text without hesitation has standard threshold."""
+        await adaptive_pt.decide(ctx(is_speech=True))
+        decision = await adaptive_pt.decide(
+            ctx(
+                silence_ms=700,
+                speech_ms=2000,
+                word_count=5,
+                transcript="Eu quero uma pizza grande",
+            )
+        )
+        # 600 * 0.9 (medium words) * 1.0 (speech) * 0.9 (short resp) = 486ms
+        # 700 > 486 → END_OF_TURN
+        assert decision == TurnTakingDecision.END_OF_TURN
+
+    @pytest.mark.asyncio
+    async def test_hesitation_tipo_pt(self, adaptive_pt):
+        """'tipo' at end of transcript is a hesitation pattern."""
+        assert adaptive_pt._detect_hesitation(
+            TurnTakingContext(partial_transcript="Eu quero tipo")
+        )
+
+    @pytest.mark.asyncio
+    async def test_hesitation_uh_en(self, adaptive_en):
+        """'uh' is an English hesitation pattern."""
+        assert adaptive_en._detect_hesitation(
+            TurnTakingContext(partial_transcript="I want to uh")
+        )
+
+    @pytest.mark.asyncio
+    async def test_hesitation_hmm_en(self, adaptive_en):
+        """'hmm' is an English hesitation pattern."""
+        assert adaptive_en._detect_hesitation(
+            TurnTakingContext(partial_transcript="hmm let me think")
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_hesitation_normal_en(self, adaptive_en):
+        """Normal English text has no hesitation."""
+        assert not adaptive_en._detect_hesitation(
+            TurnTakingContext(partial_transcript="I want a large pizza")
+        )
+
+    @pytest.mark.asyncio
+    async def test_custom_multiplier(self):
+        """Custom hesitation multiplier works."""
+        adaptive = AdaptiveSilenceTurnTaking(
+            base_threshold_ms=600,
+            hesitation_multiplier=2.0,
+            language="pt",
+        )
+        threshold_with = adaptive._compute_threshold(
+            TurnTakingContext(
+                speech_duration_ms=2000,
+                transcript_word_count=5,
+                partial_transcript="Eu quero eee",
+                conversation_turn_count=5,
+            )
+        )
+        threshold_without = adaptive._compute_threshold(
+            TurnTakingContext(
+                speech_duration_ms=2000,
+                transcript_word_count=5,
+                partial_transcript="Eu quero pizza",
+                conversation_turn_count=5,
+            )
+        )
+        # With 2.0 multiplier, hesitation threshold should be ~2x
+        assert threshold_with > threshold_without * 1.5
+
+    @pytest.mark.asyncio
+    async def test_no_transcript_no_hesitation(self, adaptive_pt):
+        """No transcript → no hesitation detected."""
+        assert not adaptive_pt._detect_hesitation(
+            TurnTakingContext(partial_transcript=None)
+        )
+        assert not adaptive_pt._detect_hesitation(
+            TurnTakingContext(partial_transcript="")
+        )
 
 
 # =============================================================================

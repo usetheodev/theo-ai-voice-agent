@@ -17,8 +17,13 @@ class TranscriptionResult:
     is_final: bool
     """Whether this is a final result or partial."""
 
-    confidence: float = 1.0
-    """Confidence score (0.0 to 1.0)."""
+    confidence: Optional[float] = None
+    """Confidence score (0.0 to 1.0), or None if not provided by the ASR engine."""
+
+    @property
+    def has_confidence(self) -> bool:
+        """Whether this result has a real confidence score."""
+        return self.confidence is not None
 
     language: Optional[str] = None
     """Detected language code."""

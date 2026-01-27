@@ -28,22 +28,23 @@ from voice_pipeline.interfaces.interruption import (
 
 logger = logging.getLogger(__name__)
 
-# Common backchannel expressions by language
-_BACKCHANNELS_PT = {
-    # Short acknowledgments
-    "uhum", "aham", "hum", "hm", "sim", "ok", "tá",
-    "certo", "entendi", "sei", "é", "pois",
-    # Agreement
-    "isso", "exato", "verdade", "claro",
+# Pure backchannels — ALWAYS backchannel regardless of context
+_PURE_BACKCHANNELS_PT = {"uhum", "aham", "hum", "hm", "ahan"}
+_PURE_BACKCHANNELS_EN = {"uh huh", "uh-huh", "uhum", "mhm", "hmm", "hm"}
+
+# Context-dependent — backchannel ONLY if agent did NOT ask a question
+_CONTEXT_DEPENDENT_PT = {
+    "sim", "nao", "não", "ok", "tá", "certo", "entendi", "sei",
+    "é", "pois", "isso", "exato", "verdade", "claro",
+}
+_CONTEXT_DEPENDENT_EN = {
+    "yeah", "yep", "yes", "ok", "okay", "right", "sure",
+    "exactly", "true", "got it", "i see",
 }
 
-_BACKCHANNELS_EN = {
-    # Short acknowledgments
-    "uh huh", "uh-huh", "uhum", "mhm", "hmm", "hm",
-    "yeah", "yep", "yes", "ok", "okay", "right",
-    # Agreement
-    "sure", "exactly", "true", "got it", "i see",
-}
+# Combined sets for backward compatibility
+_BACKCHANNELS_PT = _PURE_BACKCHANNELS_PT | _CONTEXT_DEPENDENT_PT
+_BACKCHANNELS_EN = _PURE_BACKCHANNELS_EN | _CONTEXT_DEPENDENT_EN
 
 # Regex patterns for backchannel detection
 _BACKCHANNEL_PATTERN_PT = re.compile(
@@ -124,9 +125,13 @@ class BackchannelAwareInterruption(InterruptionStrategy):
         if language.startswith("pt"):
             self._backchannel_words = _BACKCHANNELS_PT
             self._backchannel_pattern = _BACKCHANNEL_PATTERN_PT
+            self._pure_backchannels = _PURE_BACKCHANNELS_PT
+            self._context_dependent = _CONTEXT_DEPENDENT_PT
         else:
             self._backchannel_words = _BACKCHANNELS_EN
             self._backchannel_pattern = _BACKCHANNEL_PATTERN_EN
+            self._pure_backchannels = _PURE_BACKCHANNELS_EN
+            self._context_dependent = _CONTEXT_DEPENDENT_EN
 
         # Track backchannel frequency
         self._recent_backchannel_count = 0
@@ -161,10 +166,21 @@ class BackchannelAwareInterruption(InterruptionStrategy):
             )
             return InterruptionDecision.INTERRUPT_IMMEDIATE
 
+        agent_text = context.agent_response_text or ""
+
         if duration <= self.backchannel_max_ms:
             # Short speech — check transcript if available
             if self.use_transcript and context.partial_transcript:
-                if self._is_backchannel_text(context.partial_transcript):
+                # Check if this is a context-dependent response to a question
+                if self._is_context_response(context.partial_transcript, agent_text):
+                    self._recent_interruption_count += 1
+                    logger.debug(
+                        f"Context response detected (question answer): "
+                        f"'{context.partial_transcript}' → INTERRUPT"
+                    )
+                    return InterruptionDecision.INTERRUPT_IMMEDIATE
+
+                if self._is_backchannel_text(context.partial_transcript, agent_text):
                     self._recent_backchannel_count += 1
                     logger.debug(
                         f"Backchannel detected (transcript): "
@@ -183,7 +199,16 @@ class BackchannelAwareInterruption(InterruptionStrategy):
         # Phase 2: Uncertain zone (between backchannel_max and interruption_min)
         # Use transcript if available
         if self.use_transcript and context.partial_transcript:
-            if self._is_backchannel_text(context.partial_transcript):
+            # Check if this is a context-dependent response to a question
+            if self._is_context_response(context.partial_transcript, agent_text):
+                self._recent_interruption_count += 1
+                logger.debug(
+                    f"Context response in uncertain zone: "
+                    f"'{context.partial_transcript}' → INTERRUPT"
+                )
+                return InterruptionDecision.INTERRUPT_IMMEDIATE
+
+            if self._is_backchannel_text(context.partial_transcript, agent_text):
                 self._recent_backchannel_count += 1
                 logger.debug(
                     f"Backchannel in uncertain zone (transcript): "
@@ -195,11 +220,55 @@ class BackchannelAwareInterruption(InterruptionStrategy):
         # will be re-evaluated on next VAD frame when duration increases)
         return InterruptionDecision.IGNORE
 
-    def _is_backchannel_text(self, text: str) -> bool:
+    def _agent_asked_question(self, agent_text: str) -> bool:
+        """Detect if the agent's last sentence ends with '?'.
+
+        Args:
+            agent_text: The agent's response text (so far).
+
+        Returns:
+            True if the agent asked a question.
+        """
+        if not agent_text:
+            return False
+        # Find last sentence-ending character
+        trimmed = agent_text.rstrip()
+        if not trimmed:
+            return False
+        return trimmed[-1] == "?"
+
+    def _is_context_response(self, text: str, agent_text: str) -> bool:
+        """Check if text is a context-dependent word responding to a question.
+
+        Returns True when the text is a context-dependent backchannel word
+        AND the agent asked a question — meaning this is a real answer,
+        not a backchannel.
+
+        Args:
+            text: Partial transcript text from user.
+            agent_text: Agent's response text.
+
+        Returns:
+            True if text is a real response to a question.
+        """
+        cleaned = text.strip().lower()
+        if not cleaned:
+            return False
+        return (
+            cleaned in self._context_dependent
+            and self._agent_asked_question(agent_text)
+        )
+
+    def _is_backchannel_text(self, text: str, agent_text: str = "") -> bool:
         """Check if text matches backchannel patterns.
+
+        Context-aware: words like "sim", "ok" are only backchannels
+        when the agent did NOT ask a question. Pure backchannels like
+        "uhum", "aham" are always classified as backchannels.
 
         Args:
             text: Partial transcript text.
+            agent_text: Agent's response text (for context detection).
 
         Returns:
             True if the text looks like a backchannel.
@@ -209,11 +278,17 @@ class BackchannelAwareInterruption(InterruptionStrategy):
         if not cleaned:
             return False
 
-        # Direct word match
-        if cleaned in self._backchannel_words:
+        # Pure backchannels — always backchannel regardless of context
+        if cleaned in self._pure_backchannels:
             return True
 
-        # Regex pattern match
+        # Context-dependent words — only backchannel if agent didn't ask a question
+        if cleaned in self._context_dependent:
+            if self._agent_asked_question(agent_text):
+                return False  # This is a real answer, not backchannel
+            return True
+
+        # Regex pattern match (for variations like "u+h+u+m+")
         if self._backchannel_pattern.match(cleaned):
             return True
 

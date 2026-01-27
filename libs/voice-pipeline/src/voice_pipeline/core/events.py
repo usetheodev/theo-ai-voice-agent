@@ -44,6 +44,11 @@ class PipelineEventType(Enum):
     # Interaction events
     BARGE_IN = "barge_in"
 
+    # Inactivity events
+    INACTIVITY_DETECTED = "inactivity_detected"
+    INACTIVITY_REPROMPT = "inactivity_reprompt"
+    INACTIVITY_DISCONNECT = "inactivity_disconnect"
+
 
 @dataclass
 class PipelineEvent:

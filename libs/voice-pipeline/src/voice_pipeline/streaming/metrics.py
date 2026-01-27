@@ -67,6 +67,16 @@ class StreamingMetrics:
     _first_token_time: Optional[float] = field(default=None, repr=False)
     _first_audio_time: Optional[float] = field(default=None, repr=False)
 
+    # Latency histories for percentile calculation
+    _asr_latencies: list[float] = field(default_factory=list, repr=False)
+    _llm_ttft_latencies: list[float] = field(default_factory=list, repr=False)
+    _tts_ttfb_latencies: list[float] = field(default_factory=list, repr=False)
+    _total_latencies: list[float] = field(default_factory=list, repr=False)
+
+    # Jitter tracking (inter-chunk timestamps)
+    _asr_chunk_timestamps: list[float] = field(default_factory=list, repr=False)
+    _tts_chunk_timestamps: list[float] = field(default_factory=list, repr=False)
+
     def start(self) -> None:
         """Mark pipeline start."""
         self._start_time = time.perf_counter()
@@ -75,6 +85,7 @@ class StreamingMetrics:
         """Mark pipeline end and calculate total time."""
         if self._start_time:
             self.total_time = time.perf_counter() - self._start_time
+            self._total_latencies.append(self.total_time)
 
     def mark_asr_start(self) -> None:
         """Mark ASR processing start."""
@@ -84,6 +95,7 @@ class StreamingMetrics:
         """Mark ASR processing end."""
         if self._asr_start:
             self.asr_time = time.perf_counter() - self._asr_start
+            self._asr_latencies.append(self.asr_time)
 
     def mark_llm_start(self) -> None:
         """Mark LLM generation start."""
@@ -93,6 +105,8 @@ class StreamingMetrics:
         """Mark LLM generation end."""
         if self._llm_start:
             self.llm_time = time.perf_counter() - self._llm_start
+            if self.ttft is not None:
+                self._llm_ttft_latencies.append(self.ttft)
 
     def mark_tts_start(self) -> None:
         """Mark TTS synthesis start."""
@@ -102,6 +116,8 @@ class StreamingMetrics:
         """Mark TTS synthesis end."""
         if self._tts_start:
             self.tts_time = time.perf_counter() - self._tts_start
+            if self.ttfa is not None:
+                self._tts_ttfb_latencies.append(self.ttfa)
 
     def mark_first_token(self) -> None:
         """Mark first LLM token received."""
@@ -122,6 +138,69 @@ class StreamingMetrics:
     def add_sentence(self) -> None:
         """Increment sentence count."""
         self.sentences_count += 1
+
+    def record_asr_chunk(self) -> None:
+        """Record timestamp of an ASR chunk arrival for jitter measurement."""
+        self._asr_chunk_timestamps.append(time.perf_counter())
+
+    def record_tts_chunk(self) -> None:
+        """Record timestamp of a TTS chunk emission for jitter measurement."""
+        self._tts_chunk_timestamps.append(time.perf_counter())
+
+    @staticmethod
+    def _compute_jitter_stats(timestamps: list[float]) -> dict:
+        """Compute jitter statistics from a list of timestamps.
+
+        Args:
+            timestamps: Ordered timestamps (perf_counter values).
+
+        Returns:
+            Dict with mean_interval, jitter_stddev, p50, p95, p99
+            or empty dict if insufficient data.
+        """
+        if len(timestamps) < 2:
+            return {}
+
+        intervals = [
+            timestamps[i + 1] - timestamps[i]
+            for i in range(len(timestamps) - 1)
+        ]
+        n = len(intervals)
+        mean_interval = sum(intervals) / n
+        variance = sum((x - mean_interval) ** 2 for x in intervals) / n
+        stddev = variance ** 0.5
+
+        sorted_intervals = sorted(intervals)
+
+        def percentile(p: float) -> float:
+            k = (n - 1) * (p / 100)
+            f = int(k)
+            c = f + 1 if f + 1 < n else f
+            return sorted_intervals[f] + (k - f) * (sorted_intervals[c] - sorted_intervals[f])
+
+        return {
+            "count": n,
+            "mean_interval": mean_interval,
+            "jitter_stddev": stddev,
+            "p50": percentile(50),
+            "p95": percentile(95),
+            "p99": percentile(99),
+        }
+
+    def jitter(self) -> dict:
+        """Get inter-chunk jitter statistics for ASR and TTS.
+
+        Returns:
+            Dictionary with asr_chunks and tts_chunks jitter stats.
+        """
+        result = {}
+        asr_stats = self._compute_jitter_stats(self._asr_chunk_timestamps)
+        if asr_stats:
+            result["asr_chunks"] = asr_stats
+        tts_stats = self._compute_jitter_stats(self._tts_chunk_timestamps)
+        if tts_stats:
+            result["tts_chunks"] = tts_stats
+        return result
 
     def add_audio_chunk(self, chunk_bytes: int, sample_rate: int = 24000) -> None:
         """Add audio chunk info.
@@ -153,9 +232,50 @@ class StreamingMetrics:
         rtf = self.rtf
         return rtf is not None and rtf < 1.0
 
+    @staticmethod
+    def _percentile(values: list[float], p: float) -> Optional[float]:
+        """Calculate percentile from a list of values.
+
+        Args:
+            values: List of observed values.
+            p: Percentile (0-100).
+
+        Returns:
+            Interpolated percentile value, or None if no data.
+        """
+        if not values:
+            return None
+        sorted_vals = sorted(values)
+        k = (len(sorted_vals) - 1) * (p / 100)
+        f = int(k)
+        c = f + 1 if f + 1 < len(sorted_vals) else f
+        return sorted_vals[f] + (k - f) * (sorted_vals[c] - sorted_vals[f])
+
+    def percentiles(self) -> dict:
+        """Get p50/p95/p99 percentiles for all tracked latencies.
+
+        Returns:
+            Dictionary with percentile values per stage.
+        """
+        result = {}
+        for name, values in [
+            ("asr", self._asr_latencies),
+            ("llm_ttft", self._llm_ttft_latencies),
+            ("tts_ttfb", self._tts_ttfb_latencies),
+            ("total", self._total_latencies),
+        ]:
+            if values:
+                result[name] = {
+                    "p50": self._percentile(values, 50),
+                    "p95": self._percentile(values, 95),
+                    "p99": self._percentile(values, 99),
+                    "count": len(values),
+                }
+        return result
+
     def to_dict(self) -> dict:
         """Convert to dictionary for logging/serialization."""
-        return {
+        result = {
             "ttft": self.ttft,
             "ttfa": self.ttfa,
             "total_time": self.total_time,
@@ -170,6 +290,13 @@ class StreamingMetrics:
             "rtf": self.rtf,
             "is_realtime": self.is_realtime,
         }
+        pctls = self.percentiles()
+        if pctls:
+            result["percentiles"] = pctls
+        jitter_stats = self.jitter()
+        if jitter_stats:
+            result["jitter"] = jitter_stats
+        return result
 
     def __str__(self) -> str:
         """Human-readable summary."""
@@ -184,6 +311,19 @@ class StreamingMetrics:
             parts.append(f"RTF={self.rtf:.2f}")
         if self.sentences_count > 0:
             parts.append(f"Sentences={self.sentences_count}")
+        pctls = self.percentiles()
+        if pctls:
+            for stage, vals in pctls.items():
+                parts.append(
+                    f"{stage}[p50={vals['p50']:.3f}s p95={vals['p95']:.3f}s]"
+                )
+        jitter_stats = self.jitter()
+        if jitter_stats:
+            for source, stats in jitter_stats.items():
+                parts.append(
+                    f"jitter_{source}[mean={stats['mean_interval']:.3f}s "
+                    f"stddev={stats['jitter_stddev']:.3f}s]"
+                )
         return f"StreamingMetrics({', '.join(parts)})"
 
 

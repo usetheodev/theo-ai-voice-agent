@@ -6,6 +6,7 @@ Supports multiple voices and two quality levels.
 Reference: https://platform.openai.com/docs/guides/text-to-speech
 """
 
+import asyncio
 import os
 import time
 from dataclasses import dataclass
@@ -63,6 +64,9 @@ class OpenAITTSConfig(ProviderConfig):
 
     response_format: OpenAITTSFormat = "pcm"
     """Audio output format (pcm for raw audio, mp3, opus, etc.)."""
+
+    stream_chunk_size: int = 4096
+    """Size of chunks when streaming TTS response (bytes)."""
 
 
 class OpenAITTSProvider(BaseProvider, TTSInterface):
@@ -274,9 +278,11 @@ class OpenAITTSProvider(BaseProvider, TTSInterface):
         speed: float = 1.0,
         **kwargs,
     ) -> AsyncIterator[AudioChunk]:
-        """Synthesize audio from text stream.
+        """Synthesize audio from text stream with real HTTP streaming.
 
-        Processes each text chunk (sentence) and yields audio chunks.
+        Uses OpenAI's streaming response to yield audio chunks
+        incrementally as they arrive, rather than waiting for the
+        complete response. This reduces time-to-first-audio.
 
         Args:
             text_stream: Async iterator of text chunks (usually sentences).
@@ -285,7 +291,7 @@ class OpenAITTSProvider(BaseProvider, TTSInterface):
             **kwargs: Additional parameters (model, response_format).
 
         Yields:
-            AudioChunk objects with synthesized audio.
+            AudioChunk objects with synthesized audio (streamed incrementally).
 
         Raises:
             RuntimeError: If client is not connected.
@@ -306,35 +312,33 @@ class OpenAITTSProvider(BaseProvider, TTSInterface):
             start_time = time.perf_counter()
 
             try:
-                response = await self._async_client.audio.speech.create(
+                async with self._async_client.audio.speech.with_streaming_response.create(
                     model=model,
                     voice=effective_voice,
                     input=text,
                     speed=effective_speed,
                     response_format=response_format,
-                )
-
-                # Read audio data
-                audio_data = response.read()
+                ) as response:
+                    async for chunk in response.aiter_bytes(self._tts_config.stream_chunk_size):
+                        # Check elapsed time for timeout
+                        elapsed = time.perf_counter() - start_time
+                        if elapsed > self._tts_config.timeout:
+                            self._metrics.record_failure("timeout")
+                            raise RetryableError(
+                                f"TTS streaming timeout after {self._tts_config.timeout}s"
+                            )
+                        yield AudioChunk(
+                            data=chunk,
+                            sample_rate=self.sample_rate,
+                            channels=self.channels,
+                            format=response_format,
+                        )
 
                 latency_ms = (time.perf_counter() - start_time) * 1000
                 self._metrics.record_success(latency_ms)
 
-                # Calculate duration
-                if response_format == "pcm":
-                    # PCM16 mono at 24kHz: 2 bytes per sample
-                    samples = len(audio_data) // 2
-                    duration_ms = (samples / self.sample_rate) * 1000
-                else:
-                    duration_ms = None
-
-                yield AudioChunk(
-                    data=audio_data,
-                    sample_rate=self.sample_rate,
-                    channels=self.channels,
-                    format=response_format,
-                    duration_ms=duration_ms,
-                )
+            except RetryableError:
+                raise
 
             except Exception as e:
                 self._metrics.record_failure(str(e))

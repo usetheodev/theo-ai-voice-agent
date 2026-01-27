@@ -306,7 +306,7 @@ class OpenAIASRProvider(BaseProvider, ASRInterface):
                 yield TranscriptionResult(
                     text=text,
                     is_final=True,
-                    confidence=1.0,  # Whisper doesn't provide confidence
+                    confidence=None,  # Whisper doesn't provide confidence
                     language=detected_language,
                     start_time=0.0 if duration else None,
                     end_time=duration,
@@ -316,7 +316,7 @@ class OpenAIASRProvider(BaseProvider, ASRInterface):
                 yield TranscriptionResult(
                     text=text,
                     is_final=True,
-                    confidence=1.0,
+                    confidence=None,
                 )
             else:
                 # text, srt, vtt formats return string directly
@@ -324,7 +324,7 @@ class OpenAIASRProvider(BaseProvider, ASRInterface):
                 yield TranscriptionResult(
                     text=text,
                     is_final=True,
-                    confidence=1.0,
+                    confidence=None,
                 )
 
         except Exception as e:
@@ -386,7 +386,7 @@ class OpenAIASRProvider(BaseProvider, ASRInterface):
                 return TranscriptionResult(
                     text=text,
                     is_final=True,
-                    confidence=1.0,
+                    confidence=None,
                     language=detected_language,
                     start_time=0.0 if duration else None,
                     end_time=duration,
@@ -396,7 +396,7 @@ class OpenAIASRProvider(BaseProvider, ASRInterface):
                 return TranscriptionResult(
                     text=text,
                     is_final=True,
-                    confidence=1.0,
+                    confidence=None,
                 )
 
         except Exception as e:

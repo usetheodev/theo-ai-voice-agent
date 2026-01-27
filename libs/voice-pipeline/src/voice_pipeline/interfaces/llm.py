@@ -105,6 +105,7 @@ class LLMInterface(VoiceRunnable[LLMInput, str]):
         system_prompt: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        stop: Optional[list[str]] = None,
         **kwargs,
     ) -> AsyncIterator[LLMChunk]:
         """Generate streaming response.
@@ -114,6 +115,7 @@ class LLMInterface(VoiceRunnable[LLMInput, str]):
             system_prompt: Optional system prompt.
             temperature: Sampling temperature (0.0 to 2.0).
             max_tokens: Maximum tokens to generate.
+            stop: Optional list of stop sequences that will halt generation.
             **kwargs: Additional provider-specific parameters.
 
         Yields:
@@ -127,6 +129,7 @@ class LLMInterface(VoiceRunnable[LLMInput, str]):
         system_prompt: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        stop: Optional[list[str]] = None,
         **kwargs,
     ) -> str:
         """Generate complete response.
@@ -138,6 +141,7 @@ class LLMInterface(VoiceRunnable[LLMInput, str]):
             system_prompt: Optional system prompt.
             temperature: Sampling temperature.
             max_tokens: Maximum tokens to generate.
+            stop: Optional list of stop sequences that will halt generation.
             **kwargs: Additional parameters.
 
         Returns:
@@ -149,6 +153,7 @@ class LLMInterface(VoiceRunnable[LLMInput, str]):
             system_prompt=system_prompt,
             temperature=temperature,
             max_tokens=max_tokens,
+            stop=stop,
             **kwargs,
         ):
             chunks.append(chunk.text)
@@ -254,6 +259,8 @@ class LLMInterface(VoiceRunnable[LLMInput, str]):
                 kwargs["temperature"] = config.configurable["temperature"]
             if "max_tokens" in config.configurable:
                 kwargs["max_tokens"] = config.configurable["max_tokens"]
+            if "stop" in config.configurable:
+                kwargs["stop"] = config.configurable["stop"]
 
         # Normaliza input para messages
         if isinstance(input, list):
