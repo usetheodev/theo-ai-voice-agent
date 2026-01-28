@@ -262,29 +262,39 @@ class AgentLoop:
 
         try:
             if tools and self.llm.supports_tools():
-                # For tool-supporting LLMs, we need non-streaming first
-                # to check if it's a tool call or final response
-                response = await self.llm.generate_with_tools(
+                collected_text: list[str] = []
+                collected_tool_calls: list[dict] = []
+
+                async for chunk in self.llm.generate_stream_with_tools(
                     messages=messages,
                     tools=tools,
                     system_prompt=self.system_prompt,
-                )
+                ):
+                    # Stream text immediately
+                    if chunk.text:
+                        collected_text.append(chunk.text)
+                        yield (chunk.text, True)
 
-                if response.has_tool_calls:
-                    # Tool calls - process silently
+                    # Accumulate tool call deltas
+                    if chunk.tool_calls_delta:
+                        collected_tool_calls.extend(chunk.tool_calls_delta)
+
+                full_content = "".join(collected_text)
+
+                if collected_tool_calls:
+                    # Tool calls — process silently
+                    response = LLMResponse(
+                        content=full_content,
+                        tool_calls=collected_tool_calls,
+                    )
                     state = self._process_response(state, response)
                     state.iteration += 1
-                    yield ("", False)
                 else:
-                    # Final response - yield content as tokens
-                    state.add_assistant_message(content=response.content)
-                    state.final_response = response.content
+                    # Final text response
+                    state.add_assistant_message(content=full_content)
+                    state.final_response = full_content
                     state.status = AgentStatus.COMPLETED
                     state.iteration += 1
-
-                    # Yield content (could be chunked if needed)
-                    for char in response.content:
-                        yield (char, True)
             else:
                 # No tools, stream directly
                 collected: list[str] = []

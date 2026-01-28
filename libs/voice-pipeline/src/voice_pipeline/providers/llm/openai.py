@@ -485,6 +485,159 @@ class OpenAILLMProvider(BaseProvider, LLMInterface):
             self._handle_error(e)
             raise
 
+    async def generate_stream_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        system_prompt: Optional[str] = None,
+        tool_choice: str = "auto",
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs,
+    ) -> AsyncIterator[LLMChunk]:
+        """Generate streaming response with tool calling support.
+
+        Uses OpenAI's streaming API to yield text tokens as they arrive.
+        Tool call deltas are accumulated and yielded incrementally.
+
+        Args:
+            messages: Conversation history (may include tool results).
+            tools: List of tool schemas in OpenAI format.
+            system_prompt: Optional system prompt.
+            tool_choice: Tool selection mode.
+            temperature: Sampling temperature.
+            max_tokens: Maximum tokens to generate.
+            **kwargs: Additional parameters.
+
+        Yields:
+            LLMChunk objects with text and/or tool_calls_delta.
+        """
+        if self._async_client is None:
+            raise RuntimeError("Client not connected. Call connect() first.")
+
+        # Build messages with system prompt
+        full_messages = []
+
+        effective_system_prompt = (
+            system_prompt or self._llm_config.default_system_prompt
+        )
+        if effective_system_prompt:
+            full_messages.append({
+                "role": "system",
+                "content": effective_system_prompt,
+            })
+
+        full_messages.extend(messages)
+
+        # Build request
+        request_kwargs = {
+            "model": self._llm_config.model,
+            "messages": full_messages,
+            "tools": tools,
+            "tool_choice": tool_choice,
+            "temperature": temperature,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+
+        if max_tokens or self._llm_config.default_max_tokens:
+            request_kwargs["max_tokens"] = (
+                max_tokens or self._llm_config.default_max_tokens
+            )
+
+        if kwargs.get("stop"):
+            request_kwargs["stop"] = kwargs.pop("stop")
+
+        request_kwargs.update(kwargs)
+
+        start_time = time.perf_counter()
+        finish_reason = None
+
+        # Accumulate tool calls by index
+        tool_calls_acc: dict[int, dict[str, Any]] = {}
+
+        try:
+            stream = await self._async_client.chat.completions.create(
+                **request_kwargs
+            )
+
+            async for chunk in stream:
+                if not chunk.choices:
+                    # Usage-only chunk at the end
+                    if chunk.usage:
+                        yield LLMChunk(
+                            text="",
+                            is_final=True,
+                            finish_reason=finish_reason,
+                            usage={
+                                "prompt_tokens": chunk.usage.prompt_tokens,
+                                "completion_tokens": chunk.usage.completion_tokens,
+                                "total_tokens": chunk.usage.total_tokens,
+                            },
+                        )
+                    continue
+
+                choice = chunk.choices[0]
+                delta = choice.delta
+
+                # Stream text content immediately
+                if delta.content:
+                    yield LLMChunk(text=delta.content)
+
+                # Accumulate tool call deltas
+                if delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in tool_calls_acc:
+                            tool_calls_acc[idx] = {
+                                "id": tc_delta.id or "",
+                                "type": "function",
+                                "function": {
+                                    "name": "",
+                                    "arguments": "",
+                                },
+                            }
+                        tc = tool_calls_acc[idx]
+                        if tc_delta.id:
+                            tc["id"] = tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                tc["function"]["name"] += tc_delta.function.name
+                            if tc_delta.function.arguments:
+                                tc["function"]["arguments"] += tc_delta.function.arguments
+
+                # Capture finish reason
+                if choice.finish_reason:
+                    finish_reason = choice.finish_reason
+
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            self._metrics.record_success(latency_ms)
+
+            # If tool calls were accumulated, yield them as final chunk
+            if tool_calls_acc:
+                sorted_calls = [
+                    tool_calls_acc[i]
+                    for i in sorted(tool_calls_acc.keys())
+                ]
+                yield LLMChunk(
+                    text="",
+                    tool_calls_delta=sorted_calls,
+                    finish_reason="tool_calls",
+                    is_final=True,
+                )
+            elif finish_reason != "tool_calls":
+                # Final chunk without tool calls (text-only response)
+                yield LLMChunk(
+                    text="",
+                    is_final=True,
+                    finish_reason=finish_reason,
+                )
+
+        except Exception as e:
+            self._metrics.record_failure(str(e))
+            self._handle_error(e)
+            raise
+
     def supports_tools(self) -> bool:
         """Check if this LLM supports tool calling.
 

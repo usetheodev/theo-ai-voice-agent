@@ -792,6 +792,170 @@ class TestStreamingVoiceAgent:
         assert len(tokens) > 0
 
 
+class MockStreamingLLM(LLMInterface):
+    """Mock LLM that yields chunks progressively via generate_stream_with_tools."""
+
+    def __init__(
+        self,
+        chunks: Optional[list[LLMChunk]] = None,
+        supports_tools_flag: bool = True,
+    ):
+        self._chunks = chunks or []
+        self._supports_tools = supports_tools_flag
+        self.call_count = 0
+
+    async def generate_stream(
+        self,
+        messages: list[dict[str, str]],
+        system_prompt: Optional[str] = None,
+        **kwargs,
+    ) -> AsyncIterator[LLMChunk]:
+        for chunk in self._chunks:
+            yield chunk
+
+    async def generate_stream_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        system_prompt: Optional[str] = None,
+        **kwargs,
+    ) -> AsyncIterator[LLMChunk]:
+        self.call_count += 1
+        for chunk in self._chunks:
+            yield chunk
+
+    async def generate_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        system_prompt: Optional[str] = None,
+        **kwargs,
+    ) -> LLMResponse:
+        self.call_count += 1
+        return LLMResponse(content="fallback", tool_calls=[])
+
+    def supports_tools(self) -> bool:
+        return self._supports_tools
+
+
+class TestAgentLoopStreaming:
+    """Tests for real streaming in AgentLoop._think_and_act_stream()."""
+
+    @pytest.mark.asyncio
+    async def test_stream_real_streaming(self):
+        """Test that tokens arrive individually via streaming, not all at once."""
+        chunks = [
+            LLMChunk(text="Hello"),
+            LLMChunk(text=" "),
+            LLMChunk(text="world"),
+            LLMChunk(text="!", is_final=True, finish_reason="stop"),
+        ]
+        llm = MockStreamingLLM(chunks=chunks)
+
+        @voice_tool
+        def dummy_tool() -> str:
+            return "result"
+
+        loop = AgentLoop(llm=llm, tools=[dummy_tool])
+
+        tokens = []
+        async for token in loop.run_stream("Hi"):
+            tokens.append(token)
+
+        assert len(tokens) >= 3
+        assert "".join(tokens) == "Hello world!"
+
+    @pytest.mark.asyncio
+    async def test_stream_with_tool_calls(self):
+        """Test streaming when LLM returns tool calls — tools are executed."""
+        tool_call = {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "get_time", "arguments": "{}"},
+        }
+        # First call: tool call chunk (no text)
+        tool_chunks = [
+            LLMChunk(text="", tool_calls_delta=[tool_call], is_final=True, finish_reason="tool_calls"),
+        ]
+        # Second call: final text response
+        text_chunks = [
+            LLMChunk(text="The time is 14:30", is_final=True, finish_reason="stop"),
+        ]
+
+        call_index = 0
+        all_chunks = [tool_chunks, text_chunks]
+
+        class MultiCallStreamingLLM(LLMInterface):
+            def __init__(self):
+                self.call_count = 0
+
+            async def generate_stream(self, messages, **kwargs):
+                yield LLMChunk(text="", is_final=True)
+
+            async def generate_stream_with_tools(self, messages, tools, **kwargs):
+                idx = self.call_count
+                self.call_count += 1
+                for chunk in all_chunks[idx]:
+                    yield chunk
+
+            def supports_tools(self):
+                return True
+
+        @voice_tool
+        def get_time() -> str:
+            return "14:30"
+
+        llm = MultiCallStreamingLLM()
+        loop = AgentLoop(llm=llm, tools=[get_time])
+
+        tokens = []
+        async for token in loop.run_stream("What time is it?"):
+            tokens.append(token)
+
+        full = "".join(tokens)
+        assert "14:30" in full
+        assert llm.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_stream_fallback(self):
+        """Test that LLMs without generate_stream_with_tools use the default fallback."""
+
+        class FallbackLLM(LLMInterface):
+            """LLM that only implements generate_with_tools (no stream override)."""
+
+            def __init__(self):
+                self.call_count = 0
+
+            async def generate_stream(self, messages, **kwargs):
+                yield LLMChunk(text="fallback", is_final=True)
+
+            async def generate_with_tools(self, messages, tools, **kwargs):
+                self.call_count += 1
+                return LLMResponse(
+                    content="Fallback response",
+                    tool_calls=[],
+                    finish_reason="stop",
+                )
+
+            def supports_tools(self):
+                return True
+
+        @voice_tool
+        def dummy() -> str:
+            return "ok"
+
+        llm = FallbackLLM()
+        loop = AgentLoop(llm=llm, tools=[dummy])
+
+        tokens = []
+        async for token in loop.run_stream("Hello"):
+            tokens.append(token)
+
+        full = "".join(tokens)
+        assert full == "Fallback response"
+        assert llm.call_count == 1
+
+
 class TestCreateVoiceAgent:
     """Tests for create_voice_agent factory."""
 

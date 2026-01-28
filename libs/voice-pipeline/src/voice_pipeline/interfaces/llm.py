@@ -23,6 +23,9 @@ class LLMChunk:
     usage: Optional[dict] = None
     """Token usage statistics (if available)."""
 
+    tool_calls_delta: Optional[list[dict[str, Any]]] = None
+    """Incremental tool call deltas during streaming."""
+
 
 @dataclass
 class LLMResponse:
@@ -223,6 +226,60 @@ class LLMInterface(VoiceRunnable[LLMInput, str]):
             f"{self.__class__.__name__} does not support tool calling. "
             "Implement generate_with_tools() to enable tools."
         )
+
+    async def generate_stream_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        system_prompt: Optional[str] = None,
+        tool_choice: str = "auto",
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs,
+    ) -> AsyncIterator[LLMChunk]:
+        """Generate streaming response with tool calling support.
+
+        Streams text tokens as they arrive. If the LLM decides to call
+        tools, tool_calls_delta chunks are yielded incrementally.
+
+        Default fallback calls generate_with_tools() and emits
+        the result as a single chunk (no streaming benefit).
+
+        Args:
+            messages: Conversation history (may include tool results).
+            tools: List of tool schemas in OpenAI format.
+            system_prompt: Optional system prompt.
+            tool_choice: Tool selection mode ("auto", "none", "required").
+            temperature: Sampling temperature (0.0 to 2.0).
+            max_tokens: Maximum tokens to generate.
+            **kwargs: Additional provider-specific parameters.
+
+        Yields:
+            LLMChunk objects with text and/or tool_calls_delta.
+        """
+        response = await self.generate_with_tools(
+            messages=messages,
+            tools=tools,
+            system_prompt=system_prompt,
+            tool_choice=tool_choice,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            **kwargs,
+        )
+
+        if response.has_tool_calls:
+            yield LLMChunk(
+                text=response.content or "",
+                tool_calls_delta=response.tool_calls,
+                finish_reason="tool_calls",
+                is_final=True,
+            )
+        else:
+            yield LLMChunk(
+                text=response.content,
+                finish_reason=response.finish_reason,
+                is_final=True,
+            )
 
     def supports_tools(self) -> bool:
         """Check if this LLM implementation supports tool calling.
