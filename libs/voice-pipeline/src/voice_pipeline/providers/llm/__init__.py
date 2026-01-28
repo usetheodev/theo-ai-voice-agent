@@ -2,6 +2,7 @@
 
 Available providers:
 - OpenAILLMProvider: OpenAI GPT models (GPT-4, GPT-3.5, etc.)
+- AnthropicLLMProvider: Anthropic Claude models (Claude 3.5 Sonnet, Opus, Haiku)
 - OllamaLLMProvider: Ollama local models (Llama, Mistral, Gemma, etc.)
 - HuggingFaceLLMProvider: HuggingFace Transformers with BitsAndBytes quantization
 """
@@ -9,6 +10,10 @@ Available providers:
 from voice_pipeline.providers.llm.openai import (
     OpenAILLMProvider,
     OpenAILLMConfig,
+)
+from voice_pipeline.providers.llm.anthropic import (
+    AnthropicLLMProvider,
+    AnthropicLLMConfig,
 )
 from voice_pipeline.providers.llm.ollama import (
     OllamaLLMProvider,
@@ -23,6 +28,8 @@ from voice_pipeline.providers.llm.huggingface import (
 __all__ = [
     "OpenAILLMProvider",
     "OpenAILLMConfig",
+    "AnthropicLLMProvider",
+    "AnthropicLLMConfig",
     "OllamaLLMProvider",
     "OllamaLLMConfig",
     "HuggingFaceLLMProvider",

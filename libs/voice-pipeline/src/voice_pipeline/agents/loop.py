@@ -9,13 +9,80 @@ and action in LLM agents:
 4. REPEAT: Back to step 1 until final response
 """
 
-from typing import Any, AsyncIterator, Optional
+import random
+from dataclasses import dataclass, field
+from typing import Any, AsyncIterator, Callable, Optional
 
 from voice_pipeline.agents.state import AgentState, AgentStatus
 from voice_pipeline.agents.tool_node import ToolNode
 from voice_pipeline.interfaces.llm import LLMInterface, LLMResponse
 from voice_pipeline.tools.base import VoiceTool
 from voice_pipeline.tools.executor import ToolCall, ToolExecutor
+
+
+@dataclass
+class ToolFeedbackConfig:
+    """Configuration for verbal feedback during tool execution.
+
+    In voice AI applications, users shouldn't experience silence
+    while tools are executing. This config defines phrases the
+    agent speaks while waiting for tools to complete.
+
+    Attributes:
+        enabled: Whether to emit feedback phrases.
+        phrases: List of phrases to randomly choose from.
+        per_tool_phrases: Tool-specific phrases (tool_name -> phrases).
+        phrase_selector: Optional custom selector function.
+
+    Example:
+        >>> config = ToolFeedbackConfig(
+        ...     enabled=True,
+        ...     phrases=["Let me check...", "One moment..."],
+        ...     per_tool_phrases={
+        ...         "web_search": ["Searching the web...", "Looking that up..."],
+        ...         "get_weather": ["Checking the forecast..."],
+        ...     },
+        ... )
+        >>> loop = AgentLoop(llm=my_llm, tool_feedback=config)
+    """
+
+    enabled: bool = True
+    """Whether feedback is enabled."""
+
+    phrases: list[str] = field(default_factory=lambda: [
+        "Let me check on that.",
+        "One moment please.",
+        "Working on it.",
+        "Let me look into that.",
+    ])
+    """Default phrases to use."""
+
+    per_tool_phrases: dict[str, list[str]] = field(default_factory=dict)
+    """Tool-specific phrases. Keys are tool names."""
+
+    phrase_selector: Optional[Callable[[str, list[str]], str]] = None
+    """Custom function to select a phrase. Args: (tool_name, available_phrases)."""
+
+    def get_phrase(self, tool_name: str) -> str:
+        """Get a feedback phrase for a tool.
+
+        Args:
+            tool_name: Name of the tool being executed.
+
+        Returns:
+            A feedback phrase to speak.
+        """
+        # Get tool-specific phrases if available
+        available = self.per_tool_phrases.get(tool_name, self.phrases)
+        if not available:
+            available = self.phrases
+
+        # Use custom selector if provided
+        if self.phrase_selector:
+            return self.phrase_selector(tool_name, available)
+
+        # Default: random selection
+        return random.choice(available)
 
 
 class AgentLoop:
@@ -59,6 +126,7 @@ class AgentLoop:
         max_iterations: int = 10,
         stop_on_first_response: bool = True,
         parallel_tool_execution: bool = True,
+        tool_feedback: Optional[ToolFeedbackConfig] = None,
     ):
         """Initialize the agent loop.
 
@@ -69,11 +137,14 @@ class AgentLoop:
             max_iterations: Maximum iterations before stopping.
             stop_on_first_response: Stop when LLM responds without tools.
             parallel_tool_execution: Execute multiple tools in parallel.
+            tool_feedback: Configuration for verbal feedback during tool execution.
+                If None, no feedback is emitted. Use ToolFeedbackConfig() for defaults.
         """
         self.llm = llm
         self.system_prompt = system_prompt
         self.max_iterations = max_iterations
         self.stop_on_first_response = stop_on_first_response
+        self.tool_feedback = tool_feedback
 
         # Set up tool execution
         self.executor = ToolExecutor(tools=tools or [])
@@ -129,7 +200,8 @@ class AgentLoop:
         """Execute the agent loop with streaming output.
 
         Yields tokens as they're generated during the final response.
-        Tool calls are executed silently between yields.
+        Tool calls are executed between yields, with optional verbal
+        feedback if tool_feedback is configured.
 
         Args:
             input: User input to process.
@@ -137,7 +209,7 @@ class AgentLoop:
                 If provided, used as-is (input should already be in the state).
 
         Yields:
-            Tokens from the final response.
+            Tokens from the final response (and feedback phrases if configured).
         """
         if initial_state is not None:
             state = initial_state
@@ -156,6 +228,13 @@ class AgentLoop:
 
             # OBSERVE: Execute pending tool calls
             if state.pending_tool_calls:
+                # Emit feedback phrase before tool execution
+                if self.tool_feedback and self.tool_feedback.enabled:
+                    # Get first tool name for context (or use first one)
+                    tool_name = state.pending_tool_calls[0].name
+                    feedback = self.tool_feedback.get_phrase(tool_name)
+                    yield feedback
+
                 state = await self.tool_node.ainvoke(state)
 
         if state.final_response is None:

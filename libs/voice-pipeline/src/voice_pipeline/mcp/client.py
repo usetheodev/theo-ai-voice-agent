@@ -26,8 +26,13 @@ from voice_pipeline.mcp.types import (
     MCPResult,
     MCPTool,
     MCPToolCall,
+    SamplingRequest,
+    SamplingResponse,
     TransportType,
 )
+
+# Type for sampling handler callback
+SamplingHandler = Any  # Callable[[SamplingRequest], Awaitable[SamplingResponse]]
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +67,17 @@ class MCPClientConfig:
         }
     )
     """Client info for handshake."""
+
+    sampling_handler: Optional[SamplingHandler] = None
+    """Handler for sampling/createMessage requests from server.
+
+    If provided, the client will declare sampling capability and
+    process sampling requests. The handler should be an async function:
+
+        async def my_handler(request: SamplingRequest) -> SamplingResponse:
+            # Use your LLM to generate response
+            ...
+    """
 
 
 @dataclass
@@ -151,6 +167,13 @@ class MCPClient:
         self._process: Optional[asyncio.subprocess.Process] = None
         self._request_id = 0
 
+        # SSE transport state
+        self._sse_session: Optional[Any] = None  # aiohttp.ClientSession
+        self._sse_response: Optional[Any] = None  # aiohttp.ClientResponse
+        self._sse_endpoint: Optional[str] = None  # POST endpoint for requests
+        self._sse_reader_task: Optional[asyncio.Task] = None
+        self._pending_requests: dict[int, asyncio.Future] = {}
+
     async def __aenter__(self) -> "MCPClient":
         """Connect on context entry."""
         await self.connect()
@@ -179,15 +202,22 @@ class MCPClient:
         try:
             if self.config.transport == TransportType.STDIO:
                 await self._connect_stdio()
+            elif self.config.transport == TransportType.SSE:
+                await self._connect_sse()
             else:
                 await self._connect_http()
+
+            # Build client capabilities
+            client_caps = MCPCapabilities(
+                sampling=self.config.sampling_handler is not None,
+            )
 
             # Initialize session
             response = await self._request(
                 "initialize",
                 {
                     "protocolVersion": "2024-11-05",
-                    "capabilities": MCPCapabilities().to_dict(),
+                    "capabilities": client_caps.to_dict(),
                     "clientInfo": self.config.client_info,
                 },
             )
@@ -196,6 +226,7 @@ class MCPClient:
                 tools="tools" in response.get("capabilities", {}),
                 resources="resources" in response.get("capabilities", {}),
                 prompts="prompts" in response.get("capabilities", {}),
+                sampling="sampling" in response.get("capabilities", {}),
             )
             self.connection.server_info = response.get("serverInfo", {})
             self.connection.is_connected = True
@@ -218,6 +249,9 @@ class MCPClient:
             await self._process.wait()
             self._process = None
 
+        # Clean up SSE resources
+        await self._cleanup_sse()
+
         if self.connection:
             self.connection.is_connected = False
 
@@ -237,6 +271,179 @@ class MCPClient:
         # HTTP is stateless, just verify server is reachable
         # Actual requests happen per-call
         pass
+
+    async def _connect_sse(self) -> None:
+        """Connect via SSE (Server-Sent Events) transport.
+
+        Establishes SSE connection to server and starts background
+        reader task to receive responses.
+
+        The MCP SSE transport works as follows:
+        1. Client opens SSE connection to server's /sse endpoint
+        2. Server sends 'endpoint' event with URL for POST requests
+        3. Client sends JSON-RPC requests via POST to that endpoint
+        4. Server sends responses via SSE 'message' events
+        """
+        if aiohttp is None:
+            raise ImportError(
+                "aiohttp is required for SSE transport. "
+                "Install with: pip install aiohttp"
+            )
+
+        # Create session
+        self._sse_session = aiohttp.ClientSession()
+
+        # Determine SSE endpoint URL
+        sse_url = self.url
+        if not sse_url.endswith("/sse"):
+            sse_url = sse_url.rstrip("/") + "/sse"
+
+        try:
+            # Open SSE connection
+            self._sse_response = await self._sse_session.get(
+                sse_url,
+                headers={
+                    "Accept": "text/event-stream",
+                    "Cache-Control": "no-cache",
+                    **self.config.headers,
+                },
+                timeout=aiohttp.ClientTimeout(
+                    total=None,  # No total timeout for SSE
+                    connect=self.config.timeout,
+                ),
+            )
+
+            if self._sse_response.status != 200:
+                raise MCPError(
+                    code=MCPErrorCode.CONNECTION_ERROR,
+                    message=f"SSE connection failed: HTTP {self._sse_response.status}",
+                )
+
+            # Wait for endpoint event
+            self._sse_endpoint = await self._wait_for_endpoint()
+
+            # Start background reader task
+            self._sse_reader_task = asyncio.create_task(self._sse_reader_loop())
+
+            logger.info("SSE connection established. Endpoint: %s", self._sse_endpoint)
+
+        except Exception as e:
+            await self._cleanup_sse()
+            raise MCPError(
+                code=MCPErrorCode.CONNECTION_ERROR,
+                message=f"SSE connection failed: {e}",
+            )
+
+    async def _wait_for_endpoint(self) -> str:
+        """Wait for and parse the endpoint event from SSE stream.
+
+        Returns:
+            The endpoint URL for sending requests.
+
+        Raises:
+            MCPError: If endpoint event not received or invalid.
+        """
+        if self._sse_response is None:
+            raise MCPError(
+                code=MCPErrorCode.CONNECTION_ERROR,
+                message="SSE response not initialized",
+            )
+
+        event_type = None
+        event_data = ""
+
+        async for line_bytes in self._sse_response.content:
+            line = line_bytes.decode("utf-8").rstrip("\r\n")
+
+            if line.startswith("event:"):
+                event_type = line[6:].strip()
+            elif line.startswith("data:"):
+                event_data = line[5:].strip()
+            elif line == "":
+                # End of event
+                if event_type == "endpoint":
+                    # Parse endpoint URL
+                    endpoint = event_data
+                    # If relative URL, make absolute
+                    if endpoint.startswith("/"):
+                        from urllib.parse import urljoin
+                        endpoint = urljoin(self.url, endpoint)
+                    return endpoint
+                # Reset for next event
+                event_type = None
+                event_data = ""
+
+        raise MCPError(
+            code=MCPErrorCode.CONNECTION_ERROR,
+            message="SSE stream closed before endpoint event received",
+        )
+
+    async def _sse_reader_loop(self) -> None:
+        """Background task that reads SSE events and dispatches responses."""
+        if self._sse_response is None:
+            return
+
+        event_type = None
+        event_data = ""
+
+        try:
+            async for line_bytes in self._sse_response.content:
+                line = line_bytes.decode("utf-8").rstrip("\r\n")
+
+                if line.startswith("event:"):
+                    event_type = line[6:].strip()
+                elif line.startswith("data:"):
+                    event_data = line[5:].strip()
+                elif line == "":
+                    # End of event - process it
+                    if event_type == "message" and event_data:
+                        try:
+                            response = json.loads(event_data)
+                            request_id = response.get("id")
+                            if request_id in self._pending_requests:
+                                future = self._pending_requests.pop(request_id)
+                                if not future.done():
+                                    future.set_result(response)
+                        except json.JSONDecodeError:
+                            logger.warning("Invalid JSON in SSE message: %s", event_data)
+
+                    # Reset for next event
+                    event_type = None
+                    event_data = ""
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning("SSE reader error: %s", e)
+            # Cancel all pending requests
+            for future in self._pending_requests.values():
+                if not future.done():
+                    future.set_exception(MCPError(
+                        code=MCPErrorCode.CONNECTION_ERROR,
+                        message=f"SSE connection lost: {e}",
+                    ))
+            self._pending_requests.clear()
+
+    async def _cleanup_sse(self) -> None:
+        """Clean up SSE connection resources."""
+        if self._sse_reader_task:
+            self._sse_reader_task.cancel()
+            try:
+                await self._sse_reader_task
+            except asyncio.CancelledError:
+                pass
+            self._sse_reader_task = None
+
+        if self._sse_response:
+            self._sse_response.close()
+            self._sse_response = None
+
+        if self._sse_session:
+            await self._sse_session.close()
+            self._sse_session = None
+
+        self._sse_endpoint = None
+        self._pending_requests.clear()
 
     async def _request(
         self,
@@ -267,6 +474,8 @@ class MCPClient:
 
         if self.config.transport == TransportType.STDIO:
             return await self._request_stdio(request)
+        elif self.config.transport == TransportType.SSE:
+            return await self._request_sse(request)
         else:
             return await self._request_http(request)
 
@@ -292,6 +501,21 @@ class MCPClient:
             data = json.dumps(notification) + "\n"
             self._process.stdin.write(data.encode())
             await self._process.stdin.drain()
+        elif self.config.transport == TransportType.SSE and self._sse_session and self._sse_endpoint:
+            # Send notification via POST (no response expected)
+            try:
+                async with self._sse_session.post(
+                    self._sse_endpoint,
+                    json=notification,
+                    headers={
+                        "Content-Type": "application/json",
+                        **self.config.headers,
+                    },
+                    timeout=aiohttp.ClientTimeout(total=self.config.timeout),
+                ):
+                    pass
+            except Exception as e:
+                logger.warning("Failed to send SSE notification: %s", e)
 
     async def _request_stdio(self, request: dict) -> dict[str, Any]:
         """Send request via stdio."""
@@ -318,6 +542,79 @@ class MCPClient:
             )
 
         return response.get("result", {})
+
+    async def _request_sse(self, request: dict) -> dict[str, Any]:
+        """Send request via SSE transport.
+
+        Sends POST request to the endpoint URL and waits for response
+        via SSE event stream.
+
+        Args:
+            request: JSON-RPC request dict.
+
+        Returns:
+            Response result.
+
+        Raises:
+            MCPError: If request fails or times out.
+        """
+        if self._sse_session is None or self._sse_endpoint is None:
+            raise MCPError(
+                code=MCPErrorCode.CONNECTION_ERROR,
+                message="SSE not connected",
+            )
+
+        request_id = request.get("id")
+
+        # Create future for response
+        future: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._pending_requests[request_id] = future
+
+        try:
+            # Send POST request to endpoint
+            async with self._sse_session.post(
+                self._sse_endpoint,
+                json=request,
+                headers={
+                    "Content-Type": "application/json",
+                    **self.config.headers,
+                },
+                timeout=aiohttp.ClientTimeout(total=self.config.timeout),
+            ) as resp:
+                if resp.status != 200 and resp.status != 202:
+                    raise MCPError(
+                        code=MCPErrorCode.CONNECTION_ERROR,
+                        message=f"SSE request failed: HTTP {resp.status}",
+                    )
+
+            # Wait for response via SSE
+            response = await asyncio.wait_for(
+                future,
+                timeout=self.config.timeout,
+            )
+
+            if "error" in response:
+                raise MCPError(
+                    code=MCPErrorCode.INTERNAL_ERROR,
+                    message=response["error"].get("message", "Unknown error"),
+                )
+
+            return response.get("result", {})
+
+        except asyncio.TimeoutError:
+            self._pending_requests.pop(request_id, None)
+            raise MCPError(
+                code=MCPErrorCode.TIMEOUT,
+                message="SSE request timed out",
+            )
+        except Exception as e:
+            self._pending_requests.pop(request_id, None)
+            if isinstance(e, MCPError):
+                raise
+            raise MCPError(
+                code=MCPErrorCode.CONNECTION_ERROR,
+                message=f"SSE request failed: {e}",
+            )
 
     def _sync_request_http(self, request: dict) -> dict[str, Any]:
         """Send request via HTTP using urllib (sync, thread-safe fallback).
@@ -398,15 +695,33 @@ class MCPClient:
         MCPErrorCode.TIMEOUT,
     })
 
+    async def _reconnect(self) -> None:
+        """Attempt to reconnect to the MCP server.
+
+        Disconnects (if needed) and reconnects with a fresh session.
+        Used internally when connection errors are detected.
+
+        Raises:
+            MCPError: If reconnection fails.
+        """
+        logger.info("MCP client attempting reconnection to %s", self.url)
+        try:
+            await self.disconnect()
+        except Exception:
+            pass  # Ignore disconnect errors
+
+        await self.connect()
+        logger.info("MCP client reconnected successfully")
+
     async def _request_with_retry(
         self,
         method: str,
         params: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
-        """Send a request with exponential-backoff retry.
+        """Send a request with exponential-backoff retry and auto-reconnect.
 
-        Only retries on transient errors (CONNECTION_ERROR, TIMEOUT).
-        Logic errors propagate immediately.
+        On CONNECTION_ERROR or TIMEOUT, attempts to reconnect before
+        retrying. Logic errors propagate immediately.
 
         Uses ``config.retry_attempts`` (default 3).
 
@@ -430,13 +745,27 @@ class MCPClient:
                 last_error = e
                 if e.code not in self._RETRYABLE_CODES:
                     raise
+
+                # Mark connection as stale on connection errors
+                if self.connection:
+                    self.connection.is_connected = False
+
                 if attempt < max_attempts - 1:
                     delay = (2 ** attempt) * 0.1  # 0.1s, 0.2s, 0.4s …
                     logger.warning(
-                        "MCP request '%s' failed (attempt %d/%d): %s — retrying in %.1fs",
+                        "MCP request '%s' failed (attempt %d/%d): %s — reconnecting in %.1fs",
                         method, attempt + 1, max_attempts, e.message, delay,
                     )
                     await asyncio.sleep(delay)
+
+                    # Attempt reconnection before next retry
+                    try:
+                        await self._reconnect()
+                    except MCPError as reconnect_error:
+                        logger.warning(
+                            "MCP reconnection failed: %s — will retry",
+                            reconnect_error.message,
+                        )
 
         # All attempts exhausted
         raise last_error  # type: ignore[misc]

@@ -37,6 +37,7 @@ from voice_pipeline.tools.base import (
     FunctionTool,
     ToolParameter,
     ToolResult,
+    ToolResultChunk,
     VoiceTool,
 )
 from voice_pipeline.tools.decorator import tool, voice_tool
@@ -45,6 +46,16 @@ from voice_pipeline.tools.executor import (
     ToolExecutor,
     create_executor,
 )
+from voice_pipeline.tools.permissions import (
+    PermissionCheckResult,
+    PermissionLevel,
+    PermissionPolicy,
+    ToolPermission,
+    ToolPermissionChecker,
+    create_moderate_policy,
+    create_permissive_policy,
+    create_safe_policy,
+)
 
 __all__ = [
     # Base
@@ -52,6 +63,7 @@ __all__ = [
     "FunctionTool",
     "ToolParameter",
     "ToolResult",
+    "ToolResultChunk",
     # Decorator
     "voice_tool",
     "tool",
@@ -59,4 +71,13 @@ __all__ = [
     "ToolExecutor",
     "ToolCall",
     "create_executor",
+    # Permissions
+    "PermissionLevel",
+    "PermissionPolicy",
+    "ToolPermission",
+    "PermissionCheckResult",
+    "ToolPermissionChecker",
+    "create_safe_policy",
+    "create_moderate_policy",
+    "create_permissive_policy",
 ]

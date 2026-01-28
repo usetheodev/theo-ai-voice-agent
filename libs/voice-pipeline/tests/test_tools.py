@@ -4,12 +4,21 @@ import pytest
 
 from voice_pipeline.tools import (
     FunctionTool,
+    PermissionCheckResult,
+    PermissionLevel,
+    PermissionPolicy,
     ToolCall,
     ToolExecutor,
     ToolParameter,
+    ToolPermission,
+    ToolPermissionChecker,
     ToolResult,
+    ToolResultChunk,
     VoiceTool,
     create_executor,
+    create_moderate_policy,
+    create_permissive_policy,
+    create_safe_policy,
     tool,
     voice_tool,
 )
@@ -563,3 +572,519 @@ class TestBuiltinTools:
 
         # Should have multiple datetime tools
         assert len(executor.list_tools()) >= 5
+
+
+# ==================== Test Tool Result Streaming (M-05) ====================
+
+
+class TestToolResultChunk:
+    """Tests for ToolResultChunk."""
+
+    def test_basic_chunk(self):
+        """Test basic chunk creation."""
+        from voice_pipeline.tools import ToolResultChunk
+
+        chunk = ToolResultChunk(text="Processing...", is_final=False)
+        assert chunk.text == "Processing..."
+        assert chunk.is_final is False
+        assert chunk.metadata == {}
+
+    def test_final_chunk(self):
+        """Test final chunk."""
+        from voice_pipeline.tools import ToolResultChunk
+
+        chunk = ToolResultChunk(
+            text="Done!",
+            is_final=True,
+            metadata={"status": "success"},
+        )
+        assert chunk.is_final is True
+        assert chunk.metadata["status"] == "success"
+
+
+class TestToolStreaming:
+    """Tests for tool streaming support (M-05)."""
+
+    @pytest.mark.asyncio
+    async def test_voicetool_execute_stream_default(self):
+        """Test default execute_stream falls back to execute."""
+        from voice_pipeline.tools import ToolResultChunk
+
+        @voice_tool
+        def simple_tool() -> str:
+            """A simple tool."""
+            return "Hello, world!"
+
+        chunks = []
+        async for chunk in simple_tool.execute_stream():
+            chunks.append(chunk)
+
+        assert len(chunks) == 1
+        assert chunks[0].text == "Hello, world!"
+        assert chunks[0].is_final is True
+
+    @pytest.mark.asyncio
+    async def test_function_tool_with_async_generator(self):
+        """Test FunctionTool with async generator function."""
+        from voice_pipeline.tools import ToolResultChunk
+
+        async def streaming_search(query: str):
+            """Search that streams results."""
+            yield "Searching..."
+            yield f"Found results for: {query}"
+            yield "Done!"
+
+        tool = FunctionTool.from_function(
+            streaming_search,
+            name="streaming_search",
+            description="Search with streaming",
+        )
+
+        assert tool.supports_streaming() is True
+
+        chunks = []
+        async for chunk in tool.execute_stream(query="test"):
+            chunks.append(chunk)
+
+        # Should have 3 content chunks + 1 final chunk
+        assert len(chunks) == 4
+        assert chunks[0].text == "Searching..."
+        assert chunks[1].text == "Found results for: test"
+        assert chunks[2].text == "Done!"
+        assert chunks[3].is_final is True
+
+    @pytest.mark.asyncio
+    async def test_function_tool_streaming_with_result_chunks(self):
+        """Test async generator that yields ToolResultChunk directly."""
+        from voice_pipeline.tools import ToolResultChunk
+
+        async def tool_with_chunks():
+            """Tool that yields ToolResultChunk."""
+            yield ToolResultChunk(text="Step 1 complete")
+            yield ToolResultChunk(text="Step 2 complete")
+            yield ToolResultChunk(text="All done!", is_final=True)
+
+        tool = FunctionTool.from_function(
+            tool_with_chunks,
+            name="chunked_tool",
+            description="Tool with explicit chunks",
+        )
+
+        chunks = []
+        async for chunk in tool.execute_stream():
+            chunks.append(chunk)
+
+        # 3 explicit chunks + 1 auto final chunk
+        assert len(chunks) >= 3
+        assert chunks[0].text == "Step 1 complete"
+        assert chunks[1].text == "Step 2 complete"
+        assert chunks[2].text == "All done!"
+
+    @pytest.mark.asyncio
+    async def test_non_streaming_tool_reports_no_support(self):
+        """Test that non-streaming tools report no streaming support."""
+
+        @voice_tool
+        def regular_tool() -> str:
+            """A regular tool."""
+            return "result"
+
+        assert regular_tool.supports_streaming() is False
+
+    @pytest.mark.asyncio
+    async def test_voicetool_execute_stream_on_error(self):
+        """Test execute_stream handles errors gracefully."""
+        from voice_pipeline.tools import ToolResultChunk
+
+        @voice_tool
+        def failing_tool() -> str:
+            """A tool that fails."""
+            raise ValueError("Intentional failure")
+
+        chunks = []
+        async for chunk in failing_tool.execute_stream():
+            chunks.append(chunk)
+
+        assert len(chunks) == 1
+        assert chunks[0].is_final is True
+        assert "Error" in chunks[0].text
+
+    @pytest.mark.asyncio
+    async def test_streaming_tool_error_handling(self):
+        """Test streaming tool handles errors during iteration."""
+        from voice_pipeline.tools import ToolResultChunk
+
+        async def failing_generator():
+            """Generator that fails mid-stream."""
+            yield "Starting..."
+            raise RuntimeError("Mid-stream failure")
+
+        tool = FunctionTool.from_function(
+            failing_generator,
+            name="failing_gen",
+            description="Fails during streaming",
+        )
+
+        chunks = []
+        async for chunk in tool.execute_stream():
+            chunks.append(chunk)
+
+        # Should have the first chunk + error chunk
+        assert len(chunks) >= 1
+        # Last chunk should be error
+        assert chunks[-1].is_final is True
+        assert "Error" in chunks[-1].text or chunks[-1].metadata.get("error")
+
+
+# ==================== Test Tool Permissions (M-02) ====================
+
+
+class TestPermissionLevel:
+    """Tests for PermissionLevel enum."""
+
+    def test_level_ordering(self):
+        """Test that levels are ordered by danger."""
+        assert PermissionLevel.SAFE < PermissionLevel.MODERATE
+        assert PermissionLevel.MODERATE < PermissionLevel.SENSITIVE
+        assert PermissionLevel.SENSITIVE < PermissionLevel.DANGEROUS
+
+    def test_level_values(self):
+        """Test level integer values."""
+        assert int(PermissionLevel.SAFE) == 0
+        assert int(PermissionLevel.DANGEROUS) == 3
+
+
+class TestToolPermission:
+    """Tests for ToolPermission."""
+
+    def test_basic_permission(self):
+        """Test basic permission creation."""
+        perm = ToolPermission(
+            tool_name="test_tool",
+            level=PermissionLevel.MODERATE,
+        )
+
+        assert perm.tool_name == "test_tool"
+        assert perm.level == PermissionLevel.MODERATE
+
+    def test_validate_args_allowed(self):
+        """Test validation with allowed args only."""
+        perm = ToolPermission(
+            tool_name="test",
+            allowed_args={"a", "b"},
+        )
+
+        result = perm.validate_args({"a": 1, "b": 2})
+        assert result.allowed is True
+
+        result = perm.validate_args({"a": 1, "c": 3})
+        assert result.allowed is False
+        assert "not allowed" in result.reason
+
+    def test_validate_args_blocked(self):
+        """Test validation with blocked args."""
+        perm = ToolPermission(
+            tool_name="test",
+            blocked_args={"password", "secret"},
+        )
+
+        result = perm.validate_args({"name": "test"})
+        assert result.allowed is True
+
+        result = perm.validate_args({"name": "test", "password": "123"})
+        assert result.allowed is False
+        assert "Blocked" in result.reason
+
+    def test_validate_args_custom_validator(self):
+        """Test custom argument validators."""
+        perm = ToolPermission(
+            tool_name="test",
+            validators={
+                "count": lambda x: x > 0 and x < 100,
+            },
+        )
+
+        result = perm.validate_args({"count": 50})
+        assert result.allowed is True
+
+        result = perm.validate_args({"count": 200})
+        assert result.allowed is False
+
+
+class TestPermissionPolicy:
+    """Tests for PermissionPolicy."""
+
+    def test_default_policy(self):
+        """Test default policy values."""
+        policy = PermissionPolicy()
+
+        assert policy.default_level == PermissionLevel.SAFE
+        assert policy.max_allowed_level == PermissionLevel.DANGEROUS
+        assert len(policy.blocked_tools) == 0
+
+    def test_policy_with_blocklist(self):
+        """Test policy with blocked tools."""
+        policy = PermissionPolicy(
+            blocked_tools={"dangerous_tool", "evil_tool"},
+        )
+
+        assert "dangerous_tool" in policy.blocked_tools
+        perm = policy.get_tool_permission("dangerous_tool")
+        assert perm.tool_name == "dangerous_tool"
+
+    def test_policy_with_specific_permissions(self):
+        """Test policy with tool-specific permissions."""
+        policy = PermissionPolicy(
+            tool_permissions={
+                "admin_tool": ToolPermission(
+                    tool_name="admin_tool",
+                    level=PermissionLevel.DANGEROUS,
+                    max_calls_per_session=1,
+                ),
+            },
+        )
+
+        perm = policy.get_tool_permission("admin_tool")
+        assert perm.level == PermissionLevel.DANGEROUS
+        assert perm.max_calls_per_session == 1
+
+        # Unknown tool gets default
+        perm = policy.get_tool_permission("other_tool")
+        assert perm.level == PermissionLevel.SAFE
+
+
+class TestToolPermissionChecker:
+    """Tests for ToolPermissionChecker."""
+
+    def test_check_allowed(self):
+        """Test checking an allowed tool."""
+        policy = PermissionPolicy()
+        checker = ToolPermissionChecker(policy)
+
+        result = checker.check("any_tool", {"arg": "value"})
+        assert result.allowed is True
+
+    def test_check_blocked_tool(self):
+        """Test checking a blocked tool."""
+        policy = PermissionPolicy(blocked_tools={"blocked_tool"})
+        checker = ToolPermissionChecker(policy)
+
+        result = checker.check("blocked_tool", {})
+        assert result.allowed is False
+        assert "blocked by policy" in result.reason
+
+    def test_check_allowlist_mode(self):
+        """Test allowlist mode (only specific tools allowed)."""
+        policy = PermissionPolicy(
+            allowed_tools={"tool_a", "tool_b"},
+        )
+        checker = ToolPermissionChecker(policy)
+
+        result = checker.check("tool_a", {})
+        assert result.allowed is True
+
+        result = checker.check("tool_c", {})
+        assert result.allowed is False
+        assert "not in allowed list" in result.reason
+
+    def test_check_exceeds_max_level(self):
+        """Test that tools exceeding max level are blocked."""
+        policy = PermissionPolicy(
+            max_allowed_level=PermissionLevel.MODERATE,
+        )
+        checker = ToolPermissionChecker(policy)
+
+        # Pass the tool level directly
+        result = checker.check(
+            "sensitive_tool", {},
+            tool_level=PermissionLevel.SENSITIVE,
+        )
+        assert result.allowed is False
+        assert "exceeds max allowed" in result.reason
+
+    def test_check_requires_confirmation(self):
+        """Test that certain levels require confirmation."""
+        policy = PermissionPolicy(
+            require_confirmation_for={PermissionLevel.SENSITIVE},
+        )
+        checker = ToolPermissionChecker(policy)
+
+        result = checker.check(
+            "sensitive_tool", {},
+            tool_level=PermissionLevel.SENSITIVE,
+        )
+        assert result.allowed is True
+        assert result.requires_confirmation is True
+
+    def test_call_rate_limiting(self):
+        """Test call rate limiting per session."""
+        policy = PermissionPolicy(
+            tool_permissions={
+                "limited_tool": ToolPermission(
+                    tool_name="limited_tool",
+                    max_calls_per_session=2,
+                ),
+            },
+        )
+        checker = ToolPermissionChecker(policy)
+
+        # First two calls should work
+        result = checker.check("limited_tool", {})
+        assert result.allowed is True
+        checker.record_call("limited_tool")
+
+        result = checker.check("limited_tool", {})
+        assert result.allowed is True
+        checker.record_call("limited_tool")
+
+        # Third call should be blocked
+        result = checker.check("limited_tool", {})
+        assert result.allowed is False
+        assert "max calls" in result.reason
+
+    def test_reset_session(self):
+        """Test resetting session clears call counts."""
+        policy = PermissionPolicy(
+            tool_permissions={
+                "limited_tool": ToolPermission(
+                    tool_name="limited_tool",
+                    max_calls_per_session=1,
+                ),
+            },
+        )
+        checker = ToolPermissionChecker(policy)
+
+        checker.record_call("limited_tool")
+        result = checker.check("limited_tool", {})
+        assert result.allowed is False
+
+        checker.reset_session()
+        result = checker.check("limited_tool", {})
+        assert result.allowed is True
+
+
+class TestPolicyFactories:
+    """Tests for policy factory functions."""
+
+    def test_create_safe_policy(self):
+        """Test safe policy creation."""
+        policy = create_safe_policy()
+
+        assert policy.max_allowed_level == PermissionLevel.SAFE
+        assert policy.default_level == PermissionLevel.SAFE
+
+    def test_create_moderate_policy(self):
+        """Test moderate policy creation."""
+        policy = create_moderate_policy()
+
+        assert policy.max_allowed_level == PermissionLevel.SENSITIVE
+        assert PermissionLevel.SENSITIVE in policy.require_confirmation_for
+
+    def test_create_permissive_policy(self):
+        """Test permissive policy creation."""
+        policy = create_permissive_policy()
+
+        assert policy.max_allowed_level == PermissionLevel.DANGEROUS
+        assert PermissionLevel.DANGEROUS in policy.require_confirmation_for
+
+
+class TestToolExecutorWithPermissions:
+    """Tests for ToolExecutor with permission checking."""
+
+    @pytest.mark.asyncio
+    async def test_executor_without_permission_checker(self):
+        """Test executor works normally without permission checker."""
+        @voice_tool
+        def simple_tool() -> str:
+            """A simple tool."""
+            return "result"
+
+        executor = ToolExecutor(tools=[simple_tool])
+        result = await executor.execute("simple_tool", {})
+
+        assert result.success is True
+        assert result.output == "result"
+
+    @pytest.mark.asyncio
+    async def test_executor_with_permission_checker_allowed(self):
+        """Test executor allows permitted tools."""
+        @voice_tool
+        def allowed_tool() -> str:
+            """An allowed tool."""
+            return "allowed"
+
+        policy = PermissionPolicy()
+        checker = ToolPermissionChecker(policy)
+        executor = ToolExecutor(
+            tools=[allowed_tool],
+            permission_checker=checker,
+        )
+
+        result = await executor.execute("allowed_tool", {})
+        assert result.success is True
+        assert result.output == "allowed"
+
+    @pytest.mark.asyncio
+    async def test_executor_with_permission_checker_blocked(self):
+        """Test executor blocks denied tools."""
+        @voice_tool
+        def blocked_tool() -> str:
+            """A blocked tool."""
+            return "should not run"
+
+        policy = PermissionPolicy(blocked_tools={"blocked_tool"})
+        checker = ToolPermissionChecker(policy)
+        executor = ToolExecutor(
+            tools=[blocked_tool],
+            permission_checker=checker,
+        )
+
+        result = await executor.execute("blocked_tool", {})
+        assert result.success is False
+        assert "Permission denied" in result.error
+        assert result.metadata.get("permission_denied") is True
+
+    @pytest.mark.asyncio
+    async def test_executor_skip_permission_check(self):
+        """Test that skip_permission_check bypasses checking."""
+        @voice_tool
+        def blocked_tool() -> str:
+            """A blocked tool."""
+            return "bypassed"
+
+        policy = PermissionPolicy(blocked_tools={"blocked_tool"})
+        checker = ToolPermissionChecker(policy)
+        executor = ToolExecutor(
+            tools=[blocked_tool],
+            permission_checker=checker,
+        )
+
+        result = await executor.execute(
+            "blocked_tool", {},
+            skip_permission_check=True,
+        )
+        assert result.success is True
+        assert result.output == "bypassed"
+
+    @pytest.mark.asyncio
+    async def test_tool_with_permission_level(self):
+        """Test tool with explicit permission level."""
+        tool = FunctionTool.from_function(
+            lambda: "danger!",
+            name="dangerous_tool",
+            description="A dangerous tool",
+            permission_level=PermissionLevel.DANGEROUS,
+        )
+
+        policy = PermissionPolicy(
+            max_allowed_level=PermissionLevel.MODERATE,
+        )
+        checker = ToolPermissionChecker(policy)
+        executor = ToolExecutor(
+            tools=[tool],
+            permission_checker=checker,
+        )
+
+        result = await executor.execute("dangerous_tool", {})
+        assert result.success is False
+        assert "exceeds max allowed" in result.error

@@ -23,8 +23,16 @@ from voice_pipeline.mcp import (
     mcp_tools_to_voice_tools,
     voice_tool_to_mcp,
     voice_tools_to_mcp,
+    # Sampling types
+    ModelHint,
+    ModelPreferences,
+    SamplingContent,
+    SamplingMessage,
+    SamplingRequest,
+    SamplingResponse,
 )
 from voice_pipeline.mcp.tools import MCPToolAdapter, MCPToolExecutor
+from voice_pipeline.mcp.client import MCPConnection
 from voice_pipeline.agents.base import VoiceAgent
 from voice_pipeline.interfaces.llm import LLMChunk, LLMInterface
 from voice_pipeline.tools import voice_tool
@@ -753,8 +761,12 @@ class TestMCPClientRetry:
                 )
             return {"ok": True}
 
+        async def mock_reconnect():
+            pass  # No-op for this test
+
         with patch.object(client, "_request", side_effect=mock_request):
-            result = await client._request_with_retry("test")
+            with patch.object(client, "_reconnect", side_effect=mock_reconnect):
+                result = await client._request_with_retry("test")
 
         assert result == {"ok": True}
         assert call_count == 2
@@ -802,12 +814,58 @@ class TestMCPClientRetry:
                 message=f"Fail #{call_count}",
             )
 
+        async def mock_reconnect():
+            pass  # No-op for this test
+
         with patch.object(client, "_request", side_effect=mock_request):
-            with pytest.raises(MCPError) as exc_info:
-                await client._request_with_retry("tools/list")
+            with patch.object(client, "_reconnect", side_effect=mock_reconnect):
+                with pytest.raises(MCPError) as exc_info:
+                    await client._request_with_retry("tools/list")
 
         assert exc_info.value.code == MCPErrorCode.CONNECTION_ERROR
         assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_auto_reconnect_on_connection_error(self):
+        """Test that connection errors trigger automatic reconnection (I-06)."""
+        from unittest.mock import patch, AsyncMock
+
+        client = MCPClient("http://localhost:9999/mcp")
+        client.config.retry_attempts = 2
+        # Fake connection state
+        client.connection = MCPConnection(
+            url=client.url,
+            transport=client.config.transport,
+            is_connected=True,
+        )
+
+        call_count = 0
+        reconnect_count = 0
+
+        async def mock_request(method, params=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise MCPError(
+                    code=MCPErrorCode.CONNECTION_ERROR,
+                    message="Server went away",
+                )
+            return {"tools": []}
+
+        async def mock_reconnect():
+            nonlocal reconnect_count
+            reconnect_count += 1
+            client.connection.is_connected = True
+
+        with patch.object(client, "_request", side_effect=mock_request):
+            with patch.object(client, "_reconnect", side_effect=mock_reconnect):
+                result = await client._request_with_retry("tools/list")
+
+        assert result == {"tools": []}
+        assert call_count == 2
+        assert reconnect_count == 1
+        # Connection should be re-established
+        assert client.connection.is_connected is True
 
 
 # ==================== Test Client HTTP Fallback ====================
@@ -891,3 +949,608 @@ class TestMCPClientConfig:
         assert config.transport == TransportType.STDIO
         assert config.timeout == 60.0
         assert "Authorization" in config.headers
+
+
+# ==================== Test Server Rate Limiting ====================
+
+
+class TestMCPServerRateLimiting:
+    """Tests for MCP Server rate limiting (I-07)."""
+
+    def test_rate_limiter_allows_under_limit(self):
+        """Test that requests under limit are allowed."""
+        from voice_pipeline.mcp.server import RateLimiter
+
+        limiter = RateLimiter(max_requests=5, window_seconds=60)
+
+        # First 5 requests should be allowed
+        for i in range(5):
+            assert limiter.is_allowed("client1") is True
+
+        # 6th request should be blocked
+        assert limiter.is_allowed("client1") is False
+
+    def test_rate_limiter_tracks_per_client(self):
+        """Test that rate limits are tracked per client."""
+        from voice_pipeline.mcp.server import RateLimiter
+
+        limiter = RateLimiter(max_requests=2, window_seconds=60)
+
+        # Client 1 uses their limit
+        assert limiter.is_allowed("client1") is True
+        assert limiter.is_allowed("client1") is True
+        assert limiter.is_allowed("client1") is False
+
+        # Client 2 has their own limit
+        assert limiter.is_allowed("client2") is True
+        assert limiter.is_allowed("client2") is True
+        assert limiter.is_allowed("client2") is False
+
+    def test_rate_limiter_remaining(self):
+        """Test remaining requests calculation."""
+        from voice_pipeline.mcp.server import RateLimiter
+
+        limiter = RateLimiter(max_requests=5, window_seconds=60)
+
+        assert limiter.remaining("client1") == 5
+
+        limiter.is_allowed("client1")
+        assert limiter.remaining("client1") == 4
+
+        limiter.is_allowed("client1")
+        limiter.is_allowed("client1")
+        assert limiter.remaining("client1") == 2
+
+    def test_server_rate_limit_disabled_by_default(self):
+        """Test that rate limiting is disabled by default."""
+        from voice_pipeline.mcp.server import MCPServer, MCPServerConfig
+
+        server = MCPServer("test")
+        assert server._rate_limiter is None
+
+    def test_server_rate_limit_enabled(self):
+        """Test that rate limiting can be enabled via config."""
+        from voice_pipeline.mcp.server import MCPServer, MCPServerConfig
+
+        config = MCPServerConfig(
+            name="test",
+            rate_limit_requests=100,
+            rate_limit_window=60.0,
+        )
+        server = MCPServer("test", config=config)
+
+        assert server._rate_limiter is not None
+        assert server._rate_limiter.max_requests == 100
+        assert server._rate_limiter.window_seconds == 60.0
+
+    @pytest.mark.asyncio
+    async def test_server_rejects_when_rate_limited(self):
+        """Test that server returns error when rate limited."""
+        from voice_pipeline.mcp.server import MCPServer, MCPServerConfig
+
+        config = MCPServerConfig(
+            name="test",
+            rate_limit_requests=2,
+            rate_limit_window=60.0,
+        )
+        server = MCPServer("test", config=config)
+
+        # First 2 requests should work
+        response1 = await server.handle_request(
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+            client_id="test-client",
+        )
+        assert "error" not in response1
+
+        response2 = await server.handle_request(
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            client_id="test-client",
+        )
+        assert "error" not in response2
+
+        # Third request should be rate limited
+        response3 = await server.handle_request(
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/list"},
+            client_id="test-client",
+        )
+        assert "error" in response3
+        assert "RateLimitExceeded" in response3["error"]["code"]
+        assert "Rate limit exceeded" in response3["error"]["message"]
+
+
+# ==================== Test Client SSE Transport ====================
+
+
+class TestMCPClientSSE:
+    """Tests for MCP Client SSE transport (C-05)."""
+
+    def test_sse_transport_auto_detect(self):
+        """Test that SSE transport must be explicitly set."""
+        # HTTP URLs default to HTTP, not SSE
+        client = MCPClient("http://localhost:8000")
+        assert client.config.transport == TransportType.HTTP
+
+        # Explicit SSE
+        client2 = MCPClient("http://localhost:8000", transport=TransportType.SSE)
+        assert client2.config.transport == TransportType.SSE
+
+    def test_sse_state_initialization(self):
+        """Test that SSE state is initialized properly."""
+        client = MCPClient("http://localhost:8000", transport=TransportType.SSE)
+
+        assert client._sse_session is None
+        assert client._sse_response is None
+        assert client._sse_endpoint is None
+        assert client._sse_reader_task is None
+        assert client._pending_requests == {}
+
+    @pytest.mark.asyncio
+    async def test_request_sse_not_connected(self):
+        """Test that _request_sse raises when not connected."""
+        client = MCPClient("http://localhost:8000", transport=TransportType.SSE)
+
+        with pytest.raises(MCPError) as exc_info:
+            await client._request_sse({"jsonrpc": "2.0", "id": 1, "method": "test"})
+
+        assert exc_info.value.code == MCPErrorCode.CONNECTION_ERROR
+        assert "SSE not connected" in exc_info.value.message
+
+    @pytest.mark.asyncio
+    async def test_cleanup_sse(self):
+        """Test SSE cleanup handles None values gracefully."""
+        client = MCPClient("http://localhost:8000", transport=TransportType.SSE)
+
+        # Should not raise even with None values
+        await client._cleanup_sse()
+
+        assert client._sse_session is None
+        assert client._sse_endpoint is None
+
+    @pytest.mark.asyncio
+    async def test_disconnect_cleans_sse(self):
+        """Test that disconnect cleans up SSE resources."""
+        from unittest.mock import patch, AsyncMock
+
+        client = MCPClient("http://localhost:8000", transport=TransportType.SSE)
+
+        # Mock cleanup
+        with patch.object(client, "_cleanup_sse", new_callable=AsyncMock) as mock_cleanup:
+            await client.disconnect()
+
+        mock_cleanup.assert_called_once()
+
+    def test_sse_pending_requests_dict(self):
+        """Test pending requests tracking structure."""
+        client = MCPClient("http://localhost:8000", transport=TransportType.SSE)
+
+        import asyncio
+        future = asyncio.get_event_loop().create_future()
+        client._pending_requests[1] = future
+
+        assert 1 in client._pending_requests
+        assert client._pending_requests[1] is future
+
+        # Cleanup
+        del client._pending_requests[1]
+
+
+# ==================== Test Server SSE Transport ====================
+
+
+class TestMCPServerSSE:
+    """Tests for MCP Server SSE transport (M-07)."""
+
+    def test_server_sse_sessions_init(self):
+        """Test that SSE sessions dict is initialized."""
+        from voice_pipeline.mcp.server import MCPServer
+
+        server = MCPServer("test")
+        assert server._sse_sessions == {}
+
+    def test_server_supports_sse_transport(self):
+        """Test that server config accepts SSE transport."""
+        from voice_pipeline.mcp.server import MCPServer, MCPServerConfig
+
+        config = MCPServerConfig(
+            name="test",
+            transport=TransportType.SSE,
+        )
+        server = MCPServer("test", config=config)
+
+        assert server.config.transport == TransportType.SSE
+
+    def test_create_http_handler(self):
+        """Test that _create_http_handler returns a callable."""
+        from voice_pipeline.mcp.server import MCPServer
+
+        server = MCPServer("test")
+        handler = server._create_http_handler()
+
+        assert callable(handler)
+
+    @pytest.mark.asyncio
+    async def test_server_sse_sessions_tracking(self):
+        """Test that SSE sessions can be tracked."""
+        from voice_pipeline.mcp.server import MCPServer
+        import asyncio
+
+        server = MCPServer("test")
+
+        # Simulate adding a session
+        session_id = "test-session-123"
+        queue: asyncio.Queue = asyncio.Queue()
+        server._sse_sessions[session_id] = queue
+
+        assert session_id in server._sse_sessions
+        assert server._sse_sessions[session_id] is queue
+
+        # Test queue functionality
+        await queue.put({"test": "message"})
+        msg = await queue.get()
+        assert msg == {"test": "message"}
+
+        # Cleanup
+        del server._sse_sessions[session_id]
+        assert session_id not in server._sse_sessions
+
+    @pytest.mark.asyncio
+    async def test_server_handle_request_with_client_id(self):
+        """Test that handle_request accepts client_id for rate limiting."""
+        from voice_pipeline.mcp.server import MCPServer
+
+        server = MCPServer("test")
+
+        # Should work with client_id
+        response = await server.handle_request(
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+            client_id="192.168.1.1",
+        )
+
+        assert "error" not in response
+        assert "result" in response
+
+
+# ==================== Test Sampling Types ====================
+
+
+class TestSamplingTypes:
+    """Tests for MCP Sampling types (M-01)."""
+
+    def test_model_hint_creation(self):
+        """Test ModelHint creation."""
+        from voice_pipeline.mcp import ModelHint
+
+        hint = ModelHint(name="claude-3-sonnet")
+        assert hint.name == "claude-3-sonnet"
+
+        d = hint.to_dict()
+        assert d == {"name": "claude-3-sonnet"}
+
+    def test_model_preferences_default(self):
+        """Test ModelPreferences with defaults."""
+        from voice_pipeline.mcp import ModelPreferences
+
+        prefs = ModelPreferences()
+        assert prefs.costPriority == 0.5
+        assert prefs.speedPriority == 0.5
+        assert prefs.intelligencePriority == 0.5
+        assert prefs.hints == []
+
+    def test_model_preferences_custom(self):
+        """Test ModelPreferences with custom values."""
+        from voice_pipeline.mcp import ModelHint, ModelPreferences
+
+        prefs = ModelPreferences(
+            hints=[ModelHint(name="claude-3-opus"), ModelHint(name="gpt-4")],
+            costPriority=0.2,
+            speedPriority=0.3,
+            intelligencePriority=0.9,
+        )
+
+        assert len(prefs.hints) == 2
+        assert prefs.costPriority == 0.2
+        assert prefs.intelligencePriority == 0.9
+
+        d = prefs.to_dict()
+        assert d["hints"][0]["name"] == "claude-3-opus"
+        assert d["costPriority"] == 0.2
+
+    def test_model_preferences_from_dict(self):
+        """Test ModelPreferences.from_dict()."""
+        from voice_pipeline.mcp import ModelPreferences
+
+        data = {
+            "hints": [{"name": "claude-3-haiku"}],
+            "speedPriority": 0.8,
+        }
+
+        prefs = ModelPreferences.from_dict(data)
+        assert len(prefs.hints) == 1
+        assert prefs.hints[0].name == "claude-3-haiku"
+        assert prefs.speedPriority == 0.8
+        assert prefs.costPriority == 0.5  # Default
+
+    def test_sampling_content_text(self):
+        """Test SamplingContent with text."""
+        from voice_pipeline.mcp import SamplingContent
+
+        content = SamplingContent.text_content("Hello, world!")
+        assert content.type == "text"
+        assert content.text == "Hello, world!"
+
+        d = content.to_dict()
+        assert d["type"] == "text"
+        assert d["text"] == "Hello, world!"
+
+    def test_sampling_content_image(self):
+        """Test SamplingContent with image."""
+        from voice_pipeline.mcp import SamplingContent
+
+        content = SamplingContent(
+            type="image",
+            data="base64encodeddata",
+            mimeType="image/png",
+        )
+
+        d = content.to_dict()
+        assert d["type"] == "image"
+        assert d["data"] == "base64encodeddata"
+        assert d["mimeType"] == "image/png"
+
+    def test_sampling_content_from_dict(self):
+        """Test SamplingContent.from_dict()."""
+        from voice_pipeline.mcp import SamplingContent
+
+        data = {"type": "text", "text": "Test message"}
+        content = SamplingContent.from_dict(data)
+
+        assert content.type == "text"
+        assert content.text == "Test message"
+
+    def test_sampling_message(self):
+        """Test SamplingMessage."""
+        from voice_pipeline.mcp import SamplingContent, SamplingMessage
+
+        msg = SamplingMessage(
+            role="user",
+            content=SamplingContent.text_content("What is 2+2?"),
+        )
+
+        assert msg.role == "user"
+        assert msg.content.text == "What is 2+2?"
+
+        d = msg.to_dict()
+        assert d["role"] == "user"
+        assert d["content"]["text"] == "What is 2+2?"
+
+    def test_sampling_message_from_dict(self):
+        """Test SamplingMessage.from_dict()."""
+        from voice_pipeline.mcp import SamplingMessage
+
+        data = {
+            "role": "assistant",
+            "content": {"type": "text", "text": "4"},
+        }
+
+        msg = SamplingMessage.from_dict(data)
+        assert msg.role == "assistant"
+        assert msg.content.text == "4"
+
+    def test_sampling_message_from_dict_string_content(self):
+        """Test SamplingMessage.from_dict() with string content."""
+        from voice_pipeline.mcp import SamplingMessage
+
+        data = {
+            "role": "user",
+            "content": "Simple string content",
+        }
+
+        msg = SamplingMessage.from_dict(data)
+        assert msg.content.text == "Simple string content"
+
+    def test_sampling_request(self):
+        """Test SamplingRequest."""
+        from voice_pipeline.mcp import (
+            ModelPreferences,
+            SamplingContent,
+            SamplingMessage,
+            SamplingRequest,
+        )
+
+        request = SamplingRequest(
+            messages=[
+                SamplingMessage(
+                    role="user",
+                    content=SamplingContent.text_content("Hello"),
+                ),
+            ],
+            systemPrompt="You are helpful.",
+            maxTokens=2048,
+            temperature=0.7,
+        )
+
+        assert len(request.messages) == 1
+        assert request.systemPrompt == "You are helpful."
+        assert request.maxTokens == 2048
+
+        d = request.to_dict()
+        assert d["maxTokens"] == 2048
+        assert d["systemPrompt"] == "You are helpful."
+        assert d["temperature"] == 0.7
+
+    def test_sampling_request_from_dict(self):
+        """Test SamplingRequest.from_dict()."""
+        from voice_pipeline.mcp import SamplingRequest
+
+        data = {
+            "messages": [{"role": "user", "content": {"type": "text", "text": "Hi"}}],
+            "maxTokens": 512,
+            "modelPreferences": {"intelligencePriority": 0.9},
+        }
+
+        req = SamplingRequest.from_dict(data)
+        assert len(req.messages) == 1
+        assert req.maxTokens == 512
+        assert req.modelPreferences.intelligencePriority == 0.9
+
+    def test_sampling_response(self):
+        """Test SamplingResponse."""
+        from voice_pipeline.mcp import SamplingContent, SamplingResponse
+
+        response = SamplingResponse(
+            role="assistant",
+            content=SamplingContent.text_content("The answer is 4."),
+            model="claude-3-sonnet-20240229",
+            stopReason="endTurn",
+        )
+
+        assert response.role == "assistant"
+        assert response.content.text == "The answer is 4."
+        assert response.model == "claude-3-sonnet-20240229"
+
+        d = response.to_dict()
+        assert d["model"] == "claude-3-sonnet-20240229"
+        assert d["stopReason"] == "endTurn"
+
+    def test_sampling_response_from_dict(self):
+        """Test SamplingResponse.from_dict()."""
+        from voice_pipeline.mcp import SamplingResponse
+
+        data = {
+            "role": "assistant",
+            "content": {"type": "text", "text": "Response text"},
+            "model": "gpt-4",
+            "stopReason": "maxTokens",
+        }
+
+        resp = SamplingResponse.from_dict(data)
+        assert resp.model == "gpt-4"
+        assert resp.stopReason == "maxTokens"
+
+
+class TestMCPCapabilitiesSampling:
+    """Tests for MCPCapabilities with sampling."""
+
+    def test_sampling_capability_default_false(self):
+        """Test that sampling is disabled by default."""
+        caps = MCPCapabilities()
+        assert caps.sampling is False
+
+        d = caps.to_dict()
+        assert "sampling" not in d
+
+    def test_sampling_capability_enabled(self):
+        """Test that sampling can be enabled."""
+        caps = MCPCapabilities(sampling=True)
+        assert caps.sampling is True
+
+        d = caps.to_dict()
+        assert "sampling" in d
+
+
+class TestMCPClientSampling:
+    """Tests for MCP Client sampling capability (M-01)."""
+
+    def test_client_config_sampling_handler(self):
+        """Test that MCPClientConfig accepts sampling_handler."""
+        from typing import Callable
+        from voice_pipeline.mcp import MCPClientConfig
+
+        async def my_handler(request):
+            return None
+
+        config = MCPClientConfig(sampling_handler=my_handler)
+        assert config.sampling_handler is my_handler
+
+    def test_client_sampling_handler_none_by_default(self):
+        """Test that sampling_handler is None by default."""
+        from voice_pipeline.mcp import MCPClientConfig
+
+        config = MCPClientConfig()
+        assert config.sampling_handler is None
+
+
+class TestMCPServerSampling:
+    """Tests for MCP Server sampling capability (M-01)."""
+
+    def test_server_create_sampling_request(self):
+        """Test server's create_sampling_request helper."""
+        from voice_pipeline.mcp.server import MCPServer
+
+        server = MCPServer("test")
+
+        request = server.create_sampling_request(
+            messages=[{"role": "user", "content": "What is 2+2?"}],
+            system_prompt="You are a math tutor.",
+            max_tokens=100,
+            temperature=0.5,
+        )
+
+        assert len(request.messages) == 1
+        assert request.messages[0].content.text == "What is 2+2?"
+        assert request.systemPrompt == "You are a math tutor."
+        assert request.maxTokens == 100
+        assert request.temperature == 0.5
+
+    def test_server_create_sampling_request_with_model_hints(self):
+        """Test create_sampling_request with model hints."""
+        from voice_pipeline.mcp.server import MCPServer
+
+        server = MCPServer("test")
+
+        request = server.create_sampling_request(
+            messages=[{"role": "user", "content": "Complex question"}],
+            model_hints=["claude-3-opus", "gpt-4"],
+        )
+
+        assert request.modelPreferences is not None
+        assert len(request.modelPreferences.hints) == 2
+        assert request.modelPreferences.hints[0].name == "claude-3-opus"
+
+    @pytest.mark.asyncio
+    async def test_server_request_sampling_no_session(self):
+        """Test request_sampling returns None when session doesn't exist."""
+        from voice_pipeline.mcp.server import MCPServer
+
+        server = MCPServer("test")
+
+        result = await server.request_sampling(
+            messages=[{"role": "user", "content": "Test"}],
+            session_id="nonexistent-session",
+        )
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_server_request_sampling_with_session(self):
+        """Test request_sampling sends request to connected client."""
+        from voice_pipeline.mcp.server import MCPServer
+        import asyncio
+
+        server = MCPServer("test")
+
+        # Simulate a connected SSE session
+        session_id = "test-session-123"
+        queue: asyncio.Queue = asyncio.Queue()
+        server._sse_sessions[session_id] = queue
+
+        # Call request_sampling
+        result = await server.request_sampling(
+            messages=[{"role": "user", "content": "Hello"}],
+            session_id=session_id,
+            max_tokens=100,
+        )
+
+        # Current implementation returns None immediately
+        # (waiting for response is not implemented yet)
+        assert result is None
+
+        # But check that a message was put in the queue
+        msg = queue.get_nowait()
+        assert msg["method"] == "sampling/createMessage"
+        assert "params" in msg
+        assert msg["params"]["maxTokens"] == 100
+        assert len(msg["params"]["messages"]) == 1
+
+        # Cleanup
+        del server._sse_sessions[session_id]

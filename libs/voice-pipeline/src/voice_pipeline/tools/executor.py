@@ -3,12 +3,17 @@
 Manages tool registration and execution for voice-based function calling.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 from dataclasses import dataclass, field
-from typing import Any, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, Optional, Sequence, Union
 
 from voice_pipeline.tools.base import FunctionTool, ToolResult, VoiceTool
+
+if TYPE_CHECKING:
+    from voice_pipeline.tools.permissions import ToolPermissionChecker
 
 
 @dataclass
@@ -100,19 +105,26 @@ class ToolExecutor:
     default_timeout: float = 30.0
     """Default execution timeout."""
 
+    permission_checker: Optional["ToolPermissionChecker"] = None
+    """Optional permission checker for access control."""
+
     def __init__(
         self,
         tools: Optional[Sequence[VoiceTool]] = None,
         default_timeout: float = 30.0,
+        permission_checker: Optional["ToolPermissionChecker"] = None,
     ):
         """Initialize executor.
 
         Args:
             tools: Initial tools to register.
             default_timeout: Default timeout for execution.
+            permission_checker: Optional permission checker for access control.
+                If provided, all tool calls are checked before execution.
         """
         self.tools = {}
         self.default_timeout = default_timeout
+        self.permission_checker = permission_checker
 
         if tools:
             for tool in tools:
@@ -167,12 +179,14 @@ class ToolExecutor:
         self,
         name: str,
         arguments: dict[str, Any],
+        skip_permission_check: bool = False,
     ) -> ToolResult:
         """Execute a tool by name.
 
         Args:
             name: Tool name.
             arguments: Tool arguments.
+            skip_permission_check: If True, bypasses permission checking.
 
         Returns:
             ToolResult from execution.
@@ -185,6 +199,40 @@ class ToolExecutor:
                 output=None,
                 error=f"Tool '{name}' not found",
             )
+
+        # Check permissions if checker is configured
+        if self.permission_checker and not skip_permission_check:
+            check_result = self.permission_checker.check(
+                tool_name=name,
+                args=arguments,
+                tool_level=tool.permission_level,
+            )
+
+            if not check_result.allowed:
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"Permission denied: {check_result.reason}",
+                    metadata={"permission_denied": True},
+                )
+
+            if check_result.requires_confirmation:
+                # Try to get confirmation
+                confirm_result = await self.permission_checker.check_with_confirmation(
+                    tool_name=name,
+                    args=arguments,
+                    tool_level=tool.permission_level,
+                )
+                if not confirm_result.allowed:
+                    return ToolResult(
+                        success=False,
+                        output=None,
+                        error=f"Permission denied: {confirm_result.reason}",
+                        metadata={"permission_denied": True},
+                    )
+
+            # Record the call for rate limiting
+            self.permission_checker.record_call(name)
 
         return await tool.execute(**arguments)
 

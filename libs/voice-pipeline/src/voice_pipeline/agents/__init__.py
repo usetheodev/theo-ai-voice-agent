@@ -55,6 +55,7 @@ from voice_pipeline.agents.tool_node import (
 # Execution loop
 from voice_pipeline.agents.loop import (
     AgentLoop,
+    ToolFeedbackConfig,
 )
 
 # Routing
@@ -85,6 +86,7 @@ __all__ = [
     "BatchToolNode",
     # Loop
     "AgentLoop",
+    "ToolFeedbackConfig",
     # Routing
     "AgentRouter",
     "ConditionalBranch",

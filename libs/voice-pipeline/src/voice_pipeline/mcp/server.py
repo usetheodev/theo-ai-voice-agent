@@ -7,6 +7,8 @@ import asyncio
 import inspect
 import json
 import sys
+import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, TypeVar, Union
 
@@ -18,11 +20,113 @@ from voice_pipeline.mcp.types import (
     MCPResource,
     MCPResult,
     MCPTool,
+    SamplingContent,
+    SamplingMessage,
+    SamplingRequest,
+    SamplingResponse,
+    ModelPreferences,
+    ModelHint,
     TransportType,
 )
 from voice_pipeline.tools.base import VoiceTool
 
 F = TypeVar("F", bound=Callable)
+
+
+class RateLimiter:
+    """Sliding window rate limiter for MCP requests.
+
+    Tracks request timestamps per client and enforces rate limits
+    using a sliding window algorithm.
+
+    Attributes:
+        max_requests: Maximum requests allowed in the window.
+        window_seconds: Size of the sliding window in seconds.
+
+    Example:
+        >>> limiter = RateLimiter(max_requests=100, window_seconds=60)
+        >>> if limiter.is_allowed("client-123"):
+        ...     # Process request
+        ...     pass
+        ... else:
+        ...     # Reject with 429
+        ...     pass
+    """
+
+    def __init__(self, max_requests: int = 100, window_seconds: float = 60.0):
+        """Initialize rate limiter.
+
+        Args:
+            max_requests: Maximum requests allowed per window.
+            window_seconds: Window size in seconds.
+        """
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self._requests: dict[str, list[float]] = defaultdict(list)
+
+    def is_allowed(self, client_id: str = "default") -> bool:
+        """Check if a request is allowed and record it.
+
+        Args:
+            client_id: Client identifier (IP, session ID, etc.).
+
+        Returns:
+            True if request is allowed, False if rate limited.
+        """
+        now = time.monotonic()
+        window_start = now - self.window_seconds
+
+        # Get and clean old timestamps for this client
+        timestamps = self._requests[client_id]
+        # Remove timestamps outside the window
+        self._requests[client_id] = [ts for ts in timestamps if ts > window_start]
+
+        # Check if under limit
+        if len(self._requests[client_id]) >= self.max_requests:
+            return False
+
+        # Record this request
+        self._requests[client_id].append(now)
+        return True
+
+    def remaining(self, client_id: str = "default") -> int:
+        """Get remaining requests for a client.
+
+        Args:
+            client_id: Client identifier.
+
+        Returns:
+            Number of remaining requests in current window.
+        """
+        now = time.monotonic()
+        window_start = now - self.window_seconds
+
+        timestamps = self._requests.get(client_id, [])
+        current_count = sum(1 for ts in timestamps if ts > window_start)
+
+        return max(0, self.max_requests - current_count)
+
+    def reset_time(self, client_id: str = "default") -> float:
+        """Get seconds until the oldest request expires.
+
+        Args:
+            client_id: Client identifier.
+
+        Returns:
+            Seconds until rate limit resets (0 if not limited).
+        """
+        now = time.monotonic()
+        window_start = now - self.window_seconds
+
+        timestamps = self._requests.get(client_id, [])
+        valid_timestamps = [ts for ts in timestamps if ts > window_start]
+
+        if len(valid_timestamps) < self.max_requests:
+            return 0.0
+
+        # Time until oldest request in window expires
+        oldest = min(valid_timestamps)
+        return max(0.0, oldest - window_start)
 
 
 @dataclass
@@ -35,6 +139,8 @@ class MCPServerConfig:
         transport: Transport type.
         host: HTTP host.
         port: HTTP port.
+        rate_limit_requests: Max requests per window (0 to disable).
+        rate_limit_window: Window size in seconds.
     """
 
     name: str = "voice-pipeline-mcp"
@@ -54,6 +160,12 @@ class MCPServerConfig:
 
     capabilities: MCPCapabilities = field(default_factory=MCPCapabilities)
     """Server capabilities."""
+
+    rate_limit_requests: int = 0
+    """Maximum requests per window. Set to 0 to disable rate limiting."""
+
+    rate_limit_window: float = 60.0
+    """Rate limit window size in seconds."""
 
 
 class MCPServer:
@@ -103,6 +215,17 @@ class MCPServer:
         self._tools: dict[str, tuple[MCPTool, Callable]] = {}
         self._resources: dict[str, tuple[MCPResource, Callable]] = {}
         self._prompts: dict[str, tuple[MCPPrompt, Callable]] = {}
+
+        # Initialize rate limiter (disabled by default with rate_limit_requests=0)
+        self._rate_limiter: Optional[RateLimiter] = None
+        if self.config.rate_limit_requests > 0:
+            self._rate_limiter = RateLimiter(
+                max_requests=self.config.rate_limit_requests,
+                window_seconds=self.config.rate_limit_window,
+            )
+
+        # SSE state: maps session_id -> asyncio.Queue for sending responses
+        self._sse_sessions: dict[str, asyncio.Queue] = {}
 
     def tool(
         self,
@@ -291,18 +414,41 @@ class MCPServer:
 
     # ==================== Request Handling ====================
 
-    async def handle_request(self, request: dict[str, Any]) -> dict[str, Any]:
+    async def handle_request(
+        self,
+        request: dict[str, Any],
+        client_id: str = "default",
+    ) -> dict[str, Any]:
         """Handle an incoming MCP request.
 
         Args:
             request: JSON-RPC request.
+            client_id: Client identifier for rate limiting (e.g., IP address).
 
         Returns:
             JSON-RPC response.
         """
+        request_id = request.get("id")
+
+        # Check rate limit (if enabled)
+        if self._rate_limiter is not None:
+            if not self._rate_limiter.is_allowed(client_id):
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {
+                        "code": MCPErrorCode.RATE_LIMIT_EXCEEDED.value,
+                        "message": (
+                            f"Rate limit exceeded. "
+                            f"Max {self._rate_limiter.max_requests} requests "
+                            f"per {self._rate_limiter.window_seconds}s. "
+                            f"Retry after {self._rate_limiter.reset_time(client_id):.1f}s."
+                        ),
+                    },
+                }
+
         method = request.get("method", "")
         params = request.get("params", {})
-        request_id = request.get("id")
 
         try:
             if method == "initialize":
@@ -458,6 +604,163 @@ class MCPServer:
             ]
         }
 
+    # ==================== Sampling ====================
+
+    async def request_sampling(
+        self,
+        messages: list[dict[str, Any]],
+        session_id: str,
+        system_prompt: Optional[str] = None,
+        max_tokens: int = 1024,
+        temperature: Optional[float] = None,
+        model_hints: Optional[list[str]] = None,
+        intelligence_priority: float = 0.5,
+        speed_priority: float = 0.5,
+        cost_priority: float = 0.5,
+    ) -> Optional[SamplingResponse]:
+        """Request LLM sampling from a connected client.
+
+        This allows the server to request the client to generate text
+        using the client's LLM. Only works with SSE transport where
+        bidirectional communication is possible.
+
+        Args:
+            messages: Conversation messages. Each should have 'role' and 'content'.
+            session_id: SSE session ID to send request to.
+            system_prompt: Optional system prompt.
+            max_tokens: Maximum tokens to generate.
+            temperature: Sampling temperature.
+            model_hints: Optional model name hints (e.g., ["claude-3-sonnet", "gpt-4"]).
+            intelligence_priority: Priority for model capability (0-1).
+            speed_priority: Priority for speed (0-1).
+            cost_priority: Priority for low cost (0-1).
+
+        Returns:
+            SamplingResponse if successful, None if session not found or
+            client doesn't support sampling.
+
+        Example:
+            >>> response = await server.request_sampling(
+            ...     messages=[{"role": "user", "content": "Summarize this text: ..."}],
+            ...     session_id="abc-123",
+            ...     max_tokens=500,
+            ... )
+            >>> if response:
+            ...     print(response.content.text)
+        """
+        if session_id not in self._sse_sessions:
+            return None
+
+        # Build model preferences
+        model_prefs = None
+        if model_hints or intelligence_priority != 0.5 or speed_priority != 0.5 or cost_priority != 0.5:
+            hints = [ModelHint(name=h) for h in (model_hints or [])]
+            model_prefs = ModelPreferences(
+                hints=hints,
+                intelligencePriority=intelligence_priority,
+                speedPriority=speed_priority,
+                costPriority=cost_priority,
+            )
+
+        # Convert messages to SamplingMessage format
+        sampling_messages = []
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                sampling_content = SamplingContent.text_content(content)
+            elif isinstance(content, dict):
+                sampling_content = SamplingContent.from_dict(content)
+            else:
+                sampling_content = SamplingContent.text_content(str(content))
+
+            sampling_messages.append(SamplingMessage(
+                role=msg.get("role", "user"),
+                content=sampling_content,
+            ))
+
+        # Build request
+        request = SamplingRequest(
+            messages=sampling_messages,
+            modelPreferences=model_prefs,
+            systemPrompt=system_prompt,
+            maxTokens=max_tokens,
+            temperature=temperature,
+        )
+
+        # Send sampling request to client via SSE
+        queue = self._sse_sessions[session_id]
+
+        # Generate unique request ID
+        import uuid
+        request_id = str(uuid.uuid4())
+
+        sampling_request = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "sampling/createMessage",
+            "params": request.to_dict(),
+        }
+
+        await queue.put(sampling_request)
+
+        # Note: In a full implementation, we'd need to wait for the
+        # response from the client. For now, we just send the request
+        # and return None. A proper implementation would need:
+        # 1. A way to receive responses from the client
+        # 2. A pending requests map to match responses to requests
+        # This is left as future work since it requires significant
+        # changes to the SSE transport model.
+
+        return None
+
+    def create_sampling_request(
+        self,
+        messages: list[dict[str, Any]],
+        system_prompt: Optional[str] = None,
+        max_tokens: int = 1024,
+        temperature: Optional[float] = None,
+        model_hints: Optional[list[str]] = None,
+    ) -> SamplingRequest:
+        """Create a SamplingRequest object.
+
+        Helper method to create properly formatted sampling requests.
+
+        Args:
+            messages: Conversation messages.
+            system_prompt: Optional system prompt.
+            max_tokens: Maximum tokens to generate.
+            temperature: Sampling temperature.
+            model_hints: Optional model name hints.
+
+        Returns:
+            SamplingRequest ready to be sent.
+        """
+        sampling_messages = []
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                sampling_content = SamplingContent.text_content(content)
+            else:
+                sampling_content = SamplingContent.from_dict(content)
+            sampling_messages.append(SamplingMessage(
+                role=msg.get("role", "user"),
+                content=sampling_content,
+            ))
+
+        model_prefs = None
+        if model_hints:
+            model_prefs = ModelPreferences(
+                hints=[ModelHint(name=h) for h in model_hints],
+            )
+
+        return SamplingRequest(
+            messages=sampling_messages,
+            modelPreferences=model_prefs,
+            systemPrompt=system_prompt,
+            maxTokens=max_tokens,
+            temperature=temperature,
+        )
+
     # ==================== Server Running ====================
 
     async def run(
@@ -479,6 +782,8 @@ class MCPServer:
 
         if transport == TransportType.STDIO:
             await self._run_stdio()
+        elif transport == TransportType.SSE:
+            await self._run_sse(host, port)
         else:
             await self._run_http(host, port)
 
@@ -524,7 +829,9 @@ class MCPServer:
         async def handle_post(request: web.Request) -> web.Response:
             try:
                 body = await request.json()
-                response = await self.handle_request(body)
+                # Use client IP for rate limiting
+                client_ip = request.remote or "unknown"
+                response = await self.handle_request(body, client_id=client_ip)
                 return web.json_response(response)
             except Exception as e:
                 return web.json_response(
@@ -553,6 +860,161 @@ class MCPServer:
                 await asyncio.sleep(3600)
         except asyncio.CancelledError:
             await runner.cleanup()
+
+    async def _run_sse(self, host: str, port: int) -> None:
+        """Run server with SSE (Server-Sent Events) transport.
+
+        Implements the MCP SSE transport:
+        - GET /sse: Establish SSE connection, receive 'endpoint' event
+        - POST /messages/{session_id}: Send JSON-RPC requests
+        - Responses sent via SSE 'message' events
+        """
+        try:
+            from aiohttp import web
+        except ImportError:
+            raise ImportError(
+                "aiohttp is required for SSE transport. "
+                "Install with: pip install aiohttp"
+            )
+
+        import uuid
+
+        async def handle_sse(request: web.Request) -> web.StreamResponse:
+            """Handle SSE connection request."""
+            # Create unique session ID
+            session_id = str(uuid.uuid4())
+
+            # Create queue for this session's responses
+            queue: asyncio.Queue = asyncio.Queue()
+            self._sse_sessions[session_id] = queue
+
+            # Prepare SSE response
+            response = web.StreamResponse(
+                status=200,
+                reason="OK",
+                headers={
+                    "Content-Type": "text/event-stream",
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",  # Disable nginx buffering
+                },
+            )
+            await response.prepare(request)
+
+            # Send endpoint event
+            endpoint_url = f"/messages/{session_id}"
+            await response.write(
+                f"event: endpoint\ndata: {endpoint_url}\n\n".encode()
+            )
+
+            client_ip = request.remote or "unknown"
+
+            try:
+                # Keep connection alive and send responses
+                while True:
+                    try:
+                        # Wait for response with timeout to allow heartbeat
+                        msg = await asyncio.wait_for(queue.get(), timeout=30)
+                        # Send message event
+                        json_data = json.dumps(msg)
+                        await response.write(
+                            f"event: message\ndata: {json_data}\n\n".encode()
+                        )
+                    except asyncio.TimeoutError:
+                        # Send heartbeat comment to keep connection alive
+                        await response.write(b": heartbeat\n\n")
+            except asyncio.CancelledError:
+                pass
+            except ConnectionResetError:
+                pass
+            finally:
+                # Cleanup session
+                self._sse_sessions.pop(session_id, None)
+
+            return response
+
+        async def handle_messages(request: web.Request) -> web.Response:
+            """Handle JSON-RPC request via POST."""
+            session_id = request.match_info.get("session_id", "")
+
+            if session_id not in self._sse_sessions:
+                return web.json_response(
+                    {"error": "Session not found"},
+                    status=404,
+                )
+
+            queue = self._sse_sessions[session_id]
+
+            try:
+                body = await request.json()
+                client_ip = request.remote or "unknown"
+
+                # Handle request
+                response = await self.handle_request(body, client_id=client_ip)
+
+                # Send response via SSE queue
+                if response:
+                    await queue.put(response)
+
+                # Return 202 Accepted (response will come via SSE)
+                return web.Response(status=202)
+
+            except Exception as e:
+                error_response = {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32603, "message": str(e)},
+                }
+                await queue.put(error_response)
+                return web.Response(status=202)
+
+        app = web.Application()
+        app.router.add_get("/sse", handle_sse)
+        app.router.add_post("/messages/{session_id}", handle_messages)
+        # Also support HTTP for backwards compatibility
+        app.router.add_post("/mcp", self._create_http_handler())
+        app.router.add_post("/", self._create_http_handler())
+
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, host, port)
+        await site.start()
+
+        print(f"MCP Server '{self.config.name}' running on http://{host}:{port}/sse (SSE)")
+        print(f"  HTTP fallback: http://{host}:{port}/mcp")
+
+        # Keep running
+        try:
+            while True:
+                await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            # Close all SSE sessions
+            for queue in self._sse_sessions.values():
+                await queue.put(None)  # Signal to close
+            self._sse_sessions.clear()
+            await runner.cleanup()
+
+    def _create_http_handler(self):
+        """Create HTTP POST handler for use in SSE mode."""
+        from aiohttp import web
+
+        async def handle_post(request: web.Request) -> web.Response:
+            try:
+                body = await request.json()
+                client_ip = request.remote or "unknown"
+                response = await self.handle_request(body, client_id=client_ip)
+                return web.json_response(response)
+            except Exception as e:
+                return web.json_response(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": None,
+                        "error": {"code": -32603, "message": str(e)},
+                    },
+                    status=500,
+                )
+
+        return handle_post
 
 
 # Alias for FastMCP-style usage

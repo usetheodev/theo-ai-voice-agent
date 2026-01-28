@@ -39,6 +39,13 @@ from voice_pipeline.memory.buffer import (
     ConversationBufferMemory,
     ConversationWindowMemory,
 )
+from voice_pipeline.memory.episodic import (
+    Episode,
+    EpisodeStore,
+    EpisodicMemory,
+    FileEpisodeStore,
+    InMemoryEpisodeStore,
+)
 from voice_pipeline.memory.stores import InMemoryStore
 from voice_pipeline.memory.summary import (
     ConversationSummaryBufferMemory,
@@ -56,6 +63,12 @@ __all__ = [
     # Summary memories
     "ConversationSummaryMemory",
     "ConversationSummaryBufferMemory",
+    # Episodic memories
+    "Episode",
+    "EpisodeStore",
+    "EpisodicMemory",
+    "InMemoryEpisodeStore",
+    "FileEpisodeStore",
     # Stores
     "InMemoryStore",
 ]

@@ -323,9 +323,303 @@ class MCPCapabilities:
             caps["prompts"] = {}
         if self.logging:
             caps["logging"] = {}
+        if self.sampling:
+            caps["sampling"] = {}
         if self.experimental:
             caps["experimental"] = self.experimental
         return caps
+
+
+# ==================== Sampling Types ====================
+
+
+@dataclass
+class ModelHint:
+    """Hint for model selection.
+
+    Hints are treated as substrings that can match model names flexibly.
+
+    Attributes:
+        name: Model name hint (e.g., "claude-3-sonnet", "gpt-4").
+    """
+
+    name: str
+    """Model name hint."""
+
+    def to_dict(self) -> dict[str, str]:
+        """Convert to dict."""
+        return {"name": self.name}
+
+
+@dataclass
+class ModelPreferences:
+    """Preferences for model selection in sampling.
+
+    Servers express needs through priority values (0-1) and optional hints.
+
+    Attributes:
+        hints: Optional model hints in order of preference.
+        costPriority: Higher values prefer cheaper models (0-1).
+        speedPriority: Higher values prefer faster models (0-1).
+        intelligencePriority: Higher values prefer more capable models (0-1).
+    """
+
+    hints: list[ModelHint] = field(default_factory=list)
+    """Model hints in order of preference."""
+
+    costPriority: float = 0.5
+    """Cost priority (0-1). Higher = prefer cheaper."""
+
+    speedPriority: float = 0.5
+    """Speed priority (0-1). Higher = prefer faster."""
+
+    intelligencePriority: float = 0.5
+    """Intelligence priority (0-1). Higher = prefer more capable."""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict for JSON-RPC."""
+        result: dict[str, Any] = {}
+        if self.hints:
+            result["hints"] = [h.to_dict() for h in self.hints]
+        if self.costPriority != 0.5:
+            result["costPriority"] = self.costPriority
+        if self.speedPriority != 0.5:
+            result["speedPriority"] = self.speedPriority
+        if self.intelligencePriority != 0.5:
+            result["intelligencePriority"] = self.intelligencePriority
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ModelPreferences":
+        """Create from dict."""
+        hints = [
+            ModelHint(name=h.get("name", ""))
+            for h in data.get("hints", [])
+        ]
+        return cls(
+            hints=hints,
+            costPriority=data.get("costPriority", 0.5),
+            speedPriority=data.get("speedPriority", 0.5),
+            intelligencePriority=data.get("intelligencePriority", 0.5),
+        )
+
+
+@dataclass
+class SamplingContent:
+    """Content in a sampling message.
+
+    Supports text and image content types.
+
+    Attributes:
+        type: Content type ("text" or "image").
+        text: Text content (for type="text").
+        data: Base64-encoded image data (for type="image").
+        mimeType: MIME type for images.
+    """
+
+    type: str = "text"
+    """Content type."""
+
+    text: Optional[str] = None
+    """Text content."""
+
+    data: Optional[str] = None
+    """Base64-encoded image data."""
+
+    mimeType: Optional[str] = None
+    """MIME type for images."""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict."""
+        result: dict[str, Any] = {"type": self.type}
+        if self.type == "text" and self.text:
+            result["text"] = self.text
+        elif self.type == "image":
+            if self.data:
+                result["data"] = self.data
+            if self.mimeType:
+                result["mimeType"] = self.mimeType
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SamplingContent":
+        """Create from dict."""
+        return cls(
+            type=data.get("type", "text"),
+            text=data.get("text"),
+            data=data.get("data"),
+            mimeType=data.get("mimeType"),
+        )
+
+    @classmethod
+    def text_content(cls, text: str) -> "SamplingContent":
+        """Create text content."""
+        return cls(type="text", text=text)
+
+
+@dataclass
+class SamplingMessage:
+    """Message in a sampling request/response.
+
+    Attributes:
+        role: Message role ("user" or "assistant").
+        content: Message content.
+    """
+
+    role: str
+    """Message role."""
+
+    content: SamplingContent
+    """Message content."""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict."""
+        return {
+            "role": self.role,
+            "content": self.content.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SamplingMessage":
+        """Create from dict."""
+        content_data = data.get("content", {})
+        if isinstance(content_data, str):
+            content = SamplingContent.text_content(content_data)
+        else:
+            content = SamplingContent.from_dict(content_data)
+        return cls(
+            role=data.get("role", "user"),
+            content=content,
+        )
+
+
+@dataclass
+class SamplingRequest:
+    """Request for sampling/createMessage.
+
+    Attributes:
+        messages: Conversation messages.
+        modelPreferences: Optional model selection preferences.
+        systemPrompt: Optional system prompt.
+        includeContext: Whether to include MCP context ("none", "thisServer", "allServers").
+        temperature: Sampling temperature.
+        maxTokens: Maximum tokens to generate.
+        stopSequences: Optional stop sequences.
+        metadata: Optional metadata.
+    """
+
+    messages: list[SamplingMessage]
+    """Conversation messages."""
+
+    modelPreferences: Optional[ModelPreferences] = None
+    """Model selection preferences."""
+
+    systemPrompt: Optional[str] = None
+    """System prompt."""
+
+    includeContext: str = "none"
+    """Context inclusion mode."""
+
+    temperature: Optional[float] = None
+    """Sampling temperature."""
+
+    maxTokens: int = 1024
+    """Maximum tokens to generate."""
+
+    stopSequences: Optional[list[str]] = None
+    """Stop sequences."""
+
+    metadata: Optional[dict[str, Any]] = None
+    """Additional metadata."""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict for JSON-RPC params."""
+        result: dict[str, Any] = {
+            "messages": [m.to_dict() for m in self.messages],
+            "maxTokens": self.maxTokens,
+        }
+        if self.modelPreferences:
+            result["modelPreferences"] = self.modelPreferences.to_dict()
+        if self.systemPrompt:
+            result["systemPrompt"] = self.systemPrompt
+        if self.includeContext != "none":
+            result["includeContext"] = self.includeContext
+        if self.temperature is not None:
+            result["temperature"] = self.temperature
+        if self.stopSequences:
+            result["stopSequences"] = self.stopSequences
+        if self.metadata:
+            result["metadata"] = self.metadata
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SamplingRequest":
+        """Create from dict."""
+        messages = [
+            SamplingMessage.from_dict(m)
+            for m in data.get("messages", [])
+        ]
+        model_prefs = None
+        if "modelPreferences" in data:
+            model_prefs = ModelPreferences.from_dict(data["modelPreferences"])
+        return cls(
+            messages=messages,
+            modelPreferences=model_prefs,
+            systemPrompt=data.get("systemPrompt"),
+            includeContext=data.get("includeContext", "none"),
+            temperature=data.get("temperature"),
+            maxTokens=data.get("maxTokens", 1024),
+            stopSequences=data.get("stopSequences"),
+            metadata=data.get("metadata"),
+        )
+
+
+@dataclass
+class SamplingResponse:
+    """Response from sampling/createMessage.
+
+    Attributes:
+        role: Response role (usually "assistant").
+        content: Response content.
+        model: Model that generated the response.
+        stopReason: Reason generation stopped.
+    """
+
+    role: str
+    """Response role."""
+
+    content: SamplingContent
+    """Response content."""
+
+    model: str = ""
+    """Model that generated the response."""
+
+    stopReason: str = "endTurn"
+    """Reason generation stopped."""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict for JSON-RPC result."""
+        return {
+            "role": self.role,
+            "content": self.content.to_dict(),
+            "model": self.model,
+            "stopReason": self.stopReason,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SamplingResponse":
+        """Create from dict."""
+        content_data = data.get("content", {})
+        if isinstance(content_data, str):
+            content = SamplingContent.text_content(content_data)
+        else:
+            content = SamplingContent.from_dict(content_data)
+        return cls(
+            role=data.get("role", "assistant"),
+            content=content,
+            model=data.get("model", ""),
+            stopReason=data.get("stopReason", "endTurn"),
+        )
 
 
 class MCPErrorCode(str, Enum):
@@ -340,6 +634,7 @@ class MCPErrorCode(str, Enum):
     RESOURCE_NOT_FOUND = "ResourceNotFound"
     CONNECTION_ERROR = "ConnectionError"
     TIMEOUT = "Timeout"
+    RATE_LIMIT_EXCEEDED = "RateLimitExceeded"
 
 
 @dataclass

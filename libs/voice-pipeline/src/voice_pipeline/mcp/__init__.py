@@ -66,6 +66,13 @@ from voice_pipeline.mcp.types import (
     MCPTool,
     MCPToolCall,
     TransportType,
+    # Sampling types
+    ModelHint,
+    ModelPreferences,
+    SamplingContent,
+    SamplingMessage,
+    SamplingRequest,
+    SamplingResponse,
 )
 
 # Client
@@ -110,6 +117,13 @@ __all__ = [
     "MCPErrorCode",
     "MCPCapabilities",
     "TransportType",
+    # Sampling types
+    "ModelHint",
+    "ModelPreferences",
+    "SamplingContent",
+    "SamplingMessage",
+    "SamplingRequest",
+    "SamplingResponse",
     # Client
     "MCPClient",
     "MCPClientConfig",

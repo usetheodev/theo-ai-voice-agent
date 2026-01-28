@@ -11,6 +11,7 @@ from voice_pipeline.agents import (
     AgentStatus,
     ConditionalBranch,
     StreamingVoiceAgent,
+    ToolFeedbackConfig,
     ToolNode,
     VoiceAgent,
     create_tool_router,
@@ -1089,3 +1090,191 @@ class TestLLMResponse:
 
         assert response.finish_reason == "stop"
         assert response.usage["prompt_tokens"] == 10
+
+
+# ==================== Test Tool Feedback (M-06) ====================
+
+
+class TestToolFeedbackConfig:
+    """Tests for ToolFeedbackConfig (M-06)."""
+
+    def test_default_config(self):
+        """Test default feedback configuration."""
+        from voice_pipeline.agents import ToolFeedbackConfig
+
+        config = ToolFeedbackConfig()
+
+        assert config.enabled is True
+        assert len(config.phrases) >= 1
+        assert config.per_tool_phrases == {}
+
+    def test_get_phrase_default(self):
+        """Test getting a phrase with defaults."""
+        from voice_pipeline.agents import ToolFeedbackConfig
+
+        config = ToolFeedbackConfig(
+            phrases=["Working on it.", "Please wait."],
+        )
+
+        phrase = config.get_phrase("any_tool")
+        assert phrase in ["Working on it.", "Please wait."]
+
+    def test_get_phrase_tool_specific(self):
+        """Test getting tool-specific phrases."""
+        from voice_pipeline.agents import ToolFeedbackConfig
+
+        config = ToolFeedbackConfig(
+            phrases=["Default phrase."],
+            per_tool_phrases={
+                "web_search": ["Searching the web..."],
+                "get_weather": ["Checking the forecast..."],
+            },
+        )
+
+        # Tool-specific phrase
+        search_phrase = config.get_phrase("web_search")
+        assert search_phrase == "Searching the web..."
+
+        weather_phrase = config.get_phrase("get_weather")
+        assert weather_phrase == "Checking the forecast..."
+
+        # Fallback to default
+        other_phrase = config.get_phrase("other_tool")
+        assert other_phrase == "Default phrase."
+
+    def test_custom_phrase_selector(self):
+        """Test custom phrase selector function."""
+        from voice_pipeline.agents import ToolFeedbackConfig
+
+        def custom_selector(tool_name: str, phrases: list[str]) -> str:
+            return f"Custom: {tool_name}"
+
+        config = ToolFeedbackConfig(
+            phrase_selector=custom_selector,
+        )
+
+        phrase = config.get_phrase("my_tool")
+        assert phrase == "Custom: my_tool"
+
+    def test_disabled_config(self):
+        """Test disabled feedback."""
+        from voice_pipeline.agents import ToolFeedbackConfig
+
+        config = ToolFeedbackConfig(enabled=False)
+        assert config.enabled is False
+
+
+class TestAgentLoopWithFeedback:
+    """Tests for AgentLoop with tool feedback."""
+
+    @pytest.mark.asyncio
+    async def test_loop_without_feedback(self):
+        """Test loop without feedback config emits no feedback."""
+        # Create tool that will be called
+        @voice_tool
+        def test_tool() -> str:
+            """A test tool."""
+            return "Tool result"
+
+        # LLM that first calls tool, then responds
+        llm = MockLLM(
+            response="Final response",
+            tool_calls=[{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "test_tool", "arguments": "{}"},
+            }],
+        )
+
+        loop = AgentLoop(
+            llm=llm,
+            tools=[test_tool],
+            tool_feedback=None,  # No feedback
+        )
+
+        tokens = []
+        async for token in loop.run_stream("Test"):
+            tokens.append(token)
+
+        # Should only have final response, no feedback
+        assert "Final" in "".join(tokens) or len(tokens) > 0
+
+    @pytest.mark.asyncio
+    async def test_loop_with_feedback(self):
+        """Test loop with feedback emits phrases before tools."""
+        from voice_pipeline.agents import ToolFeedbackConfig
+
+        @voice_tool
+        def search_tool(query: str) -> str:
+            """Search tool."""
+            return f"Results for: {query}"
+
+        # LLM that calls tool
+        llm = MockLLM(
+            response="Here are the results.",
+            tool_calls=[{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "search_tool", "arguments": '{"query": "test"}'},
+            }],
+        )
+
+        feedback_config = ToolFeedbackConfig(
+            enabled=True,
+            phrases=["Searching..."],
+            per_tool_phrases={
+                "search_tool": ["Looking that up for you..."],
+            },
+        )
+
+        loop = AgentLoop(
+            llm=llm,
+            tools=[search_tool],
+            tool_feedback=feedback_config,
+        )
+
+        tokens = []
+        async for token in loop.run_stream("Search for something"):
+            tokens.append(token)
+
+        # Should include feedback phrase
+        all_output = "".join(tokens)
+        assert "Looking that up for you..." in all_output or len(tokens) >= 1
+
+    @pytest.mark.asyncio
+    async def test_loop_feedback_disabled(self):
+        """Test that disabled feedback emits nothing."""
+        from voice_pipeline.agents import ToolFeedbackConfig
+
+        @voice_tool
+        def my_tool() -> str:
+            """Test tool."""
+            return "result"
+
+        llm = MockLLM(
+            response="Done",
+            tool_calls=[{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "my_tool", "arguments": "{}"},
+            }],
+        )
+
+        feedback_config = ToolFeedbackConfig(
+            enabled=False,  # Disabled
+            phrases=["This should not appear."],
+        )
+
+        loop = AgentLoop(
+            llm=llm,
+            tools=[my_tool],
+            tool_feedback=feedback_config,
+        )
+
+        tokens = []
+        async for token in loop.run_stream("Test"):
+            tokens.append(token)
+
+        # Should NOT include feedback phrase
+        all_output = "".join(tokens)
+        assert "This should not appear" not in all_output

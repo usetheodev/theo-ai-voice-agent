@@ -3,11 +3,16 @@
 Tools allow voice agents to perform actions and access external systems.
 """
 
+from __future__ import annotations
+
 import asyncio
 import inspect
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, get_type_hints
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Optional, get_type_hints
+
+if TYPE_CHECKING:
+    from voice_pipeline.tools.permissions import PermissionLevel
 
 
 @dataclass
@@ -34,6 +39,31 @@ class ToolParameter:
 
     enum: Optional[list[str]] = None
     """Allowed values for enum types."""
+
+
+@dataclass
+class ToolResultChunk:
+    """A chunk of streaming tool output.
+
+    Used for tools that produce incremental results, allowing
+    the voice agent to start speaking before the tool finishes.
+
+    Example:
+        >>> async def search_stream(**kwargs) -> AsyncIterator[ToolResultChunk]:
+        ...     yield ToolResultChunk(text="Searching...")
+        ...     results = await do_search()
+        ...     yield ToolResultChunk(text=f"Found {len(results)} results.")
+        ...     yield ToolResultChunk(text=results[0], is_final=True)
+    """
+
+    text: str = ""
+    """Partial text output."""
+
+    is_final: bool = False
+    """Whether this is the final chunk."""
+
+    metadata: dict[str, Any] = field(default_factory=dict)
+    """Additional chunk metadata."""
 
 
 @dataclass
@@ -104,6 +134,9 @@ class VoiceTool(ABC):
     timeout_seconds: float = 30.0
     """Maximum execution time in seconds."""
 
+    permission_level: Optional["PermissionLevel"] = None
+    """Permission level for this tool. Used by ToolPermissionChecker."""
+
     @abstractmethod
     async def execute(self, **kwargs) -> ToolResult:
         """Execute the tool with given arguments.
@@ -115,6 +148,58 @@ class VoiceTool(ABC):
             ToolResult with success status and output.
         """
         pass
+
+    async def execute_stream(self, **kwargs) -> AsyncIterator[ToolResultChunk]:
+        """Execute the tool with streaming output.
+
+        Override this method to provide incremental results for long-running
+        tools. The default implementation calls execute() and yields the
+        result as a single final chunk.
+
+        This is useful for voice AI where the agent can start speaking
+        partial results while the tool continues executing.
+
+        Args:
+            **kwargs: Tool-specific arguments.
+
+        Yields:
+            ToolResultChunk with partial or final output.
+
+        Example:
+            >>> class WebSearchTool(VoiceTool):
+            ...     async def execute_stream(self, query: str):
+            ...         yield ToolResultChunk(text="Searching the web...")
+            ...         results = await self._search(query)
+            ...         yield ToolResultChunk(
+            ...             text=f"Found: {results}",
+            ...             is_final=True,
+            ...         )
+        """
+        # Default: call execute() and yield as single chunk
+        result = await self.execute(**kwargs)
+        if result.success:
+            yield ToolResultChunk(
+                text=str(result.output),
+                is_final=True,
+                metadata=result.metadata,
+            )
+        else:
+            yield ToolResultChunk(
+                text=f"Error: {result.error}",
+                is_final=True,
+                metadata={"error": True, **result.metadata},
+            )
+
+    def supports_streaming(self) -> bool:
+        """Check if this tool supports streaming output.
+
+        Returns True if execute_stream() is overridden.
+
+        Returns:
+            True if streaming is supported.
+        """
+        # Check if execute_stream is overridden
+        return type(self).execute_stream is not VoiceTool.execute_stream
 
     async def __call__(self, **kwargs) -> ToolResult:
         """Convenience method to execute tool."""
@@ -205,6 +290,7 @@ class FunctionTool(VoiceTool):
         parameters: Optional[list[ToolParameter]] = None,
         return_direct: bool = False,
         timeout_seconds: float = 30.0,
+        permission_level: Optional["PermissionLevel"] = None,
     ):
         """Initialize function tool.
 
@@ -215,12 +301,14 @@ class FunctionTool(VoiceTool):
             parameters: Parameter definitions (auto-inferred if None).
             return_direct: Whether to return directly.
             timeout_seconds: Execution timeout.
+            permission_level: Permission level for this tool.
         """
         self._func = func
         self.name = name
         self.description = description
         self.return_direct = return_direct
         self.timeout_seconds = timeout_seconds
+        self.permission_level = permission_level
 
         if parameters is not None:
             self.parameters = parameters
@@ -317,6 +405,62 @@ class FunctionTool(VoiceTool):
                 output=None,
                 error=str(e),
             )
+
+    async def execute_stream(self, **kwargs) -> AsyncIterator[ToolResultChunk]:
+        """Execute the wrapped function with streaming support.
+
+        If the wrapped function is an async generator, yields chunks
+        from it. Otherwise, falls back to execute().
+
+        Args:
+            **kwargs: Function arguments.
+
+        Yields:
+            ToolResultChunk with partial or final output.
+        """
+        try:
+            if inspect.isasyncgenfunction(self._func):
+                # Function is an async generator - stream its output
+                collected: list[str] = []
+                async for chunk in self._func(**kwargs):
+                    if isinstance(chunk, ToolResultChunk):
+                        yield chunk
+                    else:
+                        # Convert raw output to chunk
+                        text = str(chunk)
+                        collected.append(text)
+                        yield ToolResultChunk(text=text)
+
+                # Yield final chunk
+                yield ToolResultChunk(
+                    text="",
+                    is_final=True,
+                    metadata={"full_output": "".join(collected)},
+                )
+            else:
+                # Not a generator - use default behavior
+                async for chunk in super().execute_stream(**kwargs):
+                    yield chunk
+
+        except asyncio.TimeoutError:
+            yield ToolResultChunk(
+                text=f"Error: Tool {self.name} timed out after {self.timeout_seconds}s",
+                is_final=True,
+                metadata={"error": True},
+            )
+        except Exception as e:
+            yield ToolResultChunk(
+                text=f"Error: {str(e)}",
+                is_final=True,
+                metadata={"error": True},
+            )
+
+    def supports_streaming(self) -> bool:
+        """Check if this tool supports streaming output.
+
+        Returns True if the wrapped function is an async generator.
+        """
+        return inspect.isasyncgenfunction(self._func)
 
     @classmethod
     def from_function(
