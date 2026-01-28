@@ -1,0 +1,184 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1f2937;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #4b5563;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #6b7280;
+}
+
+/* Audio visualizer bars */
+.visualizer-bar {
+  @apply bg-primary-500 rounded-full transition-all duration-75;
+  transform-origin: bottom;
+}
+
+.visualizer-bar.active {
+  @apply bg-primary-400;
+  animation: wave 0.5s ease-in-out infinite;
+  animation-delay: calc(var(--i) * 0.05s);
+}
+
+/* Pulse animation for recording indicator */
+.pulse-recording {
+  @apply relative;
+}
+
+.pulse-recording::before {
+  content: '';
+  @apply absolute inset-0 rounded-full bg-red-500 animate-ping opacity-75;
+}
+
+/* Chat message animations */
+.message-enter {
+  @apply opacity-0 translate-y-2;
+}
+
+.message-enter-active {
+  @apply opacity-100 translate-y-0 transition-all duration-300;
+}
+
+/* Token streaming effect */
+.streaming-cursor {
+  @apply inline-block w-2 h-5 bg-primary-400 ml-1 animate-pulse;
+}
+
+/* Tool execution indicator */
+.tool-executing {
+  @apply relative overflow-hidden;
+}
+
+.tool-executing::after {
+  content: '';
+  @apply absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent;
+  animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Panel styles */
+.panel {
+  @apply bg-gray-800 rounded-lg border border-gray-700 p-4;
+}
+
+.panel-header {
+  @apply text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3;
+}
+
+/* Button variants */
+.btn {
+  @apply px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center gap-2;
+}
+
+.btn-primary {
+  @apply bg-primary-600 hover:bg-primary-500 text-white;
+}
+
+.btn-secondary {
+  @apply bg-gray-700 hover:bg-gray-600 text-gray-200;
+}
+
+.btn-danger {
+  @apply bg-red-600 hover:bg-red-500 text-white;
+}
+
+.btn-success {
+  @apply bg-green-600 hover:bg-green-500 text-white;
+}
+
+.btn:disabled {
+  @apply opacity-50 cursor-not-allowed;
+}
+
+/* Status indicators */
+.status-dot {
+  @apply w-2 h-2 rounded-full;
+}
+
+.status-dot.connected {
+  @apply bg-green-500;
+}
+
+.status-dot.disconnected {
+  @apply bg-gray-500;
+}
+
+.status-dot.error {
+  @apply bg-red-500;
+}
+
+.status-dot.speaking {
+  @apply bg-primary-500 animate-pulse;
+}
+
+.status-dot.listening {
+  @apply bg-yellow-500 animate-pulse;
+}
+
+/* Memory episode card */
+.episode-card {
+  @apply bg-gray-700/50 rounded-lg p-3 border border-gray-600 hover:border-gray-500 transition-colors;
+}
+
+/* Metrics display */
+.metric {
+  @apply flex flex-col items-center;
+}
+
+.metric-value {
+  @apply text-2xl font-bold text-primary-400;
+}
+
+.metric-label {
+  @apply text-xs text-gray-500 uppercase;
+}
+
+/* Modal backdrop */
+.modal-backdrop {
+  @apply fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50;
+}
+
+.modal-content {
+  @apply bg-gray-800 rounded-xl border border-gray-700 p-6 max-w-md w-full mx-4 shadow-xl;
+}
+
+/* Waveform canvas */
+.waveform-canvas {
+  @apply w-full h-full;
+  image-rendering: pixelated;
+}
+
+/* Connection status banner */
+.connection-banner {
+  @apply fixed top-0 left-0 right-0 py-2 px-4 text-center text-sm font-medium z-40;
+}
+
+.connection-banner.connecting {
+  @apply bg-yellow-600 text-yellow-100;
+}
+
+.connection-banner.error {
+  @apply bg-red-600 text-red-100;
+}

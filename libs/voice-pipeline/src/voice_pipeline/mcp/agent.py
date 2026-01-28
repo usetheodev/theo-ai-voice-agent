@@ -67,6 +67,7 @@ class MCPEnabledAgent(VoiceAgent):
         max_iterations: int = 10,
         verbose: bool = False,
         auto_connect: bool = True,
+        tool_execution_timeout: float = 30.0,
     ):
         """Initialize MCP-enabled agent.
 
@@ -80,6 +81,7 @@ class MCPEnabledAgent(VoiceAgent):
             max_iterations: Max loop iterations.
             verbose: Enable verbose output.
             auto_connect: Connect to servers automatically.
+            tool_execution_timeout: Timeout in seconds for each tool execution.
         """
         # Normalize server config
         if isinstance(mcp_servers, list):
@@ -105,6 +107,7 @@ class MCPEnabledAgent(VoiceAgent):
             system_prompt=system_prompt,
             max_iterations=max_iterations,
             verbose=verbose,
+            tool_execution_timeout=tool_execution_timeout,
         )
 
     async def __aenter__(self) -> "MCPEnabledAgent":

@@ -116,6 +116,7 @@ class VoiceAgent(VoiceRunnable[str, str]):
         system_prompt: Optional[str] = None,
         max_iterations: int = 10,
         verbose: bool = False,
+        tool_execution_timeout: float = 30.0,
     ):
         """Initialize VoiceAgent.
 
@@ -128,6 +129,7 @@ class VoiceAgent(VoiceRunnable[str, str]):
                           (overrides persona if both provided).
             max_iterations: Maximum loop iterations.
             verbose: Whether to log execution details.
+            tool_execution_timeout: Timeout in seconds for each tool execution.
         """
         self.llm = llm
         self.tools = tools or []
@@ -145,6 +147,7 @@ class VoiceAgent(VoiceRunnable[str, str]):
             tools=self.tools,
             system_prompt=self._system_prompt,
             max_iterations=max_iterations,
+            tool_execution_timeout=tool_execution_timeout,
         )
 
     # =========================================================================
@@ -551,6 +554,11 @@ class VoiceAgentBuilder:
         self._streaming_strategy = None
         # Interruption strategy config
         self._interruption_strategy = None
+        # MCP config
+        self._mcp_servers: dict[str, str] = {}  # name -> url
+        self._mcp_timeout: float = 30.0  # seconds
+        # Tool execution config
+        self._tool_execution_timeout: float = 30.0  # seconds
 
     def asr(
         self,
@@ -1113,6 +1121,96 @@ class VoiceAgentBuilder:
 
         return self
 
+    def mcp_servers(
+        self,
+        servers: dict[str, str] | list[str],
+    ) -> "VoiceAgentBuilder":
+        """Configure MCP (Model Context Protocol) servers.
+
+        MCP servers provide additional tools that can be used by the agent.
+        Tools are automatically loaded and converted to VoiceTools.
+
+        Args:
+            servers: MCP server configuration. Can be:
+                - dict: Mapping of server name to URL (e.g., {"search": "http://localhost:8000/mcp"})
+                - list: List of URLs (auto-named as server_0, server_1, etc.)
+
+        Returns:
+            Self for chaining.
+
+        Example:
+            >>> # Single server
+            >>> agent = (
+            ...     VoiceAgent.builder()
+            ...     .llm("ollama")
+            ...     .mcp_servers(["http://localhost:8000/mcp"])
+            ...     .build()
+            ... )
+            >>>
+            >>> # Multiple named servers
+            >>> agent = (
+            ...     VoiceAgent.builder()
+            ...     .llm("ollama")
+            ...     .mcp_servers({
+            ...         "search": "http://search-server:8000/mcp",
+            ...         "math": "http://math-server:8001/mcp",
+            ...     })
+            ...     .build()
+            ... )
+        """
+        if isinstance(servers, list):
+            self._mcp_servers = {f"server_{i}": url for i, url in enumerate(servers)}
+        else:
+            self._mcp_servers = servers
+        return self
+
+    def mcp_timeout(self, timeout: float) -> "VoiceAgentBuilder":
+        """Set MCP request timeout.
+
+        Controls how long to wait for MCP server responses before timing out.
+
+        Args:
+            timeout: Timeout in seconds (default: 30.0).
+
+        Returns:
+            Self for chaining.
+
+        Example:
+            >>> agent = (
+            ...     VoiceAgent.builder()
+            ...     .llm("ollama")
+            ...     .mcp_servers(["http://localhost:8000/mcp"])
+            ...     .mcp_timeout(10)  # 10 second timeout
+            ...     .build()
+            ... )
+        """
+        self._mcp_timeout = timeout
+        return self
+
+    def tool_execution_timeout(self, timeout: float) -> "VoiceAgentBuilder":
+        """Set tool execution timeout.
+
+        Controls how long to wait for a tool to complete execution.
+        Applies to both local tools and MCP tools.
+
+        Args:
+            timeout: Timeout in seconds (default: 30.0).
+
+        Returns:
+            Self for chaining.
+
+        Example:
+            >>> agent = (
+            ...     VoiceAgent.builder()
+            ...     .llm("ollama")
+            ...     .tools([slow_search_tool])
+            ...     .tool_execution_timeout(60)  # Allow up to 60s per tool
+            ...     .build()
+            ... )
+        """
+        self._tool_execution_timeout = timeout
+        return self
+
     def build(self) -> Union["VoiceAgent", Any]:
         """Build the VoiceAgent, ConversationChain or StreamingVoiceChain.
 
@@ -1171,6 +1269,21 @@ class VoiceAgentBuilder:
                 )
 
         # Otherwise, create VoiceAgent (text -> text)
+        # If MCP servers are configured, use MCPEnabledAgent
+        if self._mcp_servers:
+            from voice_pipeline.mcp.agent import MCPEnabledAgent
+
+            return MCPEnabledAgent(
+                llm=self._llm,
+                mcp_servers=self._mcp_servers,
+                tools=self._tools,
+                persona=self._persona,
+                memory=self._memory,
+                system_prompt=self._system_prompt,
+                max_iterations=self._max_iterations,
+                auto_connect=False,  # build_async will connect
+            )
+
         return VoiceAgent(
             llm=self._llm,
             tools=self._tools,
@@ -1178,6 +1291,7 @@ class VoiceAgentBuilder:
             memory=self._memory,
             system_prompt=self._system_prompt,
             max_iterations=self._max_iterations,
+            tool_execution_timeout=self._tool_execution_timeout,
         )
 
     async def build_async(self):
@@ -1210,6 +1324,15 @@ class VoiceAgentBuilder:
                 await self._tts.connect()
             if self._vad is not None:
                 await self._vad.connect()
+
+        # Connect MCP servers if configured
+        if self._mcp_servers and hasattr(result, 'connect'):
+            # MCPEnabledAgent - connect will load tools from servers
+            from voice_pipeline.mcp.agent import MCPEnabledAgent
+            if isinstance(result, MCPEnabledAgent):
+                # Update timeout on MCP clients before connecting
+                await result.connect()
+                logger.info(f"Connected to {len(self._mcp_servers)} MCP server(s)")
 
         # Index RAG documents if provided
         if self._rag is not None and hasattr(self, '_rag_documents') and self._rag_documents:

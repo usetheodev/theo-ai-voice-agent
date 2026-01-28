@@ -180,6 +180,7 @@ class ToolExecutor:
         name: str,
         arguments: dict[str, Any],
         skip_permission_check: bool = False,
+        timeout: Optional[float] = None,
     ) -> ToolResult:
         """Execute a tool by name.
 
@@ -187,6 +188,7 @@ class ToolExecutor:
             name: Tool name.
             arguments: Tool arguments.
             skip_permission_check: If True, bypasses permission checking.
+            timeout: Execution timeout in seconds. Uses default_timeout if None.
 
         Returns:
             ToolResult from execution.
@@ -234,7 +236,20 @@ class ToolExecutor:
             # Record the call for rate limiting
             self.permission_checker.record_call(name)
 
-        return await tool.execute(**arguments)
+        # Execute with timeout
+        exec_timeout = timeout if timeout is not None else self.default_timeout
+        try:
+            return await asyncio.wait_for(
+                tool.execute(**arguments),
+                timeout=exec_timeout,
+            )
+        except asyncio.TimeoutError:
+            return ToolResult(
+                success=False,
+                output=None,
+                error=f"Tool '{name}' execution timed out after {exec_timeout}s",
+                metadata={"timeout": True},
+            )
 
     async def execute_call(self, call: ToolCall) -> ToolResult:
         """Execute a ToolCall.

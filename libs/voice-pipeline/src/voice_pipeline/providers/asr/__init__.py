@@ -6,6 +6,7 @@ Available providers:
 - DeepgramASRProvider: Real-time streaming ASR via WebSocket (nova-2)
 - NemotronASRProvider: NVIDIA Nemotron Speech ASR (<24ms latency, GPU required)
 - FasterWhisperProvider: FasterWhisper with CTranslate2 (4x faster, CPU optimized)
+- ParakeetProvider: NVIDIA Parakeet via ONNX (25 languages, ~6% WER, CPU optimized)
 """
 
 from voice_pipeline.providers.asr.openai import (
@@ -32,6 +33,10 @@ from voice_pipeline.providers.asr.faster_whisper import (
     FasterWhisperModel,
     ComputeType,
 )
+from voice_pipeline.providers.asr.parakeet import (
+    ParakeetProvider,
+    ParakeetConfig,
+)
 
 __all__ = [
     # OpenAI Whisper
@@ -53,4 +58,7 @@ __all__ = [
     "FasterWhisperConfig",
     "FasterWhisperModel",
     "ComputeType",
+    # NVIDIA Parakeet (ONNX, CPU optimized, multilingual)
+    "ParakeetProvider",
+    "ParakeetConfig",
 ]

@@ -127,6 +127,7 @@ class AgentLoop:
         stop_on_first_response: bool = True,
         parallel_tool_execution: bool = True,
         tool_feedback: Optional[ToolFeedbackConfig] = None,
+        tool_execution_timeout: float = 30.0,
     ):
         """Initialize the agent loop.
 
@@ -139,6 +140,7 @@ class AgentLoop:
             parallel_tool_execution: Execute multiple tools in parallel.
             tool_feedback: Configuration for verbal feedback during tool execution.
                 If None, no feedback is emitted. Use ToolFeedbackConfig() for defaults.
+            tool_execution_timeout: Timeout in seconds for each tool execution.
         """
         self.llm = llm
         self.system_prompt = system_prompt
@@ -146,8 +148,11 @@ class AgentLoop:
         self.stop_on_first_response = stop_on_first_response
         self.tool_feedback = tool_feedback
 
-        # Set up tool execution
-        self.executor = ToolExecutor(tools=tools or [])
+        # Set up tool execution with timeout
+        self.executor = ToolExecutor(
+            tools=tools or [],
+            default_timeout=tool_execution_timeout,
+        )
         self.tool_node = ToolNode(
             executor=self.executor,
             parallel=parallel_tool_execution,
