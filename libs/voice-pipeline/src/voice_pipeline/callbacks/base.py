@@ -173,6 +173,61 @@ class VoiceCallbackHandler(ABC):
         """Called when a conversation turn completes."""
         pass
 
+    # ==================== Agent Events ====================
+
+    async def on_agent_start(
+        self, ctx: RunContext, input: str, tools: list[str]
+    ) -> None:
+        """Called when agent starts processing input."""
+        pass
+
+    async def on_agent_iteration(
+        self, ctx: RunContext, iteration: int, max_iterations: int
+    ) -> None:
+        """Called at the start of each agent loop iteration."""
+        pass
+
+    async def on_agent_thinking(self, ctx: RunContext) -> None:
+        """Called when agent enters thinking phase."""
+        pass
+
+    async def on_agent_tool_start(
+        self, ctx: RunContext, tool_name: str, arguments: dict[str, Any]
+    ) -> None:
+        """Called when agent starts tool execution."""
+        pass
+
+    async def on_agent_tool_end(
+        self,
+        ctx: RunContext,
+        tool_name: str,
+        result: Any,
+        success: bool,
+        duration_ms: float,
+    ) -> None:
+        """Called when tool execution completes."""
+        pass
+
+    async def on_agent_tool_error(
+        self, ctx: RunContext, tool_name: str, error: Exception
+    ) -> None:
+        """Called when tool execution fails."""
+        pass
+
+    async def on_agent_response(self, ctx: RunContext, response: str) -> None:
+        """Called when agent produces final response."""
+        pass
+
+    async def on_agent_end(
+        self, ctx: RunContext, response: str, iterations: int, duration_ms: float
+    ) -> None:
+        """Called when agent completes processing."""
+        pass
+
+    async def on_agent_error(self, ctx: RunContext, error: Exception) -> None:
+        """Called when agent encounters an error."""
+        pass
+
     # ==================== Custom Events ====================
 
     async def on_custom_event(
@@ -367,3 +422,53 @@ class CallbackManager:
         self, ctx: RunContext, event_name: str, data: Any = None
     ) -> None:
         await self._dispatch("on_custom_event", ctx, event_name, data)
+
+    # ==================== Agent Event Dispatch ====================
+
+    async def on_agent_start(
+        self, ctx: RunContext, input: str, tools: list[str]
+    ) -> None:
+        await self._dispatch("on_agent_start", ctx, input, tools)
+
+    async def on_agent_iteration(
+        self, ctx: RunContext, iteration: int, max_iterations: int
+    ) -> None:
+        await self._dispatch("on_agent_iteration", ctx, iteration, max_iterations)
+
+    async def on_agent_thinking(self, ctx: RunContext) -> None:
+        await self._dispatch("on_agent_thinking", ctx)
+
+    async def on_agent_tool_start(
+        self, ctx: RunContext, tool_name: str, arguments: dict[str, Any]
+    ) -> None:
+        await self._dispatch("on_agent_tool_start", ctx, tool_name, arguments)
+
+    async def on_agent_tool_end(
+        self,
+        ctx: RunContext,
+        tool_name: str,
+        result: Any,
+        success: bool,
+        duration_ms: float,
+    ) -> None:
+        await self._dispatch(
+            "on_agent_tool_end", ctx, tool_name, result, success, duration_ms
+        )
+
+    async def on_agent_tool_error(
+        self, ctx: RunContext, tool_name: str, error: Exception
+    ) -> None:
+        await self._dispatch("on_agent_tool_error", ctx, tool_name, error)
+
+    async def on_agent_response(self, ctx: RunContext, response: str) -> None:
+        await self._dispatch("on_agent_response", ctx, response)
+
+    async def on_agent_end(
+        self, ctx: RunContext, response: str, iterations: int, duration_ms: float
+    ) -> None:
+        await self._dispatch("on_agent_end", ctx, response, iterations, duration_ms)
+        await self.wait_for_callbacks()
+
+    async def on_agent_error(self, ctx: RunContext, error: Exception) -> None:
+        await self._dispatch("on_agent_error", ctx, error)
+        await self.wait_for_callbacks()

@@ -254,6 +254,52 @@ class TestToolCall:
         assert call.name == "get_weather"
         assert call.arguments["location"] == "New York"
 
+    def test_from_openai_with_dict_arguments(self):
+        """Test creating from format where arguments is already a dict (Ollama format)."""
+        # Ollama and some other providers return arguments as dict, not JSON string
+        ollama_call = {
+            "id": "call_456",
+            "function": {
+                "name": "calculate",
+                "arguments": {"expression": "2 + 2", "precision": 2},  # Dict, not string
+            },
+        }
+
+        call = ToolCall.from_openai(ollama_call)
+        assert call.id == "call_456"
+        assert call.name == "calculate"
+        assert call.arguments["expression"] == "2 + 2"
+        assert call.arguments["precision"] == 2
+
+    def test_from_openai_with_empty_arguments(self):
+        """Test creating from call with no arguments."""
+        call_data = {
+            "id": "call_789",
+            "function": {
+                "name": "get_time",
+                # No arguments field
+            },
+        }
+
+        call = ToolCall.from_openai(call_data)
+        assert call.id == "call_789"
+        assert call.name == "get_time"
+        assert call.arguments == {}
+
+    def test_from_openai_flat_format(self):
+        """Test creating from flat format (no nested function object)."""
+        # Some providers use flat format
+        flat_call = {
+            "id": "call_flat",
+            "name": "search",
+            "arguments": '{"query": "test"}',
+        }
+
+        call = ToolCall.from_openai(flat_call)
+        assert call.id == "call_flat"
+        assert call.name == "search"
+        assert call.arguments["query"] == "test"
+
     def test_from_anthropic(self):
         """Test creating from Anthropic format."""
         anthropic_block = {
@@ -422,6 +468,93 @@ class TestToolExecutor:
         anthropic_msg = executor.format_result_for_llm(call, result, format="anthropic")
         assert anthropic_msg["type"] == "tool_result"
         assert anthropic_msg["is_error"] is False
+
+
+class TestExecuteManyErrorHandling:
+    """Tests for error handling in execute_many (TASK-2.3)."""
+
+    @pytest.mark.asyncio
+    async def test_execute_many_captures_traceback(self):
+        """Test that execute_many captures traceback on failure."""
+
+        @voice_tool
+        def failing_tool() -> str:
+            def inner_function():
+                raise ValueError("Something went wrong")
+            inner_function()
+
+        executor = ToolExecutor(tools=[failing_tool])
+        calls = [ToolCall(id="1", name="failing_tool", arguments={})]
+
+        results = await executor.execute_many(calls, parallel=True)
+
+        assert len(results) == 1
+        assert results[0].success is False
+        # Error contains the exception message
+        assert "Something went wrong" in results[0].error
+
+        # Check traceback is in metadata
+        assert results[0].metadata is not None
+        assert "traceback" in results[0].metadata
+        assert "exception_type" in results[0].metadata
+        assert results[0].metadata["exception_type"] == "ValueError"
+
+        # Traceback should contain function names and full info
+        tb = results[0].metadata["traceback"]
+        assert "inner_function" in tb
+        assert "Something went wrong" in tb
+        assert "ValueError" in tb
+
+    @pytest.mark.asyncio
+    async def test_execute_many_logs_errors(self, caplog):
+        """Test that execute_many logs errors with traceback."""
+        import logging
+
+        @voice_tool
+        def logging_test_tool() -> str:
+            raise RuntimeError("Test error for logging")
+
+        executor = ToolExecutor(tools=[logging_test_tool])
+        calls = [ToolCall(id="1", name="logging_test_tool", arguments={})]
+
+        with caplog.at_level(logging.ERROR):
+            results = await executor.execute_many(calls, parallel=True)
+
+        assert len(results) == 1
+        assert results[0].success is False
+
+        # Check that error was logged
+        assert any("logging_test_tool" in record.message for record in caplog.records)
+        assert any("RuntimeError" in record.message for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_execute_many_mixed_success_failure(self):
+        """Test that successful and failed tools both return correctly."""
+
+        @voice_tool
+        def success_tool() -> str:
+            return "success"
+
+        @voice_tool
+        def failure_tool() -> str:
+            raise Exception("Intentional failure")
+
+        executor = ToolExecutor(tools=[success_tool, failure_tool])
+        calls = [
+            ToolCall(id="1", name="success_tool", arguments={}),
+            ToolCall(id="2", name="failure_tool", arguments={}),
+            ToolCall(id="3", name="success_tool", arguments={}),
+        ]
+
+        results = await executor.execute_many(calls, parallel=True)
+
+        assert len(results) == 3
+        assert results[0].success is True
+        assert results[0].output == "success"
+        assert results[1].success is False
+        assert "traceback" in results[1].metadata
+        assert results[2].success is True
+        assert results[2].output == "success"
 
 
 class TestExecuteManyCancel:

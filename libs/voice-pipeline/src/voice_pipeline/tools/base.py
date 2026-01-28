@@ -7,12 +7,16 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
+import traceback
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Optional, get_type_hints
 
 if TYPE_CHECKING:
     from voice_pipeline.tools.permissions import PermissionLevel
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -398,12 +402,23 @@ class FunctionTool(VoiceTool):
                 success=False,
                 output=None,
                 error=f"Tool {self.name} timed out after {self.timeout_seconds}s",
+                metadata={"timeout": True},
             )
         except Exception as e:
+            # Capture full traceback for debugging
+            exc_type = type(e).__name__
+            exc_tb = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+
+            logger.error(f"Tool '{self.name}' failed with {exc_type}: {e}\n{exc_tb}")
+
             return ToolResult(
                 success=False,
                 output=None,
                 error=str(e),
+                metadata={
+                    "exception_type": exc_type,
+                    "traceback": exc_tb,
+                },
             )
 
     async def execute_stream(self, **kwargs) -> AsyncIterator[ToolResultChunk]:

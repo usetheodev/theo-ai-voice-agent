@@ -269,3 +269,112 @@ class LoggingHandler(VoiceCallbackHandler):
             f"Custom event: {event_name}",
             event_data=data,
         )
+
+    # ==================== Agent Events ====================
+
+    async def on_agent_start(
+        self, ctx: RunContext, input: str, tools: list[str]
+    ) -> None:
+        preview = input[:50] + "..." if len(input) > 50 else input
+        self._log(
+            ctx,
+            "AGENT_START",
+            f"Agent started with '{preview}' ({len(tools)} tools)",
+            input_length=len(input),
+            tool_count=len(tools),
+            tools=tools,
+        )
+
+    async def on_agent_iteration(
+        self, ctx: RunContext, iteration: int, max_iterations: int
+    ) -> None:
+        self._log(
+            ctx,
+            "AGENT_ITERATION",
+            f"Agent iteration {iteration}/{max_iterations}",
+            iteration=iteration,
+            max_iterations=max_iterations,
+            level=logging.DEBUG,
+        )
+
+    async def on_agent_thinking(self, ctx: RunContext) -> None:
+        self._log(
+            ctx,
+            "AGENT_THINKING",
+            "Agent thinking...",
+            level=logging.DEBUG,
+        )
+
+    async def on_agent_tool_start(
+        self, ctx: RunContext, tool_name: str, arguments: dict[str, Any]
+    ) -> None:
+        self._log(
+            ctx,
+            "AGENT_TOOL_START",
+            f"Calling tool '{tool_name}' with {len(arguments)} args",
+            tool_name=tool_name,
+            arguments=arguments,
+        )
+
+    async def on_agent_tool_end(
+        self,
+        ctx: RunContext,
+        tool_name: str,
+        result: Any,
+        success: bool,
+        duration_ms: float,
+    ) -> None:
+        status = "success" if success else "failed"
+        self._log(
+            ctx,
+            "AGENT_TOOL_END",
+            f"Tool '{tool_name}' {status} in {duration_ms:.1f}ms",
+            tool_name=tool_name,
+            success=success,
+            duration_ms=duration_ms,
+            level=logging.INFO if success else logging.WARNING,
+        )
+
+    async def on_agent_tool_error(
+        self, ctx: RunContext, tool_name: str, error: Exception
+    ) -> None:
+        self._log(
+            ctx,
+            "AGENT_TOOL_ERROR",
+            f"Tool '{tool_name}' error: {error}",
+            tool_name=tool_name,
+            error=str(error),
+            error_type=type(error).__name__,
+            level=logging.ERROR,
+        )
+
+    async def on_agent_response(self, ctx: RunContext, response: str) -> None:
+        preview = response[:100] + "..." if len(response) > 100 else response
+        self._log(
+            ctx,
+            "AGENT_RESPONSE",
+            f"Agent response: '{preview}'",
+            response_length=len(response),
+        )
+
+    async def on_agent_end(
+        self, ctx: RunContext, response: str, iterations: int, duration_ms: float
+    ) -> None:
+        self._log(
+            ctx,
+            "AGENT_END",
+            f"Agent completed in {duration_ms:.1f}ms ({iterations} iterations)",
+            iterations=iterations,
+            duration_ms=duration_ms,
+            response_length=len(response),
+        )
+
+    async def on_agent_error(self, ctx: RunContext, error: Exception) -> None:
+        self._log(
+            ctx,
+            "AGENT_ERROR",
+            f"Agent error: {error}",
+            error=str(error),
+            error_type=type(error).__name__,
+            level=logging.ERROR,
+        )

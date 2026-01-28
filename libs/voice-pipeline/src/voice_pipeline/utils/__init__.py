@@ -21,6 +21,25 @@ from .serialization import (
     msgpack_serializer,
     json_serializer,
 )
+from .retry import (
+    RetryConfig,
+    with_retry,
+    retry_async,
+    RateLimitError,
+    ServiceUnavailableError,
+    LLM_RETRY_CONFIG,
+    LLM_EXTENDED_RETRY_CONFIG,
+    RETRYABLE_EXCEPTIONS,
+    EXTENDED_RETRYABLE_EXCEPTIONS,
+)
+from .circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerConfig,
+    CircuitBreakerError,
+    CircuitState,
+    with_circuit_breaker,
+    LLM_CIRCUIT_BREAKER,
+)
 
 __all__ = [
     # Audio
@@ -44,4 +63,21 @@ __all__ = [
     "MessageSerializer",
     "msgpack_serializer",
     "json_serializer",
+    # Retry
+    "RetryConfig",
+    "with_retry",
+    "retry_async",
+    "RateLimitError",
+    "ServiceUnavailableError",
+    "LLM_RETRY_CONFIG",
+    "LLM_EXTENDED_RETRY_CONFIG",
+    "RETRYABLE_EXCEPTIONS",
+    "EXTENDED_RETRYABLE_EXCEPTIONS",
+    # Circuit Breaker
+    "CircuitBreaker",
+    "CircuitBreakerConfig",
+    "CircuitBreakerError",
+    "CircuitState",
+    "with_circuit_breaker",
+    "LLM_CIRCUIT_BREAKER",
 ]

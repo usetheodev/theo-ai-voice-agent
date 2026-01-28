@@ -29,6 +29,8 @@ from voice_pipeline.runnable import RunnableConfig, VoiceRunnable
 from voice_pipeline.tools.base import VoiceTool
 
 if TYPE_CHECKING:
+    from voice_pipeline.agents.events import StreamEvent
+    from voice_pipeline.callbacks.base import CallbackManager
     from voice_pipeline.interfaces import ASRInterface, TTSInterface, VADInterface
 
 logger = logging.getLogger(__name__)
@@ -117,6 +119,7 @@ class VoiceAgent(VoiceRunnable[str, str]):
         max_iterations: int = 10,
         verbose: bool = False,
         tool_execution_timeout: float = 30.0,
+        callbacks: Optional["CallbackManager"] = None,
     ):
         """Initialize VoiceAgent.
 
@@ -130,6 +133,7 @@ class VoiceAgent(VoiceRunnable[str, str]):
             max_iterations: Maximum loop iterations.
             verbose: Whether to log execution details.
             tool_execution_timeout: Timeout in seconds for each tool execution.
+            callbacks: Optional callback manager for observability events.
         """
         self.llm = llm
         self.tools = tools or []
@@ -137,6 +141,7 @@ class VoiceAgent(VoiceRunnable[str, str]):
         self.memory = memory
         self.max_iterations = max_iterations
         self.verbose = verbose
+        self.callbacks = callbacks
 
         # Build system prompt
         self._system_prompt = self._build_system_prompt(system_prompt)
@@ -148,7 +153,50 @@ class VoiceAgent(VoiceRunnable[str, str]):
             system_prompt=self._system_prompt,
             max_iterations=max_iterations,
             tool_execution_timeout=tool_execution_timeout,
+            callbacks=callbacks,
         )
+
+    # =========================================================================
+    # Cancellation Support
+    # =========================================================================
+
+    def cancel(self) -> None:
+        """Request cancellation of the current execution.
+
+        Cancels any running tool executions and stops the agent loop
+        at the next iteration. The loop will return with an error status.
+
+        Example:
+            >>> import asyncio
+            >>>
+            >>> async def run_with_timeout(agent, query, timeout=30):
+            ...     async def run():
+            ...         return await agent.ainvoke(query)
+            ...
+            ...     try:
+            ...         return await asyncio.wait_for(run(), timeout)
+            ...     except asyncio.TimeoutError:
+            ...         agent.cancel()
+            ...         return "Request cancelled due to timeout"
+        """
+        self._loop.cancel()
+
+    def reset_cancel(self) -> None:
+        """Reset the cancellation state.
+
+        Called automatically at the start of each run.
+        Only needed if manually managing cancellation state.
+        """
+        self._loop.reset_cancel()
+
+    @property
+    def is_cancelled(self) -> bool:
+        """Check if cancellation has been requested.
+
+        Returns:
+            True if cancel() was called on the current run.
+        """
+        return self._loop.is_cancelled
 
     # =========================================================================
     # Factory Methods (Presets)
@@ -303,18 +351,21 @@ class VoiceAgent(VoiceRunnable[str, str]):
         input: str,
         config: Optional[RunnableConfig] = None,
     ) -> AsyncIterator[str]:
-        """Stream agent response.
+        """Stream agent response tokens only.
 
-        Yields tokens as they're generated during the final response.
-        Tool calls are executed silently between yields.
+        Yields only response tokens, excluding feedback phrases and
+        other event types. For full event stream, use astream_events().
 
         Args:
             input: User input text.
             config: Optional configuration.
 
         Yields:
-            Response tokens.
+            Response tokens only.
         """
+        # Import here to avoid circular import at module level
+        from voice_pipeline.agents.events import StreamEventType
+
         # Normalize input
         user_input = self._normalize_input(input)
 
@@ -332,17 +383,86 @@ class VoiceAgent(VoiceRunnable[str, str]):
         # Add current user input
         state.add_user_message(user_input)
 
-        # Build full response for memory
-        full_response = []
+        # Build full response for memory (only TOKEN events, not FEEDBACK)
+        response_tokens = []
 
-        async for token in self._loop.run_stream(user_input, initial_state=state):
-            full_response.append(token)
-            yield token
+        async for event in self._loop.run_stream_events(user_input, initial_state=state):
+            if event.type == StreamEventType.TOKEN:
+                response_tokens.append(event.data)
+                yield event.data
+            elif event.type == StreamEventType.ERROR:
+                yield event.data
+            # FEEDBACK, TOOL_START, TOOL_END, etc. are intentionally not yielded
+
+        # Save to memory (only actual response, not feedback)
+        if self.memory:
+            response_text = "".join(response_tokens)
+            if response_text:  # Only save if there's actual content
+                await self.memory.save_context(user_input, response_text)
+
+    async def astream_events(
+        self,
+        input: str,
+        config: Optional[RunnableConfig] = None,
+    ) -> AsyncIterator["StreamEvent"]:
+        """Stream all agent events with type information.
+
+        Yields StreamEvent objects for all events during execution,
+        including tokens, feedback phrases, tool events, and errors.
+        This allows callers to handle different event types appropriately.
+
+        For voice applications, use this to:
+        - Show tool indicators during execution
+        - Play feedback audio separately from response
+        - Track agent progress
+
+        Args:
+            input: User input text.
+            config: Optional configuration.
+
+        Yields:
+            StreamEvent objects for each event.
+
+        Example:
+            >>> from voice_pipeline.agents import StreamEventType
+            >>> async for event in agent.astream_events("Hello"):
+            ...     if event.is_response_token:
+            ...         send_to_tts(event.data)
+            ...     elif event.type == StreamEventType.FEEDBACK:
+            ...         play_feedback_audio(event.data)
+            ...     elif event.type == StreamEventType.TOOL_START:
+            ...         show_tool_indicator(event.metadata["tool_name"])
+        """
+        from voice_pipeline.agents.events import StreamEventType
+
+        user_input = self._normalize_input(input)
+
+        # Build state with memory context
+        state = AgentState(max_iterations=self.max_iterations)
+
+        if self.memory:
+            context = await self.memory.load_context(user_input)
+            for msg in context.messages:
+                if msg.get("role") == "user":
+                    state.add_user_message(msg.get("content", ""))
+                elif msg.get("role") == "assistant":
+                    state.add_assistant_message(msg.get("content", ""))
+
+        state.add_user_message(user_input)
+
+        response_tokens = []
+
+        async for event in self._loop.run_stream_events(user_input, initial_state=state):
+            yield event
+            # Collect only response tokens for memory
+            if event.type == StreamEventType.TOKEN:
+                response_tokens.append(event.data)
 
         # Save to memory
         if self.memory:
-            response_text = "".join(full_response)
-            await self.memory.save_context(user_input, response_text)
+            response_text = "".join(response_tokens)
+            if response_text:
+                await self.memory.save_context(user_input, response_text)
 
     def _normalize_input(self, input: Any) -> str:
         """Normalize various input formats to string.
@@ -559,6 +679,8 @@ class VoiceAgentBuilder:
         self._mcp_timeout: float = 30.0  # seconds
         # Tool execution config
         self._tool_execution_timeout: float = 30.0  # seconds
+        # Callbacks config
+        self._callbacks: Optional["CallbackManager"] = None
 
     def asr(
         self,
@@ -1211,6 +1333,57 @@ class VoiceAgentBuilder:
         self._tool_execution_timeout = timeout
         return self
 
+    def callbacks(
+        self,
+        handlers: Optional[list] = None,
+        manager: Optional["CallbackManager"] = None,
+    ) -> "VoiceAgentBuilder":
+        """Configure callbacks for observability.
+
+        Callbacks allow monitoring agent execution, including LLM calls,
+        tool executions, iterations, and errors.
+
+        Args:
+            handlers: List of VoiceCallbackHandler instances.
+                      If provided, a CallbackManager is created automatically.
+            manager: Pre-configured CallbackManager instance.
+                     Takes precedence over handlers if both provided.
+
+        Returns:
+            Self for chaining.
+
+        Example:
+            >>> from voice_pipeline.callbacks import (
+            ...     LoggingHandler,
+            ...     MetricsHandler,
+            ...     StdOutHandler,
+            ... )
+            >>>
+            >>> # Using handlers list
+            >>> agent = (
+            ...     VoiceAgent.builder()
+            ...     .llm("ollama")
+            ...     .callbacks([LoggingHandler(), MetricsHandler()])
+            ...     .build()
+            ... )
+            >>>
+            >>> # Using pre-configured manager
+            >>> from voice_pipeline.callbacks import CallbackManager
+            >>> manager = CallbackManager([StdOutHandler()])
+            >>> agent = (
+            ...     VoiceAgent.builder()
+            ...     .llm("ollama")
+            ...     .callbacks(manager=manager)
+            ...     .build()
+            ... )
+        """
+        if manager is not None:
+            self._callbacks = manager
+        elif handlers is not None:
+            from voice_pipeline.callbacks import CallbackManager
+            self._callbacks = CallbackManager(handlers)
+        return self
+
     def build(self) -> Union["VoiceAgent", Any]:
         """Build the VoiceAgent, ConversationChain or StreamingVoiceChain.
 
@@ -1292,6 +1465,7 @@ class VoiceAgentBuilder:
             system_prompt=self._system_prompt,
             max_iterations=self._max_iterations,
             tool_execution_timeout=self._tool_execution_timeout,
+            callbacks=self._callbacks,
         )
 
     async def build_async(self):

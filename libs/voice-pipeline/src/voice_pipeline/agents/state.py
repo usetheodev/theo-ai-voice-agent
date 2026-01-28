@@ -108,8 +108,14 @@ class AgentMessage:
     def to_anthropic_dict(self) -> dict[str, Any]:
         """Convert to Anthropic message format.
 
+        Note: Anthropic API does not use role="system" in messages.
+        System prompts should be passed via the dedicated `system` parameter
+        in the API call. This method returns system messages with role="system"
+        so callers can filter them and handle separately.
+
         Returns:
             Dictionary compatible with Anthropic messages API.
+            System messages are returned with role="system" for caller to filter.
         """
         if self.role == "tool":
             # Anthropic uses tool_result content blocks
@@ -142,10 +148,21 @@ class AgentMessage:
                 )
             return {"role": "assistant", "content": content_blocks}
 
+        # Return the role as-is. Caller should filter system messages
+        # and pass them via the system parameter.
         return {
-            "role": self.role if self.role != "system" else "user",
+            "role": self.role,
             "content": self.content,
         }
+
+    @property
+    def is_system(self) -> bool:
+        """Check if this is a system message.
+
+        Returns:
+            True if role is "system".
+        """
+        return self.role == "system"
 
     def to_dict(self, format: str = "openai") -> dict[str, Any]:
         """Convert to message format.

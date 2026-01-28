@@ -21,7 +21,7 @@ class TestOllamaLLMConfig:
         """Test default configuration values."""
         config = OllamaLLMConfig()
 
-        assert config.model == "llama3.2"
+        assert config.model == "qwen2.5:0.5b"
         assert config.base_url == "http://localhost:11434"
         assert config.format is None
         assert config.keep_alive == "5m"
@@ -101,7 +101,7 @@ class TestOllamaLLMProviderInit:
 
         assert provider.provider_name == "ollama-llm"
         assert provider.name == "OllamaLLM"
-        assert provider._llm_config.model == "llama3.2"
+        assert provider._llm_config.model == "qwen2.5:0.5b"
         assert provider._llm_config.base_url == "http://localhost:11434"
         assert provider.is_connected is False
 
@@ -177,6 +177,15 @@ class TestOllamaLLMProviderLifecycle:
             with patch("httpx.AsyncClient") as mock_async:
                 mock_sync_instance = MagicMock()
                 mock_async_instance = MagicMock()
+
+                # Mock the async get method for _ensure_model_available
+                mock_response = MagicMock()
+                mock_response.json.return_value = {
+                    "models": [{"name": "qwen2.5:0.5b"}]
+                }
+                mock_response.raise_for_status = MagicMock()
+                mock_async_instance.get = AsyncMock(return_value=mock_response)
+
                 mock_sync.return_value = mock_sync_instance
                 mock_async.return_value = mock_async_instance
 
@@ -195,6 +204,16 @@ class TestOllamaLLMProviderLifecycle:
 
         with patch("httpx.Client") as mock_sync:
             with patch("httpx.AsyncClient") as mock_async:
+                # Mock async client for _ensure_model_available
+                mock_async_instance = MagicMock()
+                mock_response = MagicMock()
+                mock_response.json.return_value = {
+                    "models": [{"name": "qwen2.5:0.5b"}]
+                }
+                mock_response.raise_for_status = MagicMock()
+                mock_async_instance.get = AsyncMock(return_value=mock_response)
+                mock_async.return_value = mock_async_instance
+
                 await provider.connect()
 
                 # Check that custom URL was passed
@@ -241,6 +260,13 @@ class TestOllamaLLMProviderLifecycle:
         with patch("httpx.Client"):
             with patch("httpx.AsyncClient") as mock_async:
                 mock_client = AsyncMock()
+                # Mock the async get method for _ensure_model_available
+                mock_response = MagicMock()
+                mock_response.json.return_value = {
+                    "models": [{"name": "qwen2.5:0.5b"}]
+                }
+                mock_response.raise_for_status = MagicMock()
+                mock_client.get = AsyncMock(return_value=mock_response)
                 mock_async.return_value = mock_client
 
                 async with provider as p:
@@ -676,6 +702,63 @@ class TestOllamaLLMProviderToolCalling:
         assert len(result.tool_calls) == 1
         assert result.tool_calls[0]["function"]["name"] == "get_weather"
         assert result.finish_reason == "tool_calls"
+
+    @pytest.mark.asyncio
+    async def test_generate_with_tools_dict_arguments(self):
+        """Test tool calling with arguments as dict (some Ollama versions)."""
+        provider = OllamaLLMProvider()
+
+        # Some Ollama versions return arguments as dict, not JSON string
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "message": {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "calculate",
+                            "arguments": {"expression": "2+2", "precision": 2},  # Dict, not string
+                        }
+                    }
+                ],
+            }
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        provider._async_client = mock_client
+
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "calculate",
+                    "description": "Calculate an expression",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "expression": {"type": "string"},
+                            "precision": {"type": "integer"},
+                        },
+                        "required": ["expression"],
+                    },
+                },
+            }
+        ]
+
+        result = await provider.generate_with_tools(
+            messages=[{"role": "user", "content": "Calculate 2+2"}],
+            tools=tools,
+        )
+
+        assert isinstance(result, LLMResponse)
+        assert result.has_tool_calls is True
+        assert len(result.tool_calls) == 1
+        # Verify arguments are correctly parsed as dict
+        args = result.tool_calls[0]["function"]["arguments"]
+        assert args["expression"] == "2+2"
+        assert args["precision"] == 2
 
     @pytest.mark.asyncio
     async def test_generate_with_tools_no_tool_call(self):

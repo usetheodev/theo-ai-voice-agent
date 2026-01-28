@@ -3,6 +3,7 @@
 .env.local
 *.onnx
 node_modules
+langchain
 *.bin
 # AI Models (large binary files - download with scripts/download_models.sh)
 models/*

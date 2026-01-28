@@ -31,18 +31,21 @@ from .agent import (
 logger = logging.getLogger(__name__)
 
 # Simple system prompt for models without tool support
+# IMPORTANT: Must be explicit to avoid thinking mode in some models (like Qwen3)
 SIMPLE_SYSTEM_PROMPT = """Você é Dora, uma assistente de voz brasileira amigável e concisa.
 
-Regras:
-1. Responda em português brasileiro
-2. Seja breve (1-2 frases)
-3. Seja natural e conversacional
-4. Se não souber algo, diga que não sabe
+REGRAS OBRIGATÓRIAS:
+1. Responda SEMPRE em português brasileiro
+2. Seja breve (1-2 frases apenas)
+3. Responda DIRETAMENTE sem explicar seu raciocínio
+4. NUNCA mostre pensamentos internos ou planejamento
+5. NUNCA responda em inglês
+6. Se não souber algo, diga simplesmente que não sabe
 
-Exemplos:
-- "Oi" → "Oi! Tudo bem? Como posso ajudar?"
-- "Que horas são?" → "Desculpa, não tenho acesso a um relógio. Você pode verificar no seu dispositivo?"
-- "Como está o tempo?" → "Não tenho acesso a informações meteorológicas no momento."
+Exemplos de respostas:
+- Pergunta: "Oi" → Resposta: "Oi! Tudo bem? Como posso ajudar?"
+- Pergunta: "Que horas são?" → Resposta: "Desculpa, não tenho acesso a um relógio. Você pode verificar no seu dispositivo?"
+- Pergunta: "Como está o tempo?" → Resposta: "Não tenho acesso a informações meteorológicas no momento."
 """
 
 
@@ -50,9 +53,9 @@ Exemplos:
 class IntegrationConfig:
     """Configuration for agent integration."""
 
-    # LLM
+    # LLM - Use qwen2.5:0.5b (no thinking mode, better for voice)
     llm_provider: str = "ollama"
-    llm_model: str = "qwen3:0.6b"
+    llm_model: str = "qwen2.5:0.5b"
 
     # ASR - Use "parakeet" for NVIDIA Parakeet or "faster-whisper" for Whisper
     asr_provider: str = "parakeet"  # "parakeet" or "faster-whisper"
@@ -187,9 +190,17 @@ class AgentIntegration:
                 per_tool_phrases=self.config.tool_feedback_per_tool,
             )
 
-        # Get demo tools - disabled for small models that don't support tool calling well
-        # Tools can be enabled for larger models like llama3.1:8b, qwen3:4b+
-        small_models = ["qwen3:0.6b", "llama3.2:1b", "qwen2.5:0.5b", "tinyllama:latest"]
+        # Get demo tools - disabled for small/medium models that don't support tool calling well
+        # or are too slow for voice AI. Tools can be enabled for larger models with GPU.
+        # Models in this list will use a simpler prompt without tool calling.
+        small_models = [
+            # Small models (< 1B params) - fast but no tool support
+            # qwen2.5:0.5b is recommended (no thinking mode)
+            # qwen3:0.6b has "thinking mode" that shows internal reasoning - avoid for voice
+            "qwen2.5:0.5b", "qwen3:0.6b", "tinyllama:latest",
+            # Medium models (1-3B params) - too slow on CPU for voice AI
+            "llama3.2:1b", "llama3.2:3b", "qwen3:1.7b", "gemma2:2b",
+        ]
         tools_enabled = self.config.llm_model not in small_models
         tools = [get_current_time, get_weather, calculate] if tools_enabled else []
 
@@ -393,15 +404,30 @@ class AgentIntegration:
             self.session._set_state(SessionState.LISTENING)
 
     async def _transcribe(self, audio_bytes: bytes) -> Optional[str]:
-        """Transcribe audio to text."""
+        """Transcribe audio to text.
+
+        Includes pre-filtering to skip low-energy audio that is likely
+        noise or silence, saving ASR processing time.
+        """
         if not self._asr:
             logger.warning("No ASR available")
+            return None
+
+        # Pre-filter: check audio energy to skip noise/silence
+        import numpy as np
+        audio_np = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
+        energy = np.sqrt(np.mean(audio_np ** 2)) / 32768.0
+
+        # Skip if energy is too low (likely noise or very quiet speech)
+        MIN_ENERGY_THRESHOLD = 0.015  # ~1.5% of max amplitude
+        if energy < MIN_ENERGY_THRESHOLD:
+            logger.info(f"Audio energy too low ({energy:.4f} < {MIN_ENERGY_THRESHOLD}), skipping transcription")
             return None
 
         await self.session.event_emitter.emit(EventType.ASR_START, {"timestamp": time.time()})
 
         try:
-            logger.info(f"Transcribing {len(audio_bytes)} bytes of audio...")
+            logger.info(f"Transcribing {len(audio_bytes)} bytes of audio (energy={energy:.4f})...")
             result = await self._asr.transcribe(audio_bytes)
             transcript = result.text if hasattr(result, "text") else str(result)
 

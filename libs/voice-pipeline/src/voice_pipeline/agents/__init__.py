@@ -46,6 +46,13 @@ from voice_pipeline.agents.state import (
     AgentStatus,
 )
 
+# Stream events
+from voice_pipeline.agents.events import (
+    StateDelta,
+    StreamEvent,
+    StreamEventType,
+)
+
 # Tool execution
 from voice_pipeline.agents.tool_node import (
     BatchToolNode,
@@ -81,6 +88,10 @@ __all__ = [
     "AgentState",
     "AgentMessage",
     "AgentStatus",
+    # Stream events
+    "StreamEvent",
+    "StreamEventType",
+    "StateDelta",
     # Tool execution
     "ToolNode",
     "BatchToolNode",

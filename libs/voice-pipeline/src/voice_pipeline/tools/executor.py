@@ -7,10 +7,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import traceback
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional, Sequence, Union
 
 from voice_pipeline.tools.base import FunctionTool, ToolResult, VoiceTool
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from voice_pipeline.tools.permissions import ToolPermissionChecker
@@ -290,14 +294,30 @@ class ToolExecutor:
             # one failure from killing the others
             tasks = [self.execute_call(call) for call in calls]
             raw_results = await asyncio.gather(*tasks, return_exceptions=True)
-            return [
-                r if isinstance(r, ToolResult) else ToolResult(
-                    success=False,
-                    output=None,
-                    error=f"Tool execution failed: {r}",
-                )
-                for r in raw_results
-            ]
+            results = []
+            for i, r in enumerate(raw_results):
+                if isinstance(r, ToolResult):
+                    results.append(r)
+                else:
+                    # r is an exception - capture full traceback
+                    exc_type = type(r).__name__
+                    exc_tb = "".join(traceback.format_exception(type(r), r, r.__traceback__))
+                    tool_name = calls[i].name if i < len(calls) else "unknown"
+
+                    logger.error(
+                        f"Tool '{tool_name}' failed with {exc_type}: {r}\n{exc_tb}"
+                    )
+
+                    results.append(ToolResult(
+                        success=False,
+                        output=None,
+                        error=f"Tool execution failed: {r}",
+                        metadata={
+                            "exception_type": exc_type,
+                            "traceback": exc_tb,
+                        },
+                    ))
+            return results
         else:
             results: list[ToolResult] = []
             for call in calls:
@@ -354,10 +374,25 @@ class ToolExecutor:
                     idx = tasks.index(t)
                     exc = t.exception()
                     if exc is not None:
+                        # Capture full traceback
+                        exc_type = type(exc).__name__
+                        exc_tb = "".join(
+                            traceback.format_exception(type(exc), exc, exc.__traceback__)
+                        )
+                        tool_name = calls[idx].name if idx < len(calls) else "unknown"
+
+                        logger.error(
+                            f"Tool '{tool_name}' failed with {exc_type}: {exc}\n{exc_tb}"
+                        )
+
                         results[idx] = ToolResult(
                             success=False,
                             output=None,
                             error=f"Tool execution failed: {exc}",
+                            metadata={
+                                "exception_type": exc_type,
+                                "traceback": exc_tb,
+                            },
                         )
                     else:
                         results[idx] = t.result()

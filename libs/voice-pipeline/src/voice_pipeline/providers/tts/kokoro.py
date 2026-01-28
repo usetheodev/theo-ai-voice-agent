@@ -428,13 +428,16 @@ class KokoroTTSProvider(BaseProvider, TTSInterface):
             if not text or not text.strip():
                 continue
 
+            # Preprocess text to avoid phonemizer issues
+            processed_text = self._preprocess_text(text)
+
             start_time = time.perf_counter()
 
             try:
                 # Run synthesis in executor (blocking operation)
                 def _synthesize():
                     results = list(self._pipeline(
-                        text,
+                        processed_text,
                         voice=effective_voice,
                         speed=effective_speed,
                         split_pattern=None,  # Don't split, we already have sentences
@@ -472,6 +475,48 @@ class KokoroTTSProvider(BaseProvider, TTSInterface):
                 self._handle_error(e)
                 raise
 
+    def _preprocess_text(self, text: str) -> str:
+        """Preprocess text to improve TTS quality and avoid phonemizer warnings.
+
+        Handles common issues like:
+        - Time notation (16h29 -> dezesseis horas e vinte e nove)
+        - Numbers that phonemizer doesn't handle well
+        - Special characters
+
+        Args:
+            text: Raw text to preprocess.
+
+        Returns:
+            Preprocessed text ready for synthesis.
+        """
+        import re
+
+        # Handle Portuguese time notation (16h29, 10h, etc.)
+        def expand_time(match):
+            hours = int(match.group(1))
+            minutes = match.group(2)
+            if minutes:
+                minutes = int(minutes)
+                return f"{hours} horas e {minutes} minutos"
+            return f"{hours} horas"
+
+        text = re.sub(r'(\d{1,2})h(\d{2})?', expand_time, text)
+
+        # Handle percentage
+        text = re.sub(r'(\d+)%', r'\1 por cento', text)
+
+        # Handle temperature (25°C, 30°)
+        text = re.sub(r'(\d+)°C?', r'\1 graus', text)
+
+        # Handle common abbreviations that cause issues
+        text = text.replace("etc.", "etcetera")
+        text = text.replace("Sr.", "Senhor")
+        text = text.replace("Sra.", "Senhora")
+        text = text.replace("Dr.", "Doutor")
+        text = text.replace("Dra.", "Doutora")
+
+        return text
+
     async def synthesize(
         self,
         text: str,
@@ -496,13 +541,16 @@ class KokoroTTSProvider(BaseProvider, TTSInterface):
         effective_voice = voice or self._tts_config.voice
         effective_speed = speed or self._tts_config.speed
 
+        # Preprocess text to avoid phonemizer issues
+        processed_text = self._preprocess_text(text)
+
         loop = asyncio.get_event_loop()
         start_time = time.perf_counter()
 
         try:
             def _synthesize():
                 results = list(self._pipeline(
-                    text,
+                    processed_text,
                     voice=effective_voice,
                     speed=effective_speed,
                 ))

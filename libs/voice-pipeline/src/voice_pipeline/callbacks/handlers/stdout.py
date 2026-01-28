@@ -60,6 +60,7 @@ class StdOutHandler(VoiceCallbackHandler):
         "BARGE": "red",
         "TURN": "yellow",
         "ERROR": "red",
+        "AGENT": "green",
     }
 
     def __init__(
@@ -275,3 +276,94 @@ class StdOutHandler(VoiceCallbackHandler):
     ) -> None:
         data_str = f": {data}" if data is not None else ""
         self._print(ctx, f"CUSTOM:{event_name}", data_str)
+
+    # ==================== Agent Events ====================
+
+    async def on_agent_start(
+        self, ctx: RunContext, input: str, tools: list[str]
+    ) -> None:
+        preview = input[:40] + "..." if len(input) > 40 else input
+        tools_str = f" with {len(tools)} tools" if tools else ""
+        self._print(
+            ctx,
+            "AGENT_START",
+            f'"{preview}"{tools_str}',
+            color="green",
+        )
+
+    async def on_agent_iteration(
+        self, ctx: RunContext, iteration: int, max_iterations: int
+    ) -> None:
+        self._print(
+            ctx,
+            "AGENT_ITERATION",
+            f"[{iteration}/{max_iterations}]",
+            color="dim",
+        )
+
+    async def on_agent_thinking(self, ctx: RunContext) -> None:
+        self._print(ctx, "AGENT_THINKING", "🤔", color="yellow")
+
+    async def on_agent_tool_start(
+        self, ctx: RunContext, tool_name: str, arguments: dict[str, Any]
+    ) -> None:
+        args_preview = str(arguments)[:30] + "..." if len(str(arguments)) > 30 else str(arguments)
+        self._print(
+            ctx,
+            "AGENT_TOOL_START",
+            f"🔧 {tool_name}({args_preview})",
+            color="cyan",
+        )
+
+    async def on_agent_tool_end(
+        self,
+        ctx: RunContext,
+        tool_name: str,
+        result: Any,
+        success: bool,
+        duration_ms: float,
+    ) -> None:
+        status = "✅" if success else "❌"
+        self._print(
+            ctx,
+            "AGENT_TOOL_END",
+            f"{status} {tool_name} ({duration_ms:.1f}ms)",
+            color="green" if success else "red",
+        )
+
+    async def on_agent_tool_error(
+        self, ctx: RunContext, tool_name: str, error: Exception
+    ) -> None:
+        self._print(
+            ctx,
+            "AGENT_TOOL_ERROR",
+            f"❌ {tool_name}: {error}",
+            color="red",
+        )
+
+    async def on_agent_response(self, ctx: RunContext, response: str) -> None:
+        preview = response[:60] + "..." if len(response) > 60 else response
+        self._print(
+            ctx,
+            "AGENT_RESPONSE",
+            f'"{preview}"',
+            color="green",
+        )
+
+    async def on_agent_end(
+        self, ctx: RunContext, response: str, iterations: int, duration_ms: float
+    ) -> None:
+        self._print(
+            ctx,
+            "AGENT_END",
+            f"✅ Completed ({iterations} iters, {duration_ms:.1f}ms)",
+            color="green",
+        )
+
+    async def on_agent_error(self, ctx: RunContext, error: Exception) -> None:
+        self._print(
+            ctx,
+            "AGENT_ERROR",
+            f"❌ {type(error).__name__}: {error}",
+            color="red",
+        )

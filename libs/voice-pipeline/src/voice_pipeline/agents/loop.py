@@ -9,15 +9,30 @@ and action in LLM agents:
 4. REPEAT: Back to step 1 until final response
 """
 
+import asyncio
+import logging
 import random
+import time
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Callable, Optional
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Optional
 
+from voice_pipeline.agents.events import StateDelta, StreamEvent, StreamEventType
 from voice_pipeline.agents.state import AgentState, AgentStatus
 from voice_pipeline.agents.tool_node import ToolNode
 from voice_pipeline.interfaces.llm import LLMInterface, LLMResponse
 from voice_pipeline.tools.base import VoiceTool
 from voice_pipeline.tools.executor import ToolCall, ToolExecutor
+from voice_pipeline.utils.retry import RetryConfig, with_retry, LLM_RETRY_CONFIG
+from voice_pipeline.utils.circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerConfig,
+    CircuitBreakerError,
+)
+
+if TYPE_CHECKING:
+    from voice_pipeline.callbacks.base import CallbackManager, RunContext
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -128,6 +143,9 @@ class AgentLoop:
         parallel_tool_execution: bool = True,
         tool_feedback: Optional[ToolFeedbackConfig] = None,
         tool_execution_timeout: float = 30.0,
+        callbacks: Optional["CallbackManager"] = None,
+        retry_config: Optional[RetryConfig] = None,
+        circuit_breaker: Optional[CircuitBreaker] = None,
     ):
         """Initialize the agent loop.
 
@@ -141,12 +159,23 @@ class AgentLoop:
             tool_feedback: Configuration for verbal feedback during tool execution.
                 If None, no feedback is emitted. Use ToolFeedbackConfig() for defaults.
             tool_execution_timeout: Timeout in seconds for each tool execution.
+            callbacks: Optional callback manager for observability events.
+            retry_config: Configuration for LLM call retries. If None, uses defaults
+                (3 attempts with exponential backoff).
+            circuit_breaker: Optional circuit breaker for LLM calls. When open,
+                LLM calls fail fast without attempting the request.
         """
         self.llm = llm
         self.system_prompt = system_prompt
         self.max_iterations = max_iterations
         self.stop_on_first_response = stop_on_first_response
         self.tool_feedback = tool_feedback
+        self.callbacks = callbacks
+        self.retry_config = retry_config or LLM_RETRY_CONFIG
+        self.circuit_breaker = circuit_breaker
+
+        # Cancellation support
+        self._cancel_event = asyncio.Event()
 
         # Set up tool execution with timeout
         self.executor = ToolExecutor(
@@ -156,7 +185,37 @@ class AgentLoop:
         self.tool_node = ToolNode(
             executor=self.executor,
             parallel=parallel_tool_execution,
+            cancel_event=self._cancel_event,
         )
+
+    def cancel(self) -> None:
+        """Request cancellation of the current execution.
+
+        Sets the cancel event which will:
+        - Cancel pending tool executions
+        - Stop the agent loop at the next iteration check
+
+        The loop will return a partial response or error message.
+        Call reset_cancel() before starting a new run.
+        """
+        self._cancel_event.set()
+
+    def reset_cancel(self) -> None:
+        """Reset the cancellation state for a new run.
+
+        Call this before starting a new run if a previous run
+        was cancelled.
+        """
+        self._cancel_event.clear()
+
+    @property
+    def is_cancelled(self) -> bool:
+        """Check if cancellation has been requested.
+
+        Returns:
+            True if cancel() was called.
+        """
+        return self._cancel_event.is_set()
 
     async def run(
         self, input: str, initial_state: Optional[AgentState] = None
@@ -174,39 +233,115 @@ class AgentLoop:
         Raises:
             RuntimeError: If max iterations reached without response.
         """
+        # Reset cancel state for new run
+        self.reset_cancel()
+        start_time = time.time()
+
+        # Create callback context if callbacks are configured
+        ctx: Optional["RunContext"] = None
+        if self.callbacks:
+            ctx = self.callbacks.create_context(run_name="agent_run")
+            await self.callbacks.on_agent_start(
+                ctx, input, self.executor.list_tools()
+            )
+
         if initial_state is not None:
             state = initial_state
         else:
             state = AgentState(max_iterations=self.max_iterations)
             state.add_user_message(input)
 
-        while state.should_continue():
-            # THINK + ACT: LLM generates response or tool calls
-            state = await self._think_and_act(state)
+        try:
+            while state.should_continue():
+                # Check for cancellation
+                if self.is_cancelled:
+                    state.status = AgentStatus.ERROR
+                    state.error = "Cancelled"
+                    break
 
-            # Check if we have a final response
-            if state.status == AgentStatus.COMPLETED:
-                break
+                # Emit iteration callback
+                if self.callbacks and ctx:
+                    await self.callbacks.on_agent_iteration(
+                        ctx, state.iteration + 1, self.max_iterations
+                    )
 
-            # OBSERVE: Execute pending tool calls
-            if state.pending_tool_calls:
-                state = await self.tool_node.ainvoke(state)
+                # THINK + ACT: LLM generates response or tool calls
+                state = await self._think_and_act(state)
 
-        if state.final_response is None:
-            if state.error:
-                return f"Error: {state.error}"
-            return "I was unable to complete the request within the allowed iterations."
+                # Check if we have a final response
+                if state.status == AgentStatus.COMPLETED:
+                    break
 
-        return state.final_response
+                # OBSERVE: Execute pending tool calls
+                if state.pending_tool_calls:
+                    state = await self._execute_tools_with_callbacks(state, ctx)
+
+                    # Check for cancellation after tool execution
+                    if self.is_cancelled:
+                        state.status = AgentStatus.ERROR
+                        state.error = "Cancelled"
+                        break
+
+            if state.final_response is None:
+                if state.error:
+                    result = f"Error: {state.error}"
+                else:
+                    result = "I was unable to complete the request within the allowed iterations."
+            else:
+                result = state.final_response
+
+            # Emit end callback
+            if self.callbacks and ctx:
+                duration_ms = (time.time() - start_time) * 1000
+                await self.callbacks.on_agent_end(
+                    ctx, result, state.iteration, duration_ms
+                )
+
+            return result
+
+        except Exception as e:
+            if self.callbacks and ctx:
+                await self.callbacks.on_agent_error(ctx, e)
+            raise
+
+    async def _execute_tools_with_callbacks(
+        self, state: AgentState, ctx: Optional["RunContext"]
+    ) -> AgentState:
+        """Execute pending tool calls with callback events."""
+        if not state.pending_tool_calls:
+            return state
+
+        for call in state.pending_tool_calls:
+            if self.callbacks and ctx:
+                await self.callbacks.on_agent_tool_start(
+                    ctx, call.name, call.arguments
+                )
+
+        tool_start = time.time()
+        state = await self.tool_node.ainvoke(state)
+        tool_duration_ms = (time.time() - tool_start) * 1000
+
+        # Emit tool end events (simplified - one event for batch)
+        if self.callbacks and ctx:
+            # Get results from last N messages
+            tool_count = len([m for m in state.messages if m.role == "tool"])
+            await self.callbacks.on_agent_tool_end(
+                ctx,
+                "batch",
+                f"{tool_count} tools executed",
+                True,
+                tool_duration_ms,
+            )
+
+        return state
 
     async def run_stream(
         self, input: str, initial_state: Optional[AgentState] = None
     ) -> AsyncIterator[str]:
         """Execute the agent loop with streaming output.
 
-        Yields tokens as they're generated during the final response.
-        Tool calls are executed between yields, with optional verbal
-        feedback if tool_feedback is configured.
+        Yields only response tokens (excludes feedback phrases).
+        For full event stream including feedback, use run_stream_events().
 
         Args:
             input: User input to process.
@@ -214,39 +349,146 @@ class AgentLoop:
                 If provided, used as-is (input should already be in the state).
 
         Yields:
-            Tokens from the final response (and feedback phrases if configured).
+            Tokens from the final response only.
         """
+        async for event in self.run_stream_events(input, initial_state):
+            if event.is_response_token:
+                yield event.data
+            elif event.is_error:
+                yield event.data
+            elif event.is_done and not event.data:
+                # Final response was empty
+                pass
+
+    async def run_stream_events(
+        self, input: str, initial_state: Optional[AgentState] = None
+    ) -> AsyncIterator[StreamEvent]:
+        """Execute the agent loop with typed streaming events.
+
+        Yields StreamEvent objects for all events during execution,
+        including tokens, feedback phrases, tool events, and errors.
+        This allows callers to handle different event types appropriately.
+
+        Args:
+            input: User input to process.
+            initial_state: Optional pre-built state with context (e.g. memory).
+                If provided, input should already be in the state.
+                If input is not found in state, a warning is logged.
+
+        Yields:
+            StreamEvent objects for each event.
+
+        Example:
+            >>> async for event in loop.run_stream_events("Hello"):
+            ...     if event.is_response_token:
+            ...         print(event.data, end="")
+            ...     elif event.type == StreamEventType.FEEDBACK:
+            ...         play_feedback_audio(event.data)
+            ...     elif event.type == StreamEventType.TOOL_START:
+            ...         show_tool_indicator(event.metadata["tool_name"])
+        """
+        # Reset cancel state for new run
+        self.reset_cancel()
+
+        # Initialize state
         if initial_state is not None:
             state = initial_state
+            # TASK-1.3: Validate input is in state
+            if not any(
+                m.content == input and m.role == "user"
+                for m in state.messages
+            ):
+                logger.warning(
+                    "Input not found in initial_state messages. "
+                    "Caller should add input to state before passing it."
+                )
         else:
             state = AgentState(max_iterations=self.max_iterations)
             state.add_user_message(input)
 
         while state.should_continue():
+            # Check for cancellation
+            if self.is_cancelled:
+                yield StreamEvent(
+                    type=StreamEventType.ERROR,
+                    data="Cancelled",
+                    metadata={"cancelled": True},
+                )
+                return
+            # Emit iteration start
+            yield StreamEvent(
+                type=StreamEventType.ITERATION,
+                data=str(state.iteration + 1),
+                metadata={"iteration": state.iteration + 1, "max": state.max_iterations},
+            )
+
             # THINK + ACT with streaming
-            async for token, is_final in self._think_and_act_stream(state):
-                if is_final and token:
-                    yield token
+            yield StreamEvent(type=StreamEventType.THINKING)
+
+            async for event, delta in self._think_and_act_stream_v2(state):
+                yield event
+                if delta:
+                    delta.apply_to(state)
 
             if state.status == AgentStatus.COMPLETED:
                 break
 
             # OBSERVE: Execute pending tool calls
             if state.pending_tool_calls:
-                # Emit feedback phrase before tool execution
+                # Emit feedback as FEEDBACK event (not TOKEN)
                 if self.tool_feedback and self.tool_feedback.enabled:
-                    # Get first tool name for context (or use first one)
                     tool_name = state.pending_tool_calls[0].name
                     feedback = self.tool_feedback.get_phrase(tool_name)
-                    yield feedback
+                    yield StreamEvent(
+                        type=StreamEventType.FEEDBACK,
+                        data=feedback,
+                        metadata={"tool_name": tool_name},
+                    )
 
+                # Emit tool start events
+                for call in state.pending_tool_calls:
+                    yield StreamEvent(
+                        type=StreamEventType.TOOL_START,
+                        data=call.name,
+                        metadata={"tool_name": call.name, "arguments": call.arguments},
+                    )
+
+                # Execute tools
                 state = await self.tool_node.ainvoke(state)
 
-        if state.final_response is None:
-            if state.error:
-                yield f"Error: {state.error}"
-            else:
-                yield "I was unable to complete the request within the allowed iterations."
+                # Check for cancellation after tool execution
+                if self.is_cancelled:
+                    yield StreamEvent(
+                        type=StreamEventType.ERROR,
+                        data="Cancelled",
+                        metadata={"cancelled": True},
+                    )
+                    return
+
+                # Emit tool end events
+                # Note: Results are in the last N messages where N = len(pending calls)
+                yield StreamEvent(
+                    type=StreamEventType.TOOL_END,
+                    data="",
+                    metadata={"tool_count": len(state.pending_tool_calls) if state.pending_tool_calls else 0},
+                )
+
+        # Emit final event
+        if state.final_response is not None:
+            yield StreamEvent(
+                type=StreamEventType.DONE,
+                data=state.final_response,
+            )
+        elif state.error:
+            yield StreamEvent(
+                type=StreamEventType.ERROR,
+                data=f"Error: {state.error}",
+            )
+        else:
+            yield StreamEvent(
+                type=StreamEventType.ERROR,
+                data="I was unable to complete the request within the allowed iterations.",
+            )
 
     async def run_with_state(
         self, input: str, initial_state: Optional[AgentState] = None
@@ -285,6 +527,7 @@ class AgentLoop:
         """Execute the think and act phase.
 
         Calls the LLM with tools and updates state based on response.
+        LLM calls are automatically retried on transient failures.
 
         Args:
             state: Current agent state.
@@ -299,20 +542,8 @@ class AgentLoop:
         tools = self.executor.to_openai_tools()
 
         try:
-            # Call LLM with tools
-            if tools and self.llm.supports_tools():
-                response = await self.llm.generate_with_tools(
-                    messages=messages,
-                    tools=tools,
-                    system_prompt=self.system_prompt,
-                )
-            else:
-                # LLM doesn't support tools, just generate
-                content = await self.llm.generate(
-                    messages=messages,
-                    system_prompt=self.system_prompt,
-                )
-                response = LLMResponse(content=content)
+            # Call LLM with retry support
+            response = await self._call_llm_with_retry(messages, tools)
 
             # Process response
             state = self._process_response(state, response)
@@ -320,9 +551,47 @@ class AgentLoop:
         except Exception as e:
             state.status = AgentStatus.ERROR
             state.error = str(e)
+            logger.exception(f"LLM call failed after retries: {e}")
 
         state.iteration += 1
         return state
+
+    async def _call_llm_with_retry(
+        self, messages: list, tools: list
+    ) -> LLMResponse:
+        """Call LLM with automatic retry and circuit breaker protection.
+
+        Args:
+            messages: Message history.
+            tools: Available tools.
+
+        Returns:
+            LLM response.
+
+        Raises:
+            CircuitBreakerError: If circuit breaker is open.
+        """
+
+        @with_retry(config=self.retry_config)
+        async def _call() -> LLMResponse:
+            if tools and self.llm.supports_tools():
+                return await self.llm.generate_with_tools(
+                    messages=messages,
+                    tools=tools,
+                    system_prompt=self.system_prompt,
+                )
+            else:
+                content = await self.llm.generate(
+                    messages=messages,
+                    system_prompt=self.system_prompt,
+                )
+                return LLMResponse(content=content)
+
+        # Use circuit breaker if configured
+        if self.circuit_breaker:
+            return await self.circuit_breaker.call(_call)
+        else:
+            return await _call()
 
     async def _think_and_act_stream(
         self, state: AgentState
@@ -396,6 +665,138 @@ class AgentLoop:
             state.status = AgentStatus.ERROR
             state.error = str(e)
             state.iteration += 1
+
+    async def _think_and_act_stream_v2(
+        self, state: AgentState
+    ) -> AsyncIterator[tuple[StreamEvent, Optional[StateDelta]]]:
+        """Execute think/act with streaming, returning typed events and state deltas.
+
+        This version properly propagates state changes back to the caller
+        via StateDelta objects, fixing the state propagation bug in the
+        original _think_and_act_stream.
+
+        Args:
+            state: Current agent state (read-only, changes returned via deltas).
+
+        Yields:
+            Tuples of (StreamEvent, Optional[StateDelta]).
+            Apply deltas to state after receiving them.
+        """
+        messages = state.to_messages()
+        tools = self.executor.to_openai_tools()
+
+        try:
+            if tools and hasattr(self.llm, 'supports_tools') and self.llm.supports_tools():
+                collected_text: list[str] = []
+                collected_tool_calls: list[dict] = []
+
+                async for chunk in self.llm.generate_stream_with_tools(
+                    messages=messages,
+                    tools=tools,
+                    system_prompt=self.system_prompt,
+                ):
+                    # Stream text as TOKEN events
+                    if chunk.text:
+                        collected_text.append(chunk.text)
+                        yield (
+                            StreamEvent(type=StreamEventType.TOKEN, data=chunk.text),
+                            None,  # No state change yet
+                        )
+
+                    # Accumulate tool call deltas
+                    if chunk.tool_calls_delta:
+                        collected_tool_calls.extend(chunk.tool_calls_delta)
+
+                full_content = "".join(collected_text)
+
+                if collected_tool_calls:
+                    # Tool calls detected - emit state delta
+                    tool_calls_parsed = [
+                        ToolCall.from_openai(tc) for tc in collected_tool_calls
+                    ]
+                    yield (
+                        StreamEvent(
+                            type=StreamEventType.TOKEN,
+                            data="",
+                            metadata={"has_tool_calls": True},
+                        ),
+                        StateDelta(
+                            status=AgentStatus.ACTING,
+                            iteration_increment=True,
+                            pending_tool_calls=tool_calls_parsed,
+                            add_message={
+                                "role": "assistant",
+                                "content": full_content,
+                                "tool_calls": collected_tool_calls,
+                            },
+                        ),
+                    )
+                else:
+                    # Final text response - emit completion delta
+                    yield (
+                        StreamEvent(type=StreamEventType.DONE, data=full_content),
+                        StateDelta(
+                            status=AgentStatus.COMPLETED,
+                            iteration_increment=True,
+                            final_response=full_content,
+                            add_message={
+                                "role": "assistant",
+                                "content": full_content,
+                            },
+                        ),
+                    )
+            else:
+                # No tools, stream directly
+                collected: list[str] = []
+
+                if hasattr(self.llm, 'astream'):
+                    async for chunk in self.llm.astream(messages):
+                        text = chunk.text if hasattr(chunk, 'text') else str(chunk)
+                        collected.append(text)
+                        yield (
+                            StreamEvent(type=StreamEventType.TOKEN, data=text),
+                            None,
+                        )
+                else:
+                    # Fallback: generate full response
+                    content = await self.llm.generate(
+                        messages=messages,
+                        system_prompt=self.system_prompt,
+                    )
+                    collected.append(content)
+                    yield (
+                        StreamEvent(type=StreamEventType.TOKEN, data=content),
+                        None,
+                    )
+
+                full_content = "".join(collected)
+                yield (
+                    StreamEvent(type=StreamEventType.DONE, data=full_content),
+                    StateDelta(
+                        status=AgentStatus.COMPLETED,
+                        iteration_increment=True,
+                        final_response=full_content,
+                        add_message={
+                            "role": "assistant",
+                            "content": full_content,
+                        },
+                    ),
+                )
+
+        except Exception as e:
+            logger.exception("Error during think_and_act_stream")
+            yield (
+                StreamEvent(
+                    type=StreamEventType.ERROR,
+                    data=str(e),
+                    metadata={"exception_type": type(e).__name__},
+                ),
+                StateDelta(
+                    status=AgentStatus.ERROR,
+                    iteration_increment=True,
+                    error=str(e),
+                ),
+            )
 
     def _process_response(
         self,

@@ -798,6 +798,142 @@ class OllamaLLMProvider(BaseProvider, LLMInterface):
             self._handle_error(e)
             raise
 
+    async def generate_stream_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        system_prompt: Optional[str] = None,
+        tool_choice: str = "auto",
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        **kwargs,
+    ) -> AsyncIterator[LLMChunk]:
+        """Generate streaming response with tool calling support.
+
+        Uses Ollama's streaming API to yield text tokens as they arrive.
+        Tool calls are detected at the end of the stream and yielded together.
+
+        Note: Ollama streams text tokens but tool calls only appear in the
+        final chunk. This still provides significant latency improvements
+        for text responses compared to non-streaming.
+
+        Args:
+            messages: Conversation history (may include tool results).
+            tools: List of tool schemas in OpenAI format.
+            system_prompt: Optional system prompt.
+            tool_choice: Tool selection mode (Ollama ignores this).
+            temperature: Sampling temperature.
+            max_tokens: Maximum tokens to generate.
+            **kwargs: Additional parameters.
+
+        Yields:
+            LLMChunk objects with text and/or tool_calls_delta.
+        """
+        if self._async_client is None:
+            raise RuntimeError("Client not connected. Call connect() first.")
+
+        # Build request
+        full_messages = self._build_messages(messages, system_prompt)
+
+        options = self._llm_config.get_model_options()
+        if temperature is not None:
+            options["temperature"] = temperature
+        if max_tokens is not None:
+            options["num_predict"] = max_tokens
+        if kwargs.get("stop"):
+            options["stop"] = kwargs.pop("stop")
+
+        request_body = {
+            "model": self._llm_config.model,
+            "messages": full_messages,
+            "stream": True,  # Enable streaming!
+            "options": options,
+            "tools": tools,
+        }
+
+        if self._llm_config.format:
+            request_body["format"] = self._llm_config.format
+
+        if self._llm_config.keep_alive:
+            request_body["keep_alive"] = self._parse_keep_alive(self._llm_config.keep_alive)
+
+        request_body.update(kwargs)
+
+        start_time = time.perf_counter()
+        collected_text: list[str] = []
+        collected_tool_calls: list[dict] = []
+
+        try:
+            async with self._async_client.stream(
+                "POST",
+                "/api/chat",
+                json=request_body,
+            ) as response:
+                response.raise_for_status()
+
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+
+                    try:
+                        import json
+                        chunk_data = json.loads(line)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+
+                    message = chunk_data.get("message", {})
+
+                    # Stream text immediately
+                    text = message.get("content", "")
+                    if text:
+                        collected_text.append(text)
+                        yield LLMChunk(
+                            text=text,
+                            is_final=False,
+                        )
+
+                    # Check for tool calls (usually in final chunk)
+                    ollama_tool_calls = message.get("tool_calls", [])
+                    if ollama_tool_calls:
+                        for i, tc in enumerate(ollama_tool_calls):
+                            func = tc.get("function", {})
+                            collected_tool_calls.append({
+                                "id": f"call_{i}",
+                                "type": "function",
+                                "function": {
+                                    "name": func.get("name", ""),
+                                    "arguments": func.get("arguments", "{}"),
+                                },
+                            })
+
+                    # Check if done
+                    if chunk_data.get("done", False):
+                        break
+
+            # Record metrics
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            self._metrics.record_success(latency_ms)
+
+            # Yield final chunk with tool calls if any
+            if collected_tool_calls:
+                yield LLMChunk(
+                    text="",
+                    tool_calls_delta=collected_tool_calls,
+                    finish_reason="tool_calls",
+                    is_final=True,
+                )
+            else:
+                yield LLMChunk(
+                    text="",
+                    finish_reason="stop",
+                    is_final=True,
+                )
+
+        except Exception as e:
+            self._metrics.record_failure(str(e))
+            self._handle_error(e)
+            raise
+
     def supports_tools(self) -> bool:
         """Check if this LLM supports tool calling.
 
