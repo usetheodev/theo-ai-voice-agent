@@ -1,0 +1,91 @@
+;===============================================
+; Dialplan - Contexto para chamadas do SBC
+;
+; COMO USAR:
+; 1. Copie este conteúdo para extensions.conf
+; 2. Ajuste os DIDs e roteamento conforme necessário
+; 3. Reload: asterisk -rx "dialplan reload"
+;===============================================
+
+;-----------------------------------------------
+; CONTEXTO FROM-SBC
+; Todas as chamadas do SBC caem aqui
+;
+; O roteamento é NEUTRO em relação à origem:
+; - Não importa se veio de PSTN, SIP trunk, etc.
+; - O SBC normaliza antes de enviar
+;-----------------------------------------------
+[from-sbc]
+
+; === ENTRADA PRINCIPAL ===
+; Todas as chamadas vão para o Agente IA (2000)
+; Ajuste conforme sua necessidade
+
+; Pattern genérico - qualquer número
+exten => _X.,1,NoOp(=== CHAMADA SBC ===)
+ same => n,NoOp(Caller: ${CALLERID(all)})
+ same => n,NoOp(DID: ${EXTEN})
+ same => n,NoOp(SIP Call-ID: ${CHANNEL(pjsip,call-id)})
+
+ ; Marca origem para métricas/logs
+ same => n,Set(__CALL_ORIGIN=sbc)
+ same => n,Set(__CALL_START=${EPOCH})
+ same => n,Set(CDR(origin)=sbc)
+
+ ; Roteia para o Agente IA
+ same => n,Dial(PJSIP/2000,60,tTg)
+
+ ; Se não atender
+ same => n,NoOp(Chamada não atendida - status: ${DIALSTATUS})
+ same => n,Hangup()
+
+; === HANGUP HANDLER ===
+exten => h,1,NoOp(=== FIM CHAMADA SBC ===)
+ same => n,Set(CALL_DURATION=$[${EPOCH} - ${CALL_START}])
+ same => n,NoOp(Duração: ${CALL_DURATION}s)
+ same => n,NoOp(Status: ${DIALSTATUS})
+
+; === DIDs ESPECÍFICOS (EXEMPLOS) ===
+; Descomente e ajuste conforme seus números
+
+; DID para Vendas
+; exten => 551140001111,1,NoOp(DID Vendas)
+;  same => n,Set(__CALL_ORIGIN=sbc)
+;  same => n,Set(__CALL_DEPT=vendas)
+;  same => n,Dial(PJSIP/2000,60,tT)
+;  same => n,Hangup()
+
+; DID para Suporte
+; exten => 551140001112,1,NoOp(DID Suporte)
+;  same => n,Set(__CALL_ORIGIN=sbc)
+;  same => n,Set(__CALL_DEPT=suporte)
+;  same => n,Dial(PJSIP/2000,60,tT)
+;  same => n,Hangup()
+
+; DID para URA
+; exten => 551140001113,1,NoOp(DID URA)
+;  same => n,Set(__CALL_ORIGIN=sbc)
+;  same => n,Goto(ura-principal,s,1)
+
+; === OPÇÃO INVÁLIDA ===
+exten => i,1,NoOp(SBC: Destino inválido - ${EXTEN})
+ same => n,Log(WARNING,Chamada SBC para destino inválido: ${EXTEN})
+ same => n,Congestion()
+ same => n,Hangup()
+
+; === TIMEOUT ===
+exten => t,1,NoOp(SBC: Timeout)
+ same => n,Hangup()
+
+
+;-----------------------------------------------
+; CONTEXTO FROM-EXTERNAL (ALTERNATIVO)
+; Se preferir usar o contexto existente
+;-----------------------------------------------
+; [from-external]
+;
+; ; Aceitar chamadas do SBC
+; exten => _X.,1,NoOp(=== CHAMADA EXTERNA ===)
+;  same => n,Set(__CALL_ORIGIN=external)
+;  same => n,Dial(PJSIP/2000,60,tT)
+;  same => n,Hangup()

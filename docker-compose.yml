@@ -1,0 +1,148 @@
+services:
+  asterisk:
+    image: mlan/asterisk
+    container_name: asterisk-pabx
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./asterisk/config/pjsip.conf:/etc/asterisk/pjsip.conf:ro
+      - ./asterisk/config/extensions.conf:/etc/asterisk/extensions.conf:ro
+      - ./asterisk/config/http.conf:/etc/asterisk/http.conf:ro
+      - ./asterisk/config/rtp.conf:/etc/asterisk/rtp.conf:ro
+      - ./asterisk/config/modules.conf:/etc/asterisk/modules.conf:ro
+      - ./asterisk/keys:/etc/asterisk/keys:ro
+      - ./asterisk/sounds:/var/lib/asterisk/sounds/en:ro
+      - asterisk-spool:/var/spool/asterisk
+      - asterisk-logs:/var/log/asterisk
+    environment:
+      - TZ=America/Sao_Paulo
+    cap_add:
+      - NET_ADMIN
+    healthcheck:
+      test: ["CMD", "asterisk", "-rx", "core show version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      coturn:
+        condition: service_healthy
+
+  coturn:
+    image: instrumentisto/coturn
+    container_name: coturn-turn
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    environment:
+      - TZ=America/Sao_Paulo
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 3478 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # AI Agent - Servidor de Conversação (STT -> LLM -> TTS)
+  ai-agent:
+    build:
+      context: .
+      dockerfile: ai-agent/Dockerfile
+    container_name: ai-conversation-agent
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+      - "9090:9090"  # Métricas Prometheus
+    env_file:
+      - ./ai-agent/.env
+    environment:
+      - TZ=America/Sao_Paulo
+      - WS_HOST=0.0.0.0
+      - WS_PORT=8765
+      - METRICS_PORT=9090
+    volumes:
+      - ai-agent-cache:/root/.cache  # Cache do modelo Whisper
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9090/metrics || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s  # Tempo para carregar modelo Whisper
+
+  # Media Server - SIP Bridge (SIP/RTP <-> WebSocket)
+  media-server:
+    build: ./media-server
+    container_name: sip-media-server
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - ./media-server/.env
+    environment:
+      - TZ=America/Sao_Paulo
+      - WEBSOCKET_URL=ws://127.0.0.1:8765
+      - SIP_DOMAIN=127.0.0.1
+      - SIP_PORT=5160
+      - METRICS_PORT=9091
+    depends_on:
+      asterisk:
+        condition: service_healthy
+      ai-agent:
+        condition: service_healthy
+
+  # Prometheus - Coleta de métricas
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "9092:9090"  # 9092 no host para evitar conflito com ai-agent metrics
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Grafana - Visualização de métricas
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - TZ=America/Sao_Paulo
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  asterisk-spool:
+  asterisk-logs:
+  ai-agent-cache:
+  prometheus-data:
+  grafana-data:

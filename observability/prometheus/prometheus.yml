@@ -1,0 +1,25 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Recording rules para SLIs do voice pipeline
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # AI Agent - roda em bridge network, acessível pelo nome do serviço
+  - job_name: 'ai-agent'
+    static_configs:
+      - targets: ['ai-agent:9090']
+    scrape_interval: 10s
+
+  # Media Server - roda em host mode, acessível via host.docker.internal
+  - job_name: 'media-server'
+    static_configs:
+      - targets: ['host.docker.internal:9091']
+    scrape_interval: 10s
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

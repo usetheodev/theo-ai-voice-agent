@@ -1,0 +1,130 @@
+groups:
+  - name: voice_pipeline_slis
+    interval: 30s
+    rules:
+      # TTFB P50
+      - record: voice_pipeline:ttfb_p50
+        expr: histogram_quantile(0.50, rate(ai_agent_voice_ttfb_seconds_bucket[5m]))
+        labels:
+          quantile: "0.50"
+
+      # TTFB P95
+      - record: voice_pipeline:ttfb_p95
+        expr: histogram_quantile(0.95, rate(ai_agent_voice_ttfb_seconds_bucket[5m]))
+        labels:
+          quantile: "0.95"
+
+      # TTFB P99
+      - record: voice_pipeline:ttfb_p99
+        expr: histogram_quantile(0.99, rate(ai_agent_voice_ttfb_seconds_bucket[5m]))
+        labels:
+          quantile: "0.99"
+
+      # Pipeline Latency P50
+      - record: voice_pipeline:pipeline_latency_p50
+        expr: histogram_quantile(0.50, rate(ai_agent_pipeline_latency_seconds_bucket[5m]))
+        labels:
+          quantile: "0.50"
+
+      # Pipeline Latency P95
+      - record: voice_pipeline:pipeline_latency_p95
+        expr: histogram_quantile(0.95, rate(ai_agent_pipeline_latency_seconds_bucket[5m]))
+        labels:
+          quantile: "0.95"
+
+      # Pipeline Latency P99
+      - record: voice_pipeline:pipeline_latency_p99
+        expr: histogram_quantile(0.99, rate(ai_agent_pipeline_latency_seconds_bucket[5m]))
+        labels:
+          quantile: "0.99"
+
+      # E2E Latency P50
+      - record: voice_pipeline:e2e_latency_p50
+        expr: histogram_quantile(0.50, rate(media_server_e2e_latency_seconds_bucket[5m]))
+        labels:
+          quantile: "0.50"
+
+      # E2E Latency P95
+      - record: voice_pipeline:e2e_latency_p95
+        expr: histogram_quantile(0.95, rate(media_server_e2e_latency_seconds_bucket[5m]))
+        labels:
+          quantile: "0.95"
+
+      # LLM First Token P95
+      - record: voice_pipeline:llm_first_token_p95
+        expr: histogram_quantile(0.95, rate(ai_agent_llm_first_token_latency_seconds_bucket[5m]))
+        labels:
+          quantile: "0.95"
+
+      # TTS First Byte P95
+      - record: voice_pipeline:tts_first_byte_p95
+        expr: histogram_quantile(0.95, rate(ai_agent_tts_first_byte_latency_seconds_bucket[5m]))
+        labels:
+          quantile: "0.95"
+
+      # Error Rate (5m window)
+      - record: voice_pipeline:error_rate_5m
+        expr: |
+          sum(rate(ai_agent_pipeline_errors_total[5m]))
+          / (sum(rate(ai_agent_sessions_created_total[5m])) + 0.001)
+
+      # Success Rate (5m window)
+      - record: voice_pipeline:success_rate_5m
+        expr: |
+          1 - (sum(rate(ai_agent_pipeline_errors_total[5m]))
+          / (sum(rate(ai_agent_sessions_created_total[5m])) + 0.001))
+
+  - name: voice_pipeline_rtp_quality
+    interval: 30s
+    rules:
+      # RTP Quality Score (0-1, higher is better)
+      # Baseado em packet loss ratio invertido
+      - record: voice_pipeline:rtp_quality_score
+        expr: |
+          1 - clamp_max(media_server_rtp_packet_loss_ratio{direction="inbound"}, 1)
+
+      # Jitter P95
+      - record: voice_pipeline:rtp_jitter_p95
+        expr: histogram_quantile(0.95, rate(media_server_rtp_jitter_ms_bucket{direction="inbound"}[5m]))
+        labels:
+          direction: "inbound"
+
+      # Packet Loss Rate (last 5m)
+      - record: voice_pipeline:rtp_packet_loss_rate_5m
+        expr: |
+          sum(rate(media_server_rtp_packets_total{status="lost"}[5m]))
+          / (sum(rate(media_server_rtp_packets_total[5m])) + 0.001)
+
+  - name: voice_pipeline_vad_metrics
+    interval: 30s
+    rules:
+      # Average Utterance Duration
+      - record: voice_pipeline:vad_avg_utterance_duration_ms
+        expr: |
+          sum(rate(media_server_vad_utterance_duration_ms_sum[5m]))
+          / (sum(rate(media_server_vad_utterance_duration_ms_count[5m])) + 0.001)
+
+      # Speech Start Rate (events per minute)
+      - record: voice_pipeline:vad_speech_starts_per_minute
+        expr: sum(rate(media_server_vad_events_total{event_type="speech_start"}[5m])) * 60
+
+      # Too Short Rate (percentage of speech starts that were too short)
+      - record: voice_pipeline:vad_too_short_rate
+        expr: |
+          sum(rate(media_server_vad_events_total{event_type="too_short"}[5m]))
+          / (sum(rate(media_server_vad_events_total{event_type="speech_start"}[5m])) + 0.001)
+
+  - name: voice_pipeline_barge_in
+    interval: 30s
+    rules:
+      # Barge-in Rate (per session)
+      - record: voice_pipeline:barge_in_rate
+        expr: |
+          sum(rate(media_server_barge_in_total[5m]))
+          / (sum(rate(ai_agent_sessions_created_total[5m])) + 0.001)
+
+      # Average Barge-in Progress (when users interrupt)
+      - record: voice_pipeline:barge_in_avg_progress
+        expr: |
+          sum(rate(media_server_barge_in_response_progress_sum[5m]))
+          / (sum(rate(media_server_barge_in_response_progress_count[5m])) + 0.001)

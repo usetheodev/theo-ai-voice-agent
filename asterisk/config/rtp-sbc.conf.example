@@ -1,0 +1,47 @@
+;===============================================
+; RTP Configuration - Otimizado para SBC
+;
+; DIFERENÇAS DO ORIGINAL:
+; - strictrtp=no (SBC pode ancorar mídia)
+; - icesupport=no (SBC já trata NAT)
+; - Sem STUN (não necessário com SBC)
+;===============================================
+
+[general]
+; Faixa de portas RTP
+; IMPORTANTE: Abra estas portas no firewall/NLB
+rtpstart=20000
+rtpend=20100
+
+; CRÍTICO PARA SBC:
+; Desabilitar strict RTP quando SBC faz ancoragem de mídia
+; Se strictrtp=yes, Asterisk pode rejeitar RTP do SBC
+strictrtp=no
+
+; ICE não é necessário com SBC
+; O SBC já resolve NAT traversal
+icesupport=no
+
+; Sem STUN - SBC já trata isso
+; stunaddr=
+
+;--- Jitter Buffer ---
+; Ajuste fino para qualidade de voz
+jbenable=yes
+jbimpl=adaptive
+; Buffer extra para compensar jitter de rede
+jbtargetextra=40
+; Máximo de buffer (muito alto = latência)
+jbmaxsize=200
+; Resync threshold
+jbresyncthreshold=1000
+; Não logar operações do jitter buffer (performance)
+jblog=no
+
+;--- Timeouts ---
+; Timeout para considerar stream RTP morto
+rtptimeout=60
+; Timeout para considerar chamada em espera (não em hold)
+rtpholdtimeout=300
+; Timeout para keepalive
+rtpkeepalive=15

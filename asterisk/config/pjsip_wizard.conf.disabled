@@ -1,0 +1,132 @@
+;===============================================
+; PJSIP Wizard Configuration - PABX Interno
+; Ramais: 1001-1005
+;===============================================
+
+;-- Ramal 1001 --
+[1001]
+type=wizard
+accepts_registrations=yes
+accepts_auth=yes
+endpoint/context=interno
+endpoint/allow=!all,ulaw,alaw
+endpoint/direct_media=no
+endpoint/rtp_symmetric=yes
+endpoint/force_rport=yes
+endpoint/rewrite_contact=yes
+endpoint/callerid=Ramal 1001 <1001>
+inbound_auth/username=1001
+inbound_auth/password=FRGQib50A3gZQSl1NSen
+aor/max_contacts=5
+aor/remove_existing=yes
+aor/qualify_frequency=30
+has_hint=yes
+hint_exten=1001
+
+;-- Ramal 1002 --
+[1002]
+type=wizard
+accepts_registrations=yes
+accepts_auth=yes
+endpoint/context=interno
+endpoint/allow=!all,ulaw,alaw
+endpoint/direct_media=no
+endpoint/rtp_symmetric=yes
+endpoint/force_rport=yes
+endpoint/rewrite_contact=yes
+endpoint/callerid=Ramal 1002 <1002>
+inbound_auth/username=1002
+inbound_auth/password=jaFViIPZkzejvgHczIFE
+aor/max_contacts=5
+aor/remove_existing=yes
+aor/qualify_frequency=30
+has_hint=yes
+hint_exten=1002
+
+;-- Ramal 1003 --
+[1003]
+type=wizard
+accepts_registrations=yes
+accepts_auth=yes
+endpoint/context=interno
+endpoint/allow=!all,ulaw,alaw
+endpoint/direct_media=no
+endpoint/rtp_symmetric=yes
+endpoint/force_rport=yes
+endpoint/rewrite_contact=yes
+endpoint/callerid=Ramal 1003 <1003>
+inbound_auth/username=1003
+inbound_auth/password=axkCUAmMk2FyI1NJpLSF
+aor/max_contacts=5
+aor/remove_existing=yes
+aor/qualify_frequency=30
+has_hint=yes
+hint_exten=1003
+
+;-- Ramal 1004 (WebRTC) --
+[1004]
+type=wizard
+accepts_registrations=yes
+accepts_auth=yes
+endpoint/context=interno
+endpoint/allow=!all,opus,ulaw
+endpoint/direct_media=no
+endpoint/rtp_symmetric=yes
+endpoint/force_rport=yes
+endpoint/rewrite_contact=yes
+endpoint/callerid=Ramal WebRTC 1004 <1004>
+endpoint/webrtc=yes
+endpoint/dtls_auto_generate_cert=yes
+endpoint/media_encryption=dtls
+inbound_auth/username=1004
+inbound_auth/password=xe9JDXRiUeK2848Uvoz1
+aor/max_contacts=5
+aor/remove_existing=yes
+aor/qualify_frequency=30
+has_hint=yes
+hint_exten=1004
+
+;-- Ramal 1005 (WebRTC) --
+[1005]
+type=wizard
+accepts_registrations=yes
+accepts_auth=yes
+endpoint/context=interno
+endpoint/allow=!all,opus,ulaw
+endpoint/direct_media=no
+endpoint/rtp_symmetric=yes
+endpoint/force_rport=yes
+endpoint/rewrite_contact=yes
+endpoint/callerid=Ramal WebRTC 1005 <1005>
+endpoint/webrtc=yes
+endpoint/dtls_auto_generate_cert=yes
+endpoint/media_encryption=dtls
+inbound_auth/username=1005
+inbound_auth/password=d9nHiKsFcKXmj9tS0NXd
+aor/max_contacts=5
+aor/remove_existing=yes
+aor/qualify_frequency=30
+has_hint=yes
+hint_exten=1005
+
+;-- Ramal 2000 (SIP/RTP - Agente Python) --
+; Ramal dedicado para integração externa
+; Usa SIP/RTP tradicional (não WebRTC)
+[2000]
+type=wizard
+accepts_registrations=yes
+accepts_auth=yes
+endpoint/context=interno
+endpoint/allow=!all,ulaw,alaw
+endpoint/direct_media=no
+endpoint/rtp_symmetric=yes
+endpoint/force_rport=yes
+endpoint/rewrite_contact=yes
+endpoint/callerid=Agente Python <2000>
+inbound_auth/username=2000
+inbound_auth/password=7Wslll0Hlc6BCOv4jF51
+aor/max_contacts=10
+aor/remove_existing=yes
+aor/qualify_frequency=30
+has_hint=yes
+hint_exten=2000

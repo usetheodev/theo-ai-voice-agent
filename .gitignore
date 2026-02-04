@@ -1,0 +1,138 @@
+# ==========================================
+# .gitignore - PABX Docker
+# ==========================================
+
+# ==========================================
+# SECRETS - NUNCA COMMITAR
+# ==========================================
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.crt
+*.p12
+**/secrets/
+**/credentials/
+CREDENTIALS_BACKUP.md
+bkp
+sounds
+# ==========================================
+# Python
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+.venv/
+ENV/
+env/
+.python-version
+
+# ==========================================
+# Node.js
+# ==========================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn
+dist/
+build/
+.cache/
+
+# ==========================================
+# Logs
+# ==========================================
+*.log
+logs/
+*.log.*
+log/
+
+# ==========================================
+# IDE e Editores
+# ==========================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*.swn
+*~
+.project
+.classpath
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# ==========================================
+# Sistema Operacional
+# ==========================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.bak
+*.backup
+
+# ==========================================
+# Temporários
+# ==========================================
+tmp/
+temp/
+*.tmp
+*.temp
+.cache/
+
+# ==========================================
+# Áudio (temporários de processamento)
+# ==========================================
+*.wav
+*.mp3
+*.ogg
+*.flac
+# Manter sons do Asterisk
+!asterisk/sounds/**/*.gsm
+!asterisk/sounds/**/*.wav
+
+# ==========================================
+# Docker
+# ==========================================
+.docker/
+
+# ==========================================
+# Testes
+# ==========================================
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+coverage.xml
+*.cover
+
+# ==========================================
+# Whisper models (muito grandes)
+# ==========================================
+*.pt
+*.bin
+models/

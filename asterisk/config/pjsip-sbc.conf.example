@@ -1,0 +1,105 @@
+;===============================================
+; PJSIP Configuration - SBC Trunk
+;
+; COMO USAR:
+; 1. Copie este conteúdo para o final do pjsip.conf
+; 2. Substitua os placeholders:
+;    - <SBC_IP> pelo IP do seu SBC
+;    - <SBC_USERNAME> e <SBC_PASSWORD> se necessário
+; 3. Reload: asterisk -rx "pjsip reload"
+;===============================================
+
+;-----------------------------------------------
+; TRUNK SBC - Identificação por IP
+; O SBC não se registra, apenas envia INVITEs
+;-----------------------------------------------
+
+; Identificação por IP de origem
+; Adicione todos os IPs do SBC/NLB que enviarão chamadas
+[sbc-identify]
+type=identify
+endpoint=sbc-trunk
+; SUBSTITUA pelos IPs reais do SBC
+match=10.0.0.1
+match=10.0.0.2
+; Para range de IPs (ex: subnet do NLB)
+; match=10.0.0.0/24
+
+; AOR - Address of Record
+; Contact estático (SBC não se registra)
+[sbc-trunk]
+type=aor
+; SUBSTITUA pelo IP:porta do SBC
+contact=sip:10.0.0.1:5060
+; Opcional: verificar se SBC está vivo
+qualify_frequency=30
+qualify_timeout=3.0
+
+; Autenticação (DESCOMENTE SE NECESSÁRIO)
+; [auth-sbc]
+; type=auth
+; auth_type=userpass
+; username=<SBC_USERNAME>
+; password=<SBC_PASSWORD>
+
+; Endpoint do SBC
+[sbc-trunk]
+type=endpoint
+
+; Contexto do dialplan (chamadas caem aqui)
+context=from-sbc
+
+; Codecs - use apenas os suportados pelo SBC
+disallow=all
+allow=ulaw
+allow=alaw
+; Se SBC suportar:
+; allow=g729
+
+; Autenticação (DESCOMENTE SE NECESSÁRIO)
+; auth=auth-sbc
+
+; AOR
+aors=sbc-trunk
+
+;--- NAT e Media ---
+; CRÍTICO: Media sempre via Asterisk
+direct_media=no
+; RTP simétrico para NAT
+rtp_symmetric=yes
+; Força resposta pela porta de origem
+force_rport=yes
+; Reescreve Contact header
+rewrite_contact=yes
+
+;--- Sem WebRTC (SBC já trata) ---
+ice_support=no
+media_encryption=no
+; NÃO usar DTLS
+; dtls_auto_generate_cert=no
+
+;--- Timers ---
+timers=yes
+timers_sess_expires=1800
+timers_min_se=90
+
+;--- DTMF ---
+; RFC4733 é o mais confiável
+dtmf_mode=rfc4733
+
+;--- Identificação ---
+; Confiar nos headers de identificação do SBC
+trust_id_inbound=yes
+; Enviar P-Asserted-Identity
+send_pai=yes
+; Enviar Remote-Party-ID
+send_rpid=yes
+
+;--- Caller ID ---
+; Nome padrão para chamadas sem identificação
+callerid=Chamada Externa <0000000000>
+
+;--- Opções avançadas ---
+; Timeout de resposta
+t38_udptl=no
+fax_detect=no

@@ -1,0 +1,14 @@
+# WebSocket
+websockets>=12.0
+
+# VAD (para detecção de fim de fala)
+webrtcvad>=2.0.10
+
+# Utils
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+
+# Metrics
+prometheus-client>=0.19.0
+
+# pjsua2 - instalado na imagem base (compilado)

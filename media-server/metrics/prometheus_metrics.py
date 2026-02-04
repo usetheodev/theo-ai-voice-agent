@@ -1,0 +1,293 @@
+"""
+Definições de métricas Prometheus para Media Server
+"""
+
+import logging
+from prometheus_client import (
+    Counter,
+    Gauge,
+    Histogram,
+    Enum,
+    start_http_server,
+)
+
+import time
+
+logger = logging.getLogger("media-server.metrics")
+
+# =============================================================================
+# MÉTRICAS DE REGISTRO SIP
+# =============================================================================
+
+SIP_REGISTRATION_STATUS = Enum(
+    'media_server_sip_registration_status',
+    'Status atual do registro SIP',
+    states=['unregistered', 'registering', 'registered', 'failed']
+)
+
+SIP_REGISTRATION_SUCCESS = Counter(
+    'media_server_sip_registration_success_total',
+    'Total de registros SIP bem-sucedidos'
+)
+
+SIP_REGISTRATION_FAILURES = Counter(
+    'media_server_sip_registration_failures_total',
+    'Total de falhas de registro SIP',
+    ['error_code']
+)
+
+# =============================================================================
+# MÉTRICAS DE CHAMADAS
+# =============================================================================
+
+CALLS_INCOMING = Counter(
+    'media_server_calls_incoming_total',
+    'Total de chamadas recebidas'
+)
+
+CALLS_ANSWERED = Counter(
+    'media_server_calls_answered_total',
+    'Total de chamadas atendidas'
+)
+
+CALLS_REJECTED = Counter(
+    'media_server_calls_rejected_total',
+    'Total de chamadas rejeitadas',
+    ['reason']  # busy, unavailable, error
+)
+
+CALLS_ACTIVE = Gauge(
+    'media_server_calls_active',
+    'Número de chamadas ativas no momento'
+)
+
+CALL_DURATION = Histogram(
+    'media_server_call_duration_seconds',
+    'Duração das chamadas em segundos',
+    buckets=[5, 10, 30, 60, 120, 300, 600, 1800, 3600]
+)
+
+# =============================================================================
+# MÉTRICAS DE WEBSOCKET
+# =============================================================================
+
+WEBSOCKET_STATUS = Enum(
+    'media_server_websocket_connection_status',
+    'Status da conexão WebSocket com AI Agent',
+    states=['disconnected', 'connecting', 'connected', 'reconnecting']
+)
+
+WEBSOCKET_RECONNECTIONS = Counter(
+    'media_server_websocket_reconnections_total',
+    'Total de reconexões WebSocket'
+)
+
+# =============================================================================
+# MÉTRICAS DE RTP
+# =============================================================================
+
+RTP_BYTES_RECEIVED = Counter(
+    'media_server_rtp_bytes_received_total',
+    'Total de bytes RTP recebidos'
+)
+
+RTP_BYTES_TRANSMITTED = Counter(
+    'media_server_rtp_bytes_transmitted_total',
+    'Total de bytes RTP transmitidos'
+)
+
+# =============================================================================
+# MÉTRICAS DE STREAMING E BARGE-IN
+# =============================================================================
+
+BARGE_IN_TOTAL = Counter(
+    'media_server_barge_in_total',
+    'Total de vezes que o usuário interrompeu a IA (barge-in)'
+)
+
+STREAMING_LATENCY = Histogram(
+    'media_server_streaming_latency_ms',
+    'Latência do streaming de áudio em milissegundos',
+    buckets=[20, 50, 100, 200, 300, 500, 1000, 2000]
+)
+
+VAD_DETECTION_LATENCY = Histogram(
+    'media_server_vad_detection_latency_ms',
+    'Latência da detecção de fim de fala (VAD) em milissegundos',
+    buckets=[100, 200, 300, 400, 500, 750, 1000]
+)
+
+# =============================================================================
+# MÉTRICAS VAD DETALHADAS
+# =============================================================================
+
+VAD_UTTERANCE_DURATION_MS = Histogram(
+    'media_server_vad_utterance_duration_ms',
+    'Duração das utterances detectadas pelo VAD em ms',
+    buckets=[100, 250, 500, 1000, 2000, 3000, 5000, 10000, 30000]
+)
+
+VAD_EVENTS_TOTAL = Counter(
+    'media_server_vad_events_total',
+    'Total de eventos VAD',
+    ['event_type']  # speech_start, speech_end, too_short
+)
+
+# =============================================================================
+# MÉTRICAS DE LATÊNCIA E2E
+# =============================================================================
+
+E2E_LATENCY_SECONDS = Histogram(
+    'media_server_e2e_latency_seconds',
+    'Latência end-to-end: VAD speech_end até primeiro áudio no playback',
+    buckets=[0.2, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0]
+)
+
+BARGE_IN_RESPONSE_PROGRESS = Histogram(
+    'media_server_barge_in_response_progress',
+    'Progresso da resposta quando barge-in ocorreu (0-1)',
+    buckets=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+)
+
+# =============================================================================
+# MÉTRICAS RTP QUALITY
+# =============================================================================
+
+RTP_JITTER_MS = Histogram(
+    'media_server_rtp_jitter_ms',
+    'Jitter RTP em milissegundos (variação do inter-arrival time)',
+    ['direction'],  # inbound, outbound
+    buckets=[1, 2, 5, 10, 20, 30, 50, 100, 200]
+)
+
+RTP_PACKETS_TOTAL = Counter(
+    'media_server_rtp_packets_total',
+    'Total de pacotes RTP',
+    ['direction', 'status']  # direction: inbound/outbound, status: received/lost
+)
+
+RTP_PACKET_LOSS_RATIO = Gauge(
+    'media_server_rtp_packet_loss_ratio',
+    'Taxa de perda de pacotes RTP (0-1)',
+    ['direction']  # inbound, outbound
+)
+
+# =============================================================================
+# HELPERS
+# =============================================================================
+
+def start_metrics_server(port: int = 9091):
+    """Inicia servidor HTTP para expor métricas"""
+    try:
+        start_http_server(port)
+        logger.info(f"📊 Metrics server iniciado na porta {port}")
+    except Exception as e:
+        logger.error(f"Erro ao iniciar metrics server: {e}")
+
+
+def track_sip_registration(success: bool, error_code: int = None):
+    """Registra resultado de registro SIP"""
+    if success:
+        SIP_REGISTRATION_STATUS.state('registered')
+        SIP_REGISTRATION_SUCCESS.inc()
+    else:
+        SIP_REGISTRATION_STATUS.state('failed')
+        SIP_REGISTRATION_FAILURES.labels(error_code=str(error_code or 'unknown')).inc()
+
+
+def track_incoming_call():
+    """Registra chamada recebida"""
+    CALLS_INCOMING.inc()
+
+
+def track_call_answered():
+    """Registra chamada atendida"""
+    CALLS_ANSWERED.inc()
+    CALLS_ACTIVE.inc()
+
+
+def track_call_rejected(reason: str):
+    """Registra chamada rejeitada"""
+    CALLS_REJECTED.labels(reason=reason).inc()
+
+
+def track_call_ended(duration_seconds: float):
+    """Registra fim de chamada"""
+    CALLS_ACTIVE.dec()
+    CALL_DURATION.observe(duration_seconds)
+
+
+def track_websocket_connected():
+    """Registra conexão WebSocket estabelecida"""
+    WEBSOCKET_STATUS.state('connected')
+
+
+def track_websocket_disconnected():
+    """Registra desconexão WebSocket"""
+    WEBSOCKET_STATUS.state('disconnected')
+
+
+def track_websocket_reconnection():
+    """Registra tentativa de reconexão WebSocket"""
+    WEBSOCKET_STATUS.state('reconnecting')
+    WEBSOCKET_RECONNECTIONS.inc()
+
+
+def track_rtp_received(bytes_count: int):
+    """Registra bytes RTP recebidos"""
+    RTP_BYTES_RECEIVED.inc(bytes_count)
+
+
+def track_rtp_transmitted(bytes_count: int):
+    """Registra bytes RTP transmitidos"""
+    RTP_BYTES_TRANSMITTED.inc(bytes_count)
+
+
+def track_barge_in():
+    """Registra evento de barge-in (usuário interrompeu a IA)"""
+    BARGE_IN_TOTAL.inc()
+
+
+def track_streaming_latency(latency_ms: float):
+    """Registra latência do streaming de áudio"""
+    STREAMING_LATENCY.observe(latency_ms)
+
+
+def track_vad_latency(latency_ms: float):
+    """Registra latência da detecção VAD"""
+    VAD_DETECTION_LATENCY.observe(latency_ms)
+
+
+def track_vad_event(event_type: str):
+    """Registra evento VAD (speech_start, speech_end, too_short)"""
+    VAD_EVENTS_TOTAL.labels(event_type=event_type).inc()
+
+
+def track_vad_utterance_duration(duration_ms: float):
+    """Registra duração de uma utterance em ms"""
+    VAD_UTTERANCE_DURATION_MS.observe(duration_ms)
+
+
+def track_e2e_latency(latency_seconds: float):
+    """Registra latência end-to-end (speech_end até primeiro áudio)"""
+    E2E_LATENCY_SECONDS.observe(latency_seconds)
+
+
+def track_barge_in_progress(progress: float):
+    """Registra progresso da resposta quando barge-in ocorreu (0-1)"""
+    BARGE_IN_RESPONSE_PROGRESS.observe(progress)
+
+
+def track_rtp_jitter(direction: str, jitter_ms: float):
+    """Registra jitter RTP em ms"""
+    RTP_JITTER_MS.labels(direction=direction).observe(jitter_ms)
+
+
+def track_rtp_packet(direction: str, status: str, count: int = 1):
+    """Registra pacotes RTP (received/lost)"""
+    RTP_PACKETS_TOTAL.labels(direction=direction, status=status).inc(count)
+
+
+def track_rtp_packet_loss_ratio(direction: str, ratio: float):
+    """Atualiza taxa de perda de pacotes RTP"""
+    RTP_PACKET_LOSS_RATIO.labels(direction=direction).set(ratio)
