@@ -504,6 +504,7 @@ class StreamingPlaybackPort(pj.AudioMediaPort):
 
     @property
     def has_audio(self) -> bool:
-        """Verifica se há áudio no buffer"""
+        """Verifica se há áudio suficiente para pelo menos um frame"""
         with self._lock:
-            return len(self.audio_buffer) > 0
+            # Considera vazio se tem menos que um frame (não será reproduzido)
+            return len(self.audio_buffer) >= self.frame_size

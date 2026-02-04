@@ -44,6 +44,7 @@ class LLMProvider(ABC):
         """
         buffer = ""
         sentence_endings = re.compile(r'[.!?]+\s*')
+        sentence_count = 0
 
         for chunk in self.generate_stream(user_message):
             buffer += chunk
@@ -57,13 +58,19 @@ class LLMProvider(ABC):
                     buffer = buffer[match.end():]
 
                     if sentence:
+                        sentence_count += 1
+                        logger.debug(f"📤 Sentença {sentence_count}: {sentence}")
                         yield sentence
                 else:
                     break
 
         # Yield resto do buffer
         if buffer.strip():
+            sentence_count += 1
+            logger.debug(f"📤 Sentença final {sentence_count}: {buffer.strip()}")
             yield buffer.strip()
+
+        logger.info(f"📊 Total sentenças geradas: {sentence_count}")
 
     def reset_conversation(self):
         """Limpa histórico da conversa"""
@@ -165,7 +172,7 @@ class AnthropicLLM(LLMProvider):
                 "content": full_response
             })
 
-            logger.info(f"🤖 LLM (stream): '{full_response[:50]}...'")
+            logger.info(f"🤖 LLM (stream completo): '{full_response}'")
 
         except Exception as e:
             logger.error(f"Erro no LLM Anthropic streaming: {e}")
@@ -271,7 +278,7 @@ class OpenAILLM(LLMProvider):
                 "content": full_response
             })
 
-            logger.info(f"🤖 LLM (stream): '{full_response[:50]}...'")
+            logger.info(f"🤖 LLM (stream completo): '{full_response}'")
 
         except Exception as e:
             logger.error(f"Erro no LLM OpenAI streaming: {e}")

@@ -66,7 +66,8 @@ class MyCall(pj.Call):
         self.playback_finished.set()  # Inicia como "finalizado"
 
         # Flag para aguardar greeting terminar
-        self.greeting_finished = threading.Event()
+        self.greeting_finished = threading.Event()  # Greeting recebido
+        self.greeting_playback_done = threading.Event()  # Greeting reproduzido
         self.is_first_response = True
 
         # Timestamp de início para cálculo de duração
@@ -187,16 +188,15 @@ class MyCall(pj.Call):
             self._log("Falha ao iniciar sessão de áudio", "error")
             return
 
-        # Aguarda greeting terminar (o áudio já está tocando via streaming)
-        self._log("⏳ Aguardando greeting terminar...")
+        # Aguarda greeting ser recebido (não precisa esperar reprodução terminar)
+        self._log("⏳ Aguardando greeting...")
         if not self.greeting_finished.wait(timeout=30):
             self._log("Timeout aguardando greeting", "warning")
 
-        # Aguarda playback do greeting terminar
-        self._wait_playback_finished()
-
-        # Inicia streaming de captura
+        # Inicia streaming de captura IMEDIATAMENTE
+        # O playback do greeting continua em paralelo
         self._start_streaming()
+        self._log("✅ Pronto para conversar")
 
         # Loop principal - mantém thread viva (reduzido de 100ms para 50ms)
         while not self.stop_conversation.is_set():
@@ -276,7 +276,7 @@ class MyCall(pj.Call):
             return
 
         # Aguarda buffer esvaziar com timeout
-        max_wait = 30  # segundos
+        max_wait = 10  # segundos
         check_interval = 0.05  # 50ms
         waited = 0
 
@@ -284,14 +284,15 @@ class MyCall(pj.Call):
             if self.stop_conversation.is_set():
                 break
 
+            # has_audio retorna False quando buffer < frame_size
             if not self.playback_port.has_audio:
-                # Buffer vazio - aguarda um pouco mais para garantir que terminou
-                time.sleep(0.04)  # Reduzido de 100ms para 40ms
-                if not self.playback_port.has_audio:
-                    break
+                break
 
             time.sleep(check_interval)
             waited += check_interval
+
+        if waited >= max_wait:
+            self._log(f"⚠️ Timeout aguardando playback", "warning")
 
         self.playback_finished.set()
         self.is_playing_response = False
@@ -359,6 +360,12 @@ class MyCall(pj.Call):
     def _on_playback_complete(self):
         """Chamado quando resposta termina - aguarda buffer esvaziar"""
         self._wait_playback_finished()
+
+        # Sinaliza que greeting terminou de tocar (habilita barge-in)
+        if not self.greeting_playback_done.is_set():
+            self.greeting_playback_done.set()
+            self._log("🎤 Greeting reproduzido - barge-in habilitado")
+
         self._resume_streaming()
 
     def _start_streaming(self):
@@ -438,6 +445,10 @@ class MyCall(pj.Call):
     def _on_speech_start(self):
         """Callback quando fala é detectada - implementa barge-in"""
         if not self.barge_in_enabled:
+            return
+
+        # Ignora durante o playback do greeting (evita auto-interrupção)
+        if not self.greeting_playback_done.is_set():
             return
 
         # Se estamos reproduzindo resposta, usuário está interrompendo (barge-in)
