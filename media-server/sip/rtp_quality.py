@@ -19,8 +19,9 @@ logger = logging.getLogger("media-server.rtp_quality")
 class RtpQualityTracker:
     """Rastreia qualidade RTP baseado em análise de frames"""
 
-    # Configuração
+    # Configuração (valores podem ser sobrescritos via config.py)
     expected_interval_ms: float = 20.0  # 20ms frames (padrão PJSIP)
+    gap_threshold_factor: float = 1.5  # Gap > fator x intervalo = possível loss
     direction: str = "inbound"
 
     # Estado
@@ -31,9 +32,6 @@ class RtpQualityTracker:
     packets_expected: int = 0
     jitter_sum: float = 0.0
     jitter_count: int = 0
-
-    # Para detectar gaps (possível packet loss)
-    gap_threshold_factor: float = 1.5  # Gap > 1.5x intervalo = possível loss
 
     def track_frame(self, frame_size: int):
         """

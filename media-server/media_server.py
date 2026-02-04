@@ -12,7 +12,7 @@ import logging
 import asyncio
 import threading
 
-from config import LOG_CONFIG, SIP_CONFIG, AI_AGENT_CONFIG, SBC_CONFIG
+from config import LOG_CONFIG, SIP_CONFIG, AI_AGENT_CONFIG, SBC_CONFIG, METRICS_CONFIG
 from adapters.ai_agent_adapter import AIAgentAdapter
 from sip.endpoint import SIPEndpoint
 from metrics import start_metrics_server
@@ -43,8 +43,8 @@ class MediaServer:
         logger.info("=" * 60)
 
         # Inicia servidor de métricas Prometheus
-        metrics_port = int(os.environ.get("METRICS_PORT", 9091))
-        start_metrics_server(metrics_port)
+        if METRICS_CONFIG.get("enabled", True):
+            start_metrics_server(METRICS_CONFIG["port"])
 
         self.running = True
         self.loop = asyncio.get_event_loop()
@@ -85,12 +85,12 @@ class MediaServer:
 
     def _log_status(self):
         """Exibe status do servidor"""
-        metrics_port = int(os.environ.get("METRICS_PORT", 9091))
         logger.info("")
         logger.info("📦 Componentes:")
         logger.info(f"   • WebSocket Client -> {AI_AGENT_CONFIG['url']}")
         logger.info(f"   • SIP Endpoint -> {SIP_CONFIG['domain']}:{SIP_CONFIG['port']}")
-        logger.info(f"   • Prometheus Metrics -> http://0.0.0.0:{metrics_port}/metrics")
+        if METRICS_CONFIG.get("enabled", True):
+            logger.info(f"   • Prometheus Metrics -> http://0.0.0.0:{METRICS_CONFIG['port']}/metrics")
         logger.info("")
 
         if SBC_CONFIG["enabled"]:

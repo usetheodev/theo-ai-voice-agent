@@ -23,10 +23,6 @@ except ImportError:
 class AudioBuffer:
     """Buffer de áudio com detecção de voz usando WebRTC VAD"""
 
-    # Limite máximo: 60 segundos de áudio (8kHz mono 16-bit = 16000 bytes/s)
-    # Aumentado de 30s para suportar falas mais longas sem truncamento
-    MAX_BUFFER_SIZE = 60 * 16000  # ~960KB
-
     # Tamanhos de frame suportados pelo WebRTC VAD (em ms)
     VALID_FRAME_DURATIONS = [10, 20, 30]
 
@@ -37,15 +33,26 @@ class AudioBuffer:
             vad_aggressiveness: Agressividade do VAD (0-3, maior = mais agressivo)
         """
         self.buffer = bytearray()
-        # Usa valor passado ou config (sincronizado com media-server)
-        config_threshold = AUDIO_CONFIG.get("silence_threshold_ms", 500)
-        self.silence_threshold = silence_threshold_ms or config_threshold
+
+        # Configurações de áudio
         self.sample_rate = AUDIO_CONFIG["sample_rate"]
         self.frame_duration_ms = AUDIO_CONFIG["frame_duration_ms"]
         self.frame_size = int(self.sample_rate * self.frame_duration_ms / 1000) * 2  # 16-bit
+
+        # Limite máximo do buffer (configurável via AUDIO_MAX_BUFFER_SECONDS)
+        # 8kHz mono 16-bit = 16000 bytes/s
+        max_buffer_seconds = AUDIO_CONFIG.get("max_buffer_seconds", 60)
+        self.MAX_BUFFER_SIZE = max_buffer_seconds * 16000  # ~16KB por segundo
+
+        # Usa valor passado ou config (sincronizado com media-server)
+        config_threshold = AUDIO_CONFIG.get("silence_threshold_ms", 500)
+        self.silence_threshold = silence_threshold_ms or config_threshold
+
         self.silence_frames = 0
         self.speech_detected = False
-        self.min_speech_ms = 250  # Permite "sim", "não", "ok" (~250ms) - sincronizado com media-server
+
+        # Duração mínima de fala para ser válida (permite "sim", "não", "ok")
+        self.min_speech_ms = AUDIO_CONFIG.get("min_speech_ms", 250)
 
         vad_level = vad_aggressiveness if vad_aggressiveness is not None else AUDIO_CONFIG["vad_aggressiveness"]
 
@@ -67,11 +74,15 @@ class AudioBuffer:
             except Exception as e:
                 logger.warning(f"Erro ao inicializar WebRTC VAD: {e} - usando fallback de energia")
 
-        # Fallback: VAD baseado em energia
-        self.energy_threshold = 500
+        # Fallback: VAD baseado em energia (configurável)
+        self.energy_threshold = AUDIO_CONFIG.get("energy_threshold", 500)
 
-        # Ring buffer para suavização - reduzido para streaming real
-        self.speech_ring_buffer = deque(maxlen=5)  # 5 frames = 100ms (era 10 = 200ms)
+        # Ring buffer para suavização (configurável)
+        ring_buffer_size = AUDIO_CONFIG.get("vad_ring_buffer_size", 5)
+        self.speech_ring_buffer = deque(maxlen=ring_buffer_size)
+
+        # Threshold de ratio de fala para considerar que há fala
+        self.speech_ratio_threshold = AUDIO_CONFIG.get("vad_speech_ratio_threshold", 0.4)
 
     def add_frame(self, frame: bytes) -> Optional[bytes]:
         """
@@ -86,12 +97,12 @@ class AudioBuffer:
         is_speech = self._is_speech(frame)
         self.speech_ring_buffer.append(is_speech)
 
-        # Evita divisão por zero e usa threshold sincronizado com media-server
+        # Evita divisão por zero e usa threshold configurável
         if not self.speech_ring_buffer:
             is_speech_smoothed = is_speech
         else:
             speech_ratio = sum(self.speech_ring_buffer) / len(self.speech_ring_buffer)
-            is_speech_smoothed = speech_ratio >= 0.4  # 2 de 5 frames = fala detectada
+            is_speech_smoothed = speech_ratio >= self.speech_ratio_threshold
 
         if is_speech_smoothed:
             self.speech_detected = True

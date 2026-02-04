@@ -94,8 +94,8 @@ class WebSocketClient:
             self.ws = await websockets.connect(
                 self.url,
                 ping_interval=AI_AGENT_CONFIG["ping_interval"],
-                ping_timeout=10,
-                close_timeout=5,
+                ping_timeout=AI_AGENT_CONFIG.get("ping_timeout", 10),
+                close_timeout=AI_AGENT_CONFIG.get("close_timeout", 5),
             )
 
             logger.info("✅ Conectado ao AI Agent")
@@ -219,8 +219,9 @@ class WebSocketClient:
             return False
 
         try:
-            # Aguarda resposta via receive loop (timeout 10s)
-            asp_session = await asyncio.wait_for(future, timeout=10.0)
+            # Aguarda resposta via receive loop (timeout configurável)
+            session_timeout = AI_AGENT_CONFIG.get("session_start_timeout", 10)
+            asp_session = await asyncio.wait_for(future, timeout=session_timeout)
 
             if asp_session:
                 # Armazena sessão ASP
@@ -267,12 +268,13 @@ class WebSocketClient:
         # Envia
         await self.ws.send(msg.to_json())
 
-        # Aguarda confirmação (com timeout)
+        # Aguarda confirmação (timeout configurável)
         future = asyncio.get_event_loop().create_future()
         self._pending_sessions[session_id] = future
 
         try:
-            await asyncio.wait_for(future, timeout=10)
+            session_timeout = AI_AGENT_CONFIG.get("session_start_timeout", 10)
+            await asyncio.wait_for(future, timeout=session_timeout)
 
             # Registra session_id no lookup para parse de frames de áudio
             hash_hex = session_id_to_hash(session_id).hex()

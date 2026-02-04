@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional, Literal
 from datetime import datetime
 
+from config import SESSION_CONFIG
 from pipeline.conversation import ConversationPipeline
 from pipeline.vad import AudioBuffer
 from ws.protocol import AudioConfig, session_id_to_hash
@@ -148,8 +149,12 @@ class SessionManager:
         """Número de sessões ativas"""
         return len(self.sessions)
 
-    async def cleanup_stale_sessions(self, max_idle_seconds: int = 300):
+    async def cleanup_stale_sessions(self, max_idle_seconds: int = None):
         """Remove sessões inativas"""
+        # Usa valor passado ou configuração do SESSION_CONFIG
+        if max_idle_seconds is None:
+            max_idle_seconds = SESSION_CONFIG.get("max_idle_seconds", 300)
+
         async with self._lock:
             now = datetime.now()
             stale = []

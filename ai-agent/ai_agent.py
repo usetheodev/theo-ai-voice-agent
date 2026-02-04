@@ -12,7 +12,7 @@ import signal
 import logging
 import asyncio
 
-from config import LOG_CONFIG, WS_CONFIG
+from config import LOG_CONFIG, WS_CONFIG, METRICS_CONFIG
 from server.websocket import AIAgentServer
 from metrics import start_metrics_server
 
@@ -32,8 +32,12 @@ async def main():
     logger.info("=" * 60)
 
     # Inicia servidor de métricas Prometheus
-    metrics_port = int(os.environ.get("METRICS_PORT", 9090))
-    start_metrics_server(metrics_port)
+    if METRICS_CONFIG.get("enabled", True):
+        metrics_port = METRICS_CONFIG.get("port", 9090)
+        start_metrics_server(metrics_port)
+    else:
+        metrics_port = None
+        logger.info("📊 Métricas Prometheus desabilitadas")
 
     # Cria servidor
     server = AIAgentServer()
@@ -59,10 +63,12 @@ async def main():
         logger.info("   • STT (Speech-to-Text)")
         logger.info("   • LLM (Language Model)")
         logger.info("   • TTS (Text-to-Speech)")
-        logger.info("   • Prometheus Metrics")
+        if metrics_port:
+            logger.info("   • Prometheus Metrics")
         logger.info("")
         logger.info(f"🔌 Escutando em: ws://{WS_CONFIG['host']}:{WS_CONFIG['port']}")
-        logger.info(f"📊 Métricas em: http://0.0.0.0:{metrics_port}/metrics")
+        if metrics_port:
+            logger.info(f"📊 Métricas em: http://0.0.0.0:{metrics_port}/metrics")
         logger.info("")
         logger.info("   Pipeline de conversação:")
         logger.info("   🎤 Áudio → 📝 STT → 🧠 LLM → 🔊 TTS → 🎤 Áudio")

@@ -44,23 +44,23 @@ logger = logging.getLogger("ai-agent.stt")
 class FasterWhisperConfig(ProviderConfig):
     """Configuration for FasterWhisper ASR provider."""
 
-    model: str = "tiny"
+    model: str = field(default_factory=lambda: STT_CONFIG.get("model", "tiny"))
     """Whisper model size. For CPU: tiny, base, or small recommended."""
 
-    device: str = "cpu"
+    device: str = field(default_factory=lambda: STT_CONFIG.get("device", "cpu"))
     """Device: 'cpu' or 'cuda'."""
 
-    compute_type: str = "int8"
+    compute_type: str = field(default_factory=lambda: STT_CONFIG.get("compute_type", "int8"))
     """Compute type. 'int8' for CPU, 'float16' for GPU."""
 
-    language: Optional[str] = "pt"
+    language: Optional[str] = field(default_factory=lambda: STT_CONFIG.get("language", "pt"))
     """Language code (ISO-639-1). None for auto-detection."""
 
-    beam_size: int = 1
+    beam_size: int = field(default_factory=lambda: STT_CONFIG.get("beam_size", 1))
     """Beam search width. 1 = fastest (greedy)."""
 
-    vad_filter: bool = True
-    """Enable VAD to filter silent sections."""
+    vad_filter: bool = field(default_factory=lambda: STT_CONFIG.get("vad_filter", False))
+    """Enable VAD to filter silent sections. False recommended - media-server já faz VAD."""
 
     vad_parameters: Optional[dict] = None
     """Custom VAD parameters. Silero VAD options:
@@ -70,16 +70,16 @@ class FasterWhisperConfig(ProviderConfig):
     - speech_pad_ms: int - padding around speech segments
     """
 
-    word_timestamps: bool = False
+    word_timestamps: bool = field(default_factory=lambda: STT_CONFIG.get("word_timestamps", False))
     """Compute word-level timestamps."""
 
-    sample_rate: int = 8000
+    sample_rate: int = field(default_factory=lambda: AUDIO_CONFIG.get("sample_rate", 8000))
     """Input audio sample rate (8kHz for telephony)."""
 
-    cpu_threads: int = 0
+    cpu_threads: int = field(default_factory=lambda: STT_CONFIG.get("cpu_threads", 0))
     """Number of CPU threads. 0 = auto."""
 
-    num_workers: int = 1
+    num_workers: int = field(default_factory=lambda: STT_CONFIG.get("num_workers", 1))
     """Number of parallel transcription workers."""
 
 
@@ -209,7 +209,8 @@ class FasterWhisperSTT(STTProvider):
 
         # Create executor for transcription
         import concurrent.futures
-        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        executor_workers = STT_CONFIG.get("executor_workers", 2)
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=executor_workers)
 
         logger.info(f"✅ faster-whisper carregado: {self._stt_config.model}")
 

@@ -19,7 +19,7 @@ import threading
 import time
 from typing import Optional, Tuple, Generator, AsyncGenerator
 
-from config import AUDIO_CONFIG, AGENT_MESSAGES
+from config import AUDIO_CONFIG, AGENT_MESSAGES, PIPELINE_CONFIG
 from providers.stt import create_stt_provider_sync, STTProvider
 from providers.llm import create_llm_provider, LLMProvider
 from providers.tts import create_tts_provider_sync, TTSProvider
@@ -340,10 +340,11 @@ class ConversationPipeline:
             # Usa SentencePipeline para streaming real LLM→TTS
             from pipeline.sentence_pipeline import SentencePipeline
 
+            queue_size = PIPELINE_CONFIG.get("sentence_queue_size", 3)
             sentence_pipeline = SentencePipeline(
                 llm=self.llm,
                 tts=self.tts,
-                queue_size=3  # Buffer de 3 frases para suavizar
+                queue_size=queue_size
             )
 
             async for sentence, audio_chunk in sentence_pipeline.process_streaming(text):

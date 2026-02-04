@@ -13,7 +13,7 @@ from typing import Set, Optional, Dict
 import websockets
 from websockets.server import WebSocketServerProtocol
 
-from config import WS_CONFIG
+from config import WS_CONFIG, SESSION_CONFIG
 from ws.protocol import (
     MessageType,
     AudioConfig,
@@ -576,10 +576,13 @@ class AIAgentServer:
 
     async def _cleanup_loop(self):
         """Loop de limpeza de sessões inativas"""
+        cleanup_interval = SESSION_CONFIG.get("cleanup_interval", 60)
+        max_idle_seconds = SESSION_CONFIG.get("max_idle_seconds", 300)
+
         while self._running:
-            await asyncio.sleep(60)  # A cada 1 minuto
+            await asyncio.sleep(cleanup_interval)
             try:
-                removed = await self.session_manager.cleanup_stale_sessions(max_idle_seconds=300)
+                removed = await self.session_manager.cleanup_stale_sessions(max_idle_seconds=max_idle_seconds)
                 if removed > 0:
                     logger.info(f"🧹 Removidas {removed} sessões inativas")
             except Exception as e:

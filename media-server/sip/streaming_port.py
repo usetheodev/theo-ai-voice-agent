@@ -19,7 +19,7 @@ try:
 except ImportError:
     raise ImportError("pjsua2 não encontrado")
 
-from config import AUDIO_CONFIG
+from config import AUDIO_CONFIG, RTP_QUALITY_CONFIG
 from metrics import track_vad_event, track_vad_utterance_duration
 from sip.rtp_quality import RtpQualityTracker
 
@@ -59,14 +59,18 @@ class StreamingVAD:
         self,
         sample_rate: int = 16000,
         frame_duration_ms: int = 20,
-        silence_threshold_ms: int = 500,  # Aumentado: pausas naturais são 300-500ms
+        silence_threshold_ms: int = 500,
         vad_aggressiveness: int = 2,
-        min_speech_ms: int = 250  # Permite "sim", "não", "ok" (~250ms)
+        min_speech_ms: int = 250,
+        energy_threshold: int = 500,
+        ring_buffer_size: int = 5,
+        speech_ratio_threshold: float = 0.4,
     ):
         self.sample_rate = sample_rate
         self.frame_duration_ms = frame_duration_ms
         self.silence_threshold_ms = silence_threshold_ms
         self.min_speech_ms = min_speech_ms
+        self.speech_ratio_threshold = speech_ratio_threshold
 
         self.silence_frames = 0
         self.speech_frames = 0
@@ -87,11 +91,11 @@ class StreamingVAD:
             except Exception as e:
                 logger.warning(f"Erro ao inicializar WebRTC VAD: {e}")
 
-        # Fallback: energia
-        self.energy_threshold = 500
+        # Fallback: energia (configurável via env)
+        self.energy_threshold = energy_threshold
 
-        # Ring buffer para suavização (sincronizado com ai-agent)
-        self.speech_ring_buffer = deque(maxlen=5)  # 5 frames = 100ms
+        # Ring buffer para suavização (tamanho configurável)
+        self.speech_ring_buffer = deque(maxlen=ring_buffer_size)
 
     def process_frame(self, frame: bytes) -> tuple[bool, bool]:
         """
@@ -103,9 +107,9 @@ class StreamingVAD:
         is_speech = self._is_speech(frame)
         self.speech_ring_buffer.append(is_speech)
 
-        # Suavização (sincronizado com ai-agent)
+        # Suavização (threshold configurável)
         speech_ratio = sum(self.speech_ring_buffer) / len(self.speech_ring_buffer) if self.speech_ring_buffer else 0
-        is_speech_smoothed = speech_ratio >= 0.4  # 2 de 5 frames = fala detectada
+        is_speech_smoothed = speech_ratio >= self.speech_ratio_threshold
 
         speech_started = False
         speech_ended = False
@@ -209,12 +213,16 @@ class StreamingAudioPort(pj.AudioMediaPort):
         self.output_sample_rate = AUDIO_CONFIG["sample_rate"]  # 8000
         self.frame_duration_ms = AUDIO_CONFIG["frame_duration_ms"]  # 20ms
 
-        # VAD com configurações otimizadas para streaming
+        # VAD com configurações do AUDIO_CONFIG
         self.vad = StreamingVAD(
             sample_rate=self.output_sample_rate,  # VAD em 8kHz após downsampling
             frame_duration_ms=self.frame_duration_ms,
             silence_threshold_ms=AUDIO_CONFIG.get("silence_threshold_ms", 500),
             vad_aggressiveness=AUDIO_CONFIG.get("vad_aggressiveness", 2),
+            min_speech_ms=AUDIO_CONFIG.get("min_speech_ms", 250),
+            energy_threshold=AUDIO_CONFIG.get("energy_threshold", 500),
+            ring_buffer_size=AUDIO_CONFIG.get("vad_ring_buffer_size", 5),
+            speech_ratio_threshold=AUDIO_CONFIG.get("vad_speech_ratio_threshold", 0.4),
         )
 
         # Controle
@@ -223,16 +231,17 @@ class StreamingAudioPort(pj.AudioMediaPort):
         self.frames_processed = 0
         self.bytes_sent = 0
 
-        # Buffer para acumulação antes de enviar
+        # Buffer para acumulação antes de enviar (configurável)
         self.send_buffer = bytearray()
-        self.send_buffer_max = 1600  # 100ms de áudio a 8kHz (8000 * 0.1 * 2)
+        self.send_buffer_max = AUDIO_CONFIG.get("send_buffer_max", 1600)
 
         # Lock para thread-safety
         self._lock = threading.Lock()
 
-        # RTP Quality Tracker
+        # RTP Quality Tracker (usando configurações centralizadas)
         self.rtp_tracker = RtpQualityTracker(
-            expected_interval_ms=self.frame_duration_ms,
+            expected_interval_ms=RTP_QUALITY_CONFIG.get("expected_interval_ms", self.frame_duration_ms),
+            gap_threshold_factor=RTP_QUALITY_CONFIG.get("gap_threshold_factor", 1.5),
             direction="inbound"
         )
 

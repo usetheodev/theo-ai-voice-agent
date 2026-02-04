@@ -50,16 +50,16 @@ class KokoroTTSConfig(ProviderConfig):
     lang_code: str = "p"
     """Language code (a=American, b=British, j=Japanese, k=Korean, z=Chinese, p=Portuguese)."""
 
-    voice: str = "pf_dora"
+    voice: str = field(default_factory=lambda: TTS_CONFIG.get("voice", "pf_dora"))
     """Default voice (e.g., pf_dora, af_bella, am_adam)."""
 
-    speed: float = 1.0
+    speed: float = field(default_factory=lambda: TTS_CONFIG.get("speed", 1.0))
     """Speech speed (0.5 to 2.0)."""
 
-    sample_rate: int = 24000
+    sample_rate: int = field(default_factory=lambda: TTS_CONFIG.get("sample_rate", 24000))
     """Output sample rate in Hz (Kokoro native)."""
 
-    output_sample_rate: int = 8000
+    output_sample_rate: int = field(default_factory=lambda: TTS_CONFIG.get("output_sample_rate", 8000))
     """Output sample rate for telephony."""
 
     device: Optional[str] = None
@@ -238,7 +238,8 @@ class KokoroTTS(TTSProvider):
 
         # Create executor for sync operations
         import concurrent.futures
-        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        executor_workers = TTS_CONFIG.get("executor_workers", 2)
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=executor_workers)
 
         logger.info("✅ Kokoro TTS inicializado")
 

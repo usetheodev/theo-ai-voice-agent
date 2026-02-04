@@ -27,7 +27,7 @@ except ImportError:
     import sys
     sys.exit(1)
 
-from config import AUDIO_CONFIG
+from config import AUDIO_CONFIG, CALL_CONFIG, PJSIP_CONFIG
 from metrics import track_call_ended, track_rtp_transmitted, track_barge_in, track_e2e_latency, track_barge_in_progress
 from sip.streaming_port import StreamingAudioPort, StreamingPlaybackPort
 from ports.audio_destination import SessionInfo, AudioConfig
@@ -77,8 +77,8 @@ class MyCall(pj.Call):
         self.is_streaming = False
         self.is_playing_response = False
 
-        # Barge-in: permite interromper playback quando usuário fala
-        self.barge_in_enabled = True
+        # Barge-in: permite interromper playback quando usuário fala (configurável)
+        self.barge_in_enabled = CALL_CONFIG.get("barge_in_enabled", True)
         self.barge_in_triggered = threading.Event()
 
         # Bytes transmitidos para métricas
@@ -174,8 +174,8 @@ class MyCall(pj.Call):
         except Exception:
             pass
 
-        # Aguarda mídia estar pronta (reduzido de 500ms para 100ms)
-        time.sleep(0.1)
+        # Aguarda mídia estar pronta (configurável)
+        time.sleep(CALL_CONFIG.get("media_ready_delay", 0.1))
 
         # Configura playback streaming ANTES dos callbacks
         self._setup_playback_streaming()
@@ -188,9 +188,10 @@ class MyCall(pj.Call):
             self._log("Falha ao iniciar sessão de áudio", "error")
             return
 
-        # Aguarda greeting ser recebido (não precisa esperar reprodução terminar)
+        # Aguarda greeting ser recebido (timeout configurável)
+        greeting_timeout = CALL_CONFIG.get("greeting_timeout", 30)
         self._log("⏳ Aguardando greeting...")
-        if not self.greeting_finished.wait(timeout=30):
+        if not self.greeting_finished.wait(timeout=greeting_timeout):
             self._log("Timeout aguardando greeting", "warning")
 
         # Inicia streaming de captura IMEDIATAMENTE
@@ -198,9 +199,10 @@ class MyCall(pj.Call):
         self._start_streaming()
         self._log("✅ Pronto para conversar")
 
-        # Loop principal - mantém thread viva (reduzido de 100ms para 50ms)
+        # Loop principal - mantém thread viva (intervalo configurável)
+        loop_interval = CALL_CONFIG.get("conversation_loop_interval", 0.05)
         while not self.stop_conversation.is_set():
-            time.sleep(0.05)
+            time.sleep(loop_interval)
 
         # Para streaming
         self._stop_streaming()
@@ -223,11 +225,12 @@ class MyCall(pj.Call):
                     sample_width=AUDIO_CONFIG["sample_width"]
                 )
             )
+            session_timeout = CALL_CONFIG.get("session_start_timeout", 60)
             future = asyncio.run_coroutine_threadsafe(
                 self.audio_destination.start_session(session_info),
                 self.loop
             )
-            result = future.result(timeout=60)
+            result = future.result(timeout=session_timeout)
             return result
         except Exception as e:
             self._log(f"Erro ao iniciar sessão de áudio: {e}", "error")
@@ -240,17 +243,18 @@ class MyCall(pj.Call):
             return
 
         try:
-            # Cria StreamingPlaybackPort (16kHz para PJSUA2)
+            # Cria StreamingPlaybackPort (clock rate interno do PJSUA2)
+            pjsip_clock_rate = PJSIP_CONFIG.get("internal_clock_rate", 16000)
             self.playback_port = StreamingPlaybackPort(
                 session_id=self.session_id,
-                sample_rate=16000
+                sample_rate=pjsip_clock_rate
             )
 
             # Configura o port
-            clock_rate = 16000
-            channel_count = 1
+            clock_rate = pjsip_clock_rate
+            channel_count = AUDIO_CONFIG.get("channels", 1)
             samples_per_frame = int(clock_rate * AUDIO_CONFIG["frame_duration_ms"] / 1000)
-            bits_per_sample = 16
+            bits_per_sample = PJSIP_CONFIG.get("internal_bits_per_sample", 16)
 
             self.playback_port.createPort(
                 f"playback_{self.unique_call_id}",
@@ -275,9 +279,9 @@ class MyCall(pj.Call):
         if not self.playback_port:
             return
 
-        # Aguarda buffer esvaziar com timeout
-        max_wait = 10  # segundos
-        check_interval = 0.05  # 50ms
+        # Aguarda buffer esvaziar com timeout (configurável)
+        max_wait = CALL_CONFIG.get("playback_drain_timeout", 10)
+        check_interval = CALL_CONFIG.get("playback_check_interval", 0.05)
         waited = 0
 
         while waited < max_wait:
@@ -384,12 +388,11 @@ class MyCall(pj.Call):
                 on_speech_start=self._on_speech_start,
             )
 
-            # Configura o port (16kHz, mono, 20ms frames)
-            # PJSUA2 usa 16kHz internamente
-            clock_rate = 16000
-            channel_count = 1
+            # Configura o port (clock rate interno do PJSUA2)
+            clock_rate = PJSIP_CONFIG.get("internal_clock_rate", 16000)
+            channel_count = AUDIO_CONFIG.get("channels", 1)
             samples_per_frame = int(clock_rate * AUDIO_CONFIG["frame_duration_ms"] / 1000)
-            bits_per_sample = 16
+            bits_per_sample = PJSIP_CONFIG.get("internal_bits_per_sample", 16)
 
             self.streaming_port.createPort(
                 f"stream_{self.unique_call_id}",
