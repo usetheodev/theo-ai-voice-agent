@@ -23,8 +23,9 @@ except ImportError:
 class AudioBuffer:
     """Buffer de áudio com detecção de voz usando WebRTC VAD"""
 
-    # Limite máximo: 30 segundos de áudio (8kHz mono 16-bit = 16000 bytes/s)
-    MAX_BUFFER_SIZE = 30 * 16000  # ~480KB
+    # Limite máximo: 60 segundos de áudio (8kHz mono 16-bit = 16000 bytes/s)
+    # Aumentado de 30s para suportar falas mais longas sem truncamento
+    MAX_BUFFER_SIZE = 60 * 16000  # ~960KB
 
     # Tamanhos de frame suportados pelo WebRTC VAD (em ms)
     VALID_FRAME_DURATIONS = [10, 20, 30]

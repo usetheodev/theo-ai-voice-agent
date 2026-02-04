@@ -373,12 +373,20 @@ class AIAgentServer:
                 session = await self.session_manager.get_session_by_hash(frame.session_id)
 
             if not session:
-                logger.warning("Sessão não encontrada para frame de áudio")
+                # Log throttled: comum durante race condition no início da sessão
+                if not hasattr(self, '_no_session_warn_count'):
+                    self._no_session_warn_count = 0
+                self._no_session_warn_count += 1
+                if self._no_session_warn_count <= 5 or self._no_session_warn_count % 100 == 0:
+                    logger.debug(f"Frame de áudio ignorado: sessão não encontrada (count: {self._no_session_warn_count})")
                 return
 
             # Só processa se estiver ouvindo
             if session.state != 'listening':
-                logger.info(f"[{frame.session_id[:8]}] ⏸️ Ignorando {len(frame.audio_data)} bytes: state={session.state}")
+                # Log apenas ocasionalmente para não poluir
+                session._ignored_frames = getattr(session, '_ignored_frames', 0) + 1
+                if session._ignored_frames <= 3 or session._ignored_frames % 50 == 0:
+                    logger.debug(f"[{frame.session_id[:8]}] ⏸️ Ignorando frames (state={session.state}, count={session._ignored_frames})")
                 return
 
             # Adiciona ao buffer SEM VAD (o media-server já faz VAD e envia audio.end)
