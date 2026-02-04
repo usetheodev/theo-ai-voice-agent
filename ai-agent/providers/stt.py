@@ -635,77 +635,55 @@ class OpenAIWhisperSTT(STTProvider):
 
 # ==================== Factory ====================
 
-async def create_stt_provider() -> STTProvider:
-    """Factory assíncrona para criar e conectar provedor STT."""
-    provider = STT_CONFIG.get("provider", "faster-whisper")
+# Mapeamento de providers para classes
+_STT_PROVIDERS = {
+    "faster-whisper": FasterWhisperSTT,
+    "whisper": WhisperLocalSTT,
+    "openai": OpenAIWhisperSTT,
+}
 
-    if provider == "faster-whisper":
+_STT_FALLBACK_ORDER = ["faster-whisper", "whisper"]
+
+
+def _create_stt_instance(provider: str = None) -> STTProvider:
+    """Cria instância do provedor STT (sem conectar)."""
+    provider = provider or STT_CONFIG.get("provider", "faster-whisper")
+
+    # Tenta provider solicitado
+    if provider in _STT_PROVIDERS:
         try:
-            stt = FasterWhisperSTT()
-            await stt.connect()
-            await stt.warmup()
-            return stt
+            return _STT_PROVIDERS[provider]()
         except Exception as e:
-            logger.warning(f"Falha ao criar faster-whisper: {e}. Tentando whisper.")
+            logger.warning(f"Falha ao criar {provider}: {e}")
+
+    # Fallback para providers locais
+    for fallback in _STT_FALLBACK_ORDER:
+        if fallback != provider:
             try:
-                stt = WhisperLocalSTT()
-                await stt.connect()
-                return stt
+                logger.warning(f"Tentando fallback: {fallback}")
+                return _STT_PROVIDERS[fallback]()
             except Exception:
-                logger.error("Nenhum ASR disponível!")
-                raise
+                continue
 
-    elif provider == "whisper":
-        stt = WhisperLocalSTT()
-        await stt.connect()
-        return stt
+    raise RuntimeError("Nenhum provedor STT disponível")
 
-    elif provider == "openai":
-        stt = OpenAIWhisperSTT()
-        await stt.connect()
-        return stt
 
-    else:
-        logger.warning(f"Provedor STT não reconhecido: {provider}. Tentando faster-whisper.")
-        try:
-            stt = FasterWhisperSTT()
-            await stt.connect()
-            await stt.warmup()
-            return stt
-        except Exception:
-            stt = WhisperLocalSTT()
-            await stt.connect()
-            return stt
+async def create_stt_provider() -> STTProvider:
+    """Factory assíncrona para criar, conectar e aquecer provedor STT."""
+    stt = _create_stt_instance()
+    await stt.connect()
+
+    # Warmup apenas para faster-whisper (modelo local)
+    if isinstance(stt, FasterWhisperSTT):
+        await stt.warmup()
+
+    return stt
 
 
 def create_stt_provider_sync() -> STTProvider:
     """
-    Factory síncrona para criar provedor STT (compatibilidade).
+    Factory síncrona para criar provedor STT (sem conectar).
 
     Nota: Modelo não está carregado. Use create_stt_provider() para versão async completa.
     """
-    provider = STT_CONFIG.get("provider", "faster-whisper")
-
-    if provider == "faster-whisper":
-        try:
-            return FasterWhisperSTT()
-        except Exception as e:
-            logger.warning(f"Falha ao criar faster-whisper: {e}. Tentando whisper.")
-            try:
-                return WhisperLocalSTT()
-            except Exception:
-                logger.error("Nenhum ASR disponível!")
-                raise
-
-    elif provider == "whisper":
-        return WhisperLocalSTT()
-
-    elif provider == "openai":
-        return OpenAIWhisperSTT()
-
-    else:
-        logger.warning(f"Provedor STT não reconhecido: {provider}. Tentando faster-whisper.")
-        try:
-            return FasterWhisperSTT()
-        except Exception:
-            return WhisperLocalSTT()
+    return _create_stt_instance()

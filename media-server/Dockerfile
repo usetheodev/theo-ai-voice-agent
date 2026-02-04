@@ -60,11 +60,16 @@ RUN rm -rf /tmp/pjproject
 WORKDIR /app
 
 # Copia e instala dependências Python
-COPY requirements.txt .
+# NOTA: Build context deve ser a raiz do projeto (não ./media-server)
+COPY media-server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copia código
-COPY . .
+# Copia módulos compartilhados PRIMEIRO (mudam menos frequentemente)
+COPY shared/asp_protocol/ ./shared/asp_protocol/
+COPY shared/ws/ ./shared/ws/
+
+# Copia código do media-server
+COPY media-server/ .
 
 # Variáveis de ambiente padrão (sobrescritas pelo docker-compose)
 ENV WEBSOCKET_URL=ws://127.0.0.1:8765

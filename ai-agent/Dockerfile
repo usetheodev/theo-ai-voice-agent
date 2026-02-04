@@ -47,9 +47,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # ===================================
 FROM deps AS final
 
-# Copia módulo compartilhado asp_protocol PRIMEIRO
-# (muda menos frequentemente que o código principal)
-COPY shared/asp_protocol/ ./asp_protocol/
+# Copia módulos compartilhados PRIMEIRO
+# (mudam menos frequentemente que o código principal)
+COPY shared/asp_protocol/ ./shared/asp_protocol/
+COPY shared/ws/ ./shared/ws/
 
 # Copia código do ai-agent por ÚLTIMO (muda frequentemente)
 # Assim não invalida cache das dependências

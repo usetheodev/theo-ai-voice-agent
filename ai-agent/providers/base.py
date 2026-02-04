@@ -13,10 +13,9 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Generic, Optional, TypeVar
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
-T = TypeVar("T")
 
 
 class DeviceFallbackStrategy(Enum):
@@ -119,16 +118,6 @@ class HealthCheckResult:
     latency_ms: Optional[float] = None
     message: Optional[str] = None
     details: dict[str, Any] = field(default_factory=dict)
-
-
-class RetryableError(Exception):
-    """Exception that indicates the operation can be retried."""
-    pass
-
-
-class NonRetryableError(Exception):
-    """Exception that indicates the operation should not be retried."""
-    pass
 
 
 class BaseProvider(ABC):
@@ -254,11 +243,11 @@ class BaseProvider(ABC):
 
     async def _with_retry(
         self,
-        operation: Callable[[], T],
+        operation: Callable,
         retry_on: Optional[tuple[type[Exception], ...]] = None,
-    ) -> T:
+    ):
         """Execute operation with retry logic and exponential backoff."""
-        retry_on = retry_on or (RetryableError, ConnectionError, TimeoutError)
+        retry_on = retry_on or (ConnectionError, TimeoutError)
         last_exception: Optional[Exception] = None
 
         for attempt in range(self._config.retry_attempts + 1):
@@ -273,10 +262,6 @@ class BaseProvider(ABC):
                 latency_ms = (time.perf_counter() - start_time) * 1000
                 self._metrics.record_success(latency_ms)
                 return result
-
-            except NonRetryableError:
-                self._metrics.record_failure(str(last_exception))
-                raise
 
             except retry_on as e:
                 last_exception = e

@@ -1,0 +1,105 @@
+# =============================================================================
+# Git Attributes - PABX Docker
+# =============================================================================
+# Garante line endings corretos para compatibilidade Linux + Windows (Git Bash)
+# =============================================================================
+
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# -----------------------------------------------------------------------------
+# Shell scripts MUST have LF endings (for Git Bash compatibility)
+# -----------------------------------------------------------------------------
+*.sh text eol=lf
+
+# -----------------------------------------------------------------------------
+# Python files
+# -----------------------------------------------------------------------------
+*.py text eol=lf
+*.pyi text eol=lf
+
+# -----------------------------------------------------------------------------
+# JavaScript / TypeScript
+# -----------------------------------------------------------------------------
+*.js text eol=lf
+*.jsx text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+
+# -----------------------------------------------------------------------------
+# Config files
+# -----------------------------------------------------------------------------
+*.conf text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.ini text eol=lf
+*.cfg text eol=lf
+*.env text eol=lf
+*.env.* text eol=lf
+.editorconfig text eol=lf
+.prettierrc text eol=lf
+.eslintrc* text eol=lf
+
+# -----------------------------------------------------------------------------
+# Docker
+# -----------------------------------------------------------------------------
+Dockerfile text eol=lf
+Dockerfile.* text eol=lf
+docker-compose*.yml text eol=lf
+.dockerignore text eol=lf
+
+# -----------------------------------------------------------------------------
+# Documentation
+# -----------------------------------------------------------------------------
+*.md text eol=lf
+*.txt text eol=lf
+*.rst text eol=lf
+LICENSE text eol=lf
+
+# -----------------------------------------------------------------------------
+# Web
+# -----------------------------------------------------------------------------
+*.html text eol=lf
+*.css text eol=lf
+*.scss text eol=lf
+*.less text eol=lf
+
+# -----------------------------------------------------------------------------
+# Keep Windows batch files with CRLF
+# -----------------------------------------------------------------------------
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# -----------------------------------------------------------------------------
+# Binary files (don't touch)
+# -----------------------------------------------------------------------------
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.svg binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
+*.flac binary
+*.pdf binary
+*.zip binary
+*.tar.gz binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+
+# -----------------------------------------------------------------------------
+# Lock files (preserve exactly)
+# -----------------------------------------------------------------------------
+package-lock.json -diff
+yarn.lock -diff
+pnpm-lock.yaml -diff

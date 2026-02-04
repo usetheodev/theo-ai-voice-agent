@@ -72,7 +72,9 @@ services:
 
   # Media Server - SIP Bridge (SIP/RTP <-> WebSocket)
   media-server:
-    build: ./media-server
+    build:
+      context: .
+      dockerfile: media-server/Dockerfile
     container_name: sip-media-server
     restart: unless-stopped
     network_mode: host

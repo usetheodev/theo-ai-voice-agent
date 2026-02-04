@@ -148,7 +148,15 @@ class AudioBuffer:
         Use quando o VAD é feito externamente (ex: pelo media-server).
         """
         if len(self.buffer) + len(audio_data) > self.MAX_BUFFER_SIZE:
-            logger.warning("Buffer de áudio atingiu limite máximo, truncando")
+            # Throttle warning: só loga uma vez a cada 5 segundos
+            if not hasattr(self, '_last_truncate_warning') or \
+               (hasattr(self, '_last_truncate_warning') and
+                (len(self.buffer) == 0 or self._truncate_count >= 50)):
+                import time
+                self._last_truncate_warning = time.time()
+                self._truncate_count = 0
+                logger.warning(f"Buffer de áudio atingiu limite máximo ({self.MAX_BUFFER_SIZE//1000}KB), truncando")
+            self._truncate_count = getattr(self, '_truncate_count', 0) + 1
             space_left = self.MAX_BUFFER_SIZE - len(self.buffer)
             audio_data = audio_data[:space_left]
 

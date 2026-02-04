@@ -36,8 +36,6 @@ from providers.base import (
     ProviderConfig,
     ProviderHealth,
     DeviceFallbackStrategy,
-    RetryableError,
-    NonRetryableError,
 )
 
 logger = logging.getLogger("ai-agent.tts")
@@ -780,116 +778,57 @@ class MockTTS(TTSProvider):
 
 # ==================== Factory ====================
 
+# Mapeamento de providers para classes
+_TTS_PROVIDERS = {
+    "kokoro": KokoroTTS,
+    "openai": OpenAITTS,
+    "gtts": GoogleTTS,
+    "mock": MockTTS,
+}
+
+_TTS_FALLBACK_ORDER = ["kokoro", "gtts", "mock"]
+
+
+def _create_tts_instance(provider: str = None) -> TTSProvider:
+    """Cria instância do provedor TTS (sem conectar)."""
+    provider = provider or TTS_CONFIG.get("provider", "kokoro")
+
+    # Tenta provider solicitado
+    if provider in _TTS_PROVIDERS:
+        try:
+            return _TTS_PROVIDERS[provider]()
+        except Exception as e:
+            logger.warning(f"Falha ao criar {provider}: {e}")
+
+    # Fallback para próximo provider disponível
+    for fallback in _TTS_FALLBACK_ORDER:
+        if fallback != provider:
+            try:
+                logger.warning(f"Tentando fallback: {fallback}")
+                return _TTS_PROVIDERS[fallback]()
+            except Exception:
+                continue
+
+    # Último recurso: mock
+    return MockTTS()
+
+
 async def create_tts_provider() -> TTSProvider:
-    """Factory assíncrona para criar e conectar provedor TTS."""
-    provider = TTS_CONFIG.get("provider", "kokoro")
+    """Factory assíncrona para criar, conectar e aquecer provedor TTS."""
+    tts = _create_tts_instance()
+    await tts.connect()
 
-    if provider == "kokoro":
-        try:
-            tts = KokoroTTS()
-            await tts.connect()
-            await tts.warmup()
-            return tts
-        except Exception as e:
-            logger.warning(f"Falha ao criar Kokoro TTS: {e}. Tentando gTTS.")
-            try:
-                tts = GoogleTTS()
-                await tts.connect()
-                return tts
-            except Exception:
-                logger.warning("gTTS também falhou. Usando mock.")
-                tts = MockTTS()
-                await tts.connect()
-                return tts
+    # Warmup apenas para Kokoro (modelo local)
+    if isinstance(tts, KokoroTTS):
+        await tts.warmup()
 
-    elif provider == "openai":
-        try:
-            tts = OpenAITTS()
-            await tts.connect()
-            return tts
-        except Exception as e:
-            logger.warning(f"Falha ao criar OpenAI TTS: {e}. Tentando Kokoro.")
-            try:
-                tts = KokoroTTS()
-                await tts.connect()
-                await tts.warmup()
-                return tts
-            except Exception:
-                tts = MockTTS()
-                await tts.connect()
-                return tts
-
-    elif provider == "gtts":
-        try:
-            tts = GoogleTTS()
-            await tts.connect()
-            return tts
-        except Exception as e:
-            logger.warning(f"Falha ao criar gTTS: {e}. Usando mock.")
-            tts = MockTTS()
-            await tts.connect()
-            return tts
-
-    elif provider == "mock":
-        tts = MockTTS()
-        await tts.connect()
-        return tts
-
-    else:
-        logger.warning(f"Provedor TTS não reconhecido: {provider}. Tentando Kokoro.")
-        try:
-            tts = KokoroTTS()
-            await tts.connect()
-            await tts.warmup()
-            return tts
-        except Exception:
-            tts = MockTTS()
-            await tts.connect()
-            return tts
+    return tts
 
 
 def create_tts_provider_sync() -> TTSProvider:
     """
-    Factory síncrona para criar provedor TTS (compatibilidade).
+    Factory síncrona para criar provedor TTS (sem conectar).
 
     Nota: Pipeline não está inicializado. Use create_tts_provider() para versão async completa.
     """
-    provider = TTS_CONFIG.get("provider", "kokoro")
-
-    if provider == "kokoro":
-        try:
-            return KokoroTTS()
-        except Exception as e:
-            logger.warning(f"Falha ao criar Kokoro TTS: {e}. Tentando gTTS.")
-            try:
-                return GoogleTTS()
-            except Exception:
-                logger.warning("gTTS também falhou. Usando mock.")
-                return MockTTS()
-
-    elif provider == "openai":
-        try:
-            return OpenAITTS()
-        except Exception as e:
-            logger.warning(f"Falha ao criar OpenAI TTS: {e}. Tentando Kokoro.")
-            try:
-                return KokoroTTS()
-            except Exception:
-                return MockTTS()
-
-    elif provider == "gtts":
-        try:
-            return GoogleTTS()
-        except Exception as e:
-            logger.warning(f"Falha ao criar gTTS: {e}. Usando mock.")
-            return MockTTS()
-
-    elif provider == "mock":
-        return MockTTS()
-
-    else:
-        logger.warning(f"Provedor TTS não reconhecido: {provider}. Tentando Kokoro.")
-        try:
-            return KokoroTTS()
-        except Exception:
-            return MockTTS()
+    return _create_tts_instance()

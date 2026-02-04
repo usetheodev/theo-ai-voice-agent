@@ -1,0 +1,136 @@
+# =============================================================================
+# Configuração de Ferramentas Python - PABX Docker
+# =============================================================================
+
+[project]
+name = "theo-ai-voice-agent"
+version = "1.0.0"
+description = "Sistema PABX com Asterisk, SoftPhone WebRTC e Agente de IA"
+requires-python = ">=3.11"
+
+# =============================================================================
+# Ruff - Linter e Formatter Python (substitui flake8, isort, black)
+# https://docs.astral.sh/ruff/
+# =============================================================================
+[tool.ruff]
+# Versão do Python alvo
+target-version = "py311"
+
+# Largura máxima da linha
+line-length = 100
+
+# Diretórios a serem analisados
+src = ["ai-agent", "media-server", "shared", "tools"]
+
+# Arquivos/diretórios a ignorar
+exclude = [
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".mypy_cache",
+    ".ruff_cache",
+    "build",
+    "dist",
+    "*.egg-info",
+    "node_modules",
+]
+
+[tool.ruff.lint]
+# Regras habilitadas
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort (ordenação de imports)
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify
+    "TCH",    # flake8-type-checking
+    "PTH",    # flake8-use-pathlib
+    "ERA",    # eradicate (código comentado)
+    "PL",     # Pylint
+    "RUF",    # Ruff-specific rules
+]
+
+# Regras ignoradas
+ignore = [
+    "E501",    # line too long (deixa o formatter cuidar)
+    "PLR0913", # too many arguments
+    "PLR2004", # magic value comparison
+    "PLW0603", # global statement
+    "B008",    # function call in default argument (comum em FastAPI)
+    "ARG001",  # unused function argument (comum em callbacks)
+    "ARG002",  # unused method argument
+]
+
+# Permitir fix automático para estas regras
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.lint.isort]
+# Configuração de ordenação de imports
+known-first-party = ["ai_agent", "media_server", "shared", "asp_protocol"]
+combine-as-imports = true
+force-wrap-aliases = true
+
+[tool.ruff.lint.per-file-ignores]
+# Ignorar regras específicas por arquivo
+"__init__.py" = ["F401"]  # imports não usados em __init__.py
+"**/tests/**" = ["ARG"]   # argumentos não usados em testes
+
+[tool.ruff.format]
+# Configuração do formatter (similar ao Black)
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "lf"
+
+# =============================================================================
+# MyPy - Type Checker
+# =============================================================================
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = false  # Gradual typing
+check_untyped_defs = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "pjsua2.*",
+    "webrtcvad.*",
+    "faster_whisper.*",
+    "kokoro.*",
+    "gtts.*",
+]
+ignore_missing_imports = true
+
+# =============================================================================
+# Pytest
+# =============================================================================
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+asyncio_mode = "auto"
+
+# =============================================================================
+# Coverage
+# =============================================================================
+[tool.coverage.run]
+source = ["ai-agent", "media-server", "shared"]
+omit = ["**/tests/**", "**/__pycache__/**"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]

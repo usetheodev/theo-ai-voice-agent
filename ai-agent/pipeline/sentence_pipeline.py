@@ -239,35 +239,3 @@ class SentencePipeline:
             logger.error(f"Erro na síntese: {e}")
 
 
-class SentencePipelineFactory:
-    """
-    Factory para criar SentencePipeline com providers apropriados.
-
-    Segue o padrão Factory para encapsular a criação de dependências.
-    """
-
-    @staticmethod
-    async def create(
-        llm: Optional["LLMProvider"] = None,
-        tts: Optional["TTSProvider"] = None,
-    ) -> SentencePipeline:
-        """
-        Cria pipeline com providers fornecidos ou defaults.
-
-        Args:
-            llm: LLM provider (opcional, cria default se não fornecido)
-            tts: TTS provider (opcional, cria default se não fornecido)
-
-        Returns:
-            SentencePipeline configurado e pronto para uso
-        """
-        from providers.llm import create_llm_provider
-        from providers.tts import create_tts_provider
-
-        if llm is None:
-            llm = create_llm_provider()
-
-        if tts is None:
-            tts = await create_tts_provider()
-
-        return SentencePipeline(llm=llm, tts=tts)

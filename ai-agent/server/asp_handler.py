@@ -14,7 +14,17 @@ from websockets.server import WebSocketServerProtocol
 
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "shared"))
+
+# Tenta múltiplos paths para funcionar em local e Docker
+_possible_paths = [
+    Path(__file__).parent.parent.parent / "shared",  # Local dev
+    Path(__file__).parent.parent / "shared",  # Docker /app/
+    Path("/app/shared"),  # Docker absolute
+]
+for _path in _possible_paths:
+    if (_path / "asp_protocol").exists():
+        sys.path.insert(0, str(_path))
+        break
 
 from metrics import (
     track_asp_handshake_success,
