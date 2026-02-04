@@ -65,7 +65,7 @@ class AudioBuffer:
                 if self.frame_duration_ms in self.VALID_FRAME_DURATIONS:
                     self.vad = webrtcvad.Vad(vad_level)
                     self.use_webrtc_vad = True
-                    logger.info(f"✅ WebRTC VAD inicializado (agressividade={vad_level})")
+                    logger.info(f" WebRTC VAD inicializado (agressividade={vad_level})")
                 else:
                     logger.warning(
                         f"WebRTC VAD requer frame de {self.VALID_FRAME_DURATIONS}ms, "
@@ -121,11 +121,11 @@ class AudioBuffer:
 
                     if speech_ms >= self.min_speech_ms:
                         audio = bytes(self.buffer)
-                        logger.debug(f"✅ Fala detectada: {speech_ms:.0f}ms ({len(self.buffer)} bytes)")
+                        logger.debug(f" Fala detectada: {speech_ms:.0f}ms ({len(self.buffer)} bytes)")
                         self._reset()
                         return audio
                     else:
-                        logger.debug(f"⏭️ Fala muito curta ignorada: {speech_ms:.0f}ms < {self.min_speech_ms}ms")
+                        logger.debug(f"️ Fala muito curta ignorada: {speech_ms:.0f}ms < {self.min_speech_ms}ms")
                         self._reset()
 
         return None
@@ -180,7 +180,7 @@ class AudioBuffer:
         if len(self.buffer) > 0:
             num_samples = len(self.buffer) // 2
             speech_ms = (num_samples / self.sample_rate) * 1000
-            logger.debug(f"🔄 Flush: {speech_ms:.0f}ms ({len(self.buffer)} bytes)")
+            logger.debug(f" Flush: {speech_ms:.0f}ms ({len(self.buffer)} bytes)")
             if speech_ms >= self.min_speech_ms:
                 audio = bytes(self.buffer)
                 self._reset()

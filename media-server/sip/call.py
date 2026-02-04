@@ -99,21 +99,21 @@ class MyCall(pj.Call):
     def onCallState(self, prm):
         """Estado da chamada mudou"""
         ci = self.getInfo()
-        self._log(f"📞 Estado: {ci.stateText}")
+        self._log(f" Estado: {ci.stateText}")
 
         if ci.state == pj.PJSIP_INV_STATE_CONFIRMED:
-            self._log(f"✅ Chamada conectada: {ci.remoteUri}")
+            self._log(f" Chamada conectada: {ci.remoteUri}")
             self.call_start_time = time.time()
             self._start_conversation()
 
         elif ci.state == pj.PJSIP_INV_STATE_DISCONNECTED:
-            self._log(f"📴 Chamada encerrada (código: {ci.lastStatusCode})")
+            self._log(f" Chamada encerrada (código: {ci.lastStatusCode})")
 
             # Registra duração da chamada
             if self.call_start_time:
                 duration = time.time() - self.call_start_time
                 track_call_ended(duration)
-                self._log(f"⏱️ Duração: {duration:.1f}s")
+                self._log(f"️ Duração: {duration:.1f}s")
 
             self._stop_conversation()
             self._cleanup()
@@ -166,7 +166,7 @@ class MyCall(pj.Call):
 
     def _conversation_loop(self):
         """Loop principal de conversação com streaming real"""
-        self._log("🗣️ Iniciando loop de conversação streaming...")
+        self._log("️ Iniciando loop de conversação streaming...")
 
         # Registra thread no pjlib
         try:
@@ -190,14 +190,14 @@ class MyCall(pj.Call):
 
         # Aguarda greeting ser recebido (timeout configurável)
         greeting_timeout = CALL_CONFIG.get("greeting_timeout", 30)
-        self._log("⏳ Aguardando greeting...")
+        self._log(" Aguardando greeting...")
         if not self.greeting_finished.wait(timeout=greeting_timeout):
             self._log("Timeout aguardando greeting", "warning")
 
         # Inicia streaming de captura IMEDIATAMENTE
         # O playback do greeting continua em paralelo
         self._start_streaming()
-        self._log("✅ Pronto para conversar")
+        self._log(" Pronto para conversar")
 
         # Loop principal - mantém thread viva (intervalo configurável)
         loop_interval = CALL_CONFIG.get("conversation_loop_interval", 0.05)
@@ -206,7 +206,7 @@ class MyCall(pj.Call):
 
         # Para streaming
         self._stop_streaming()
-        self._log("🗣️ Loop de conversação encerrado")
+        self._log("️ Loop de conversação encerrado")
 
     def _start_audio_session(self) -> bool:
         """Inicia sessão no destino de áudio"""
@@ -267,7 +267,7 @@ class MyCall(pj.Call):
             # Conecta playback_port -> call_media (para enviar áudio ao telefone)
             self.playback_port.startTransmit(self.call_media)
 
-            self._log("🔊 Playback streaming configurado")
+            self._log(" Playback streaming configurado")
 
         except Exception as e:
             self._log(f"Erro ao configurar playback streaming: {e}", "error")
@@ -296,7 +296,7 @@ class MyCall(pj.Call):
             waited += check_interval
 
         if waited >= max_wait:
-            self._log(f"⚠️ Timeout aguardando playback", "warning")
+            self._log(f"️ Timeout aguardando playback", "warning")
 
         self.playback_finished.set()
         self.is_playing_response = False
@@ -307,7 +307,7 @@ class MyCall(pj.Call):
         def on_response_start(session_id: str, text: str):
             if session_id != self.session_id:
                 return
-            self._log(f"🤖 Resposta: {text[:50]}...")
+            self._log(f" Resposta: {text[:50]}...")
 
             # Marca início do playback
             self.is_playing_response = True
@@ -325,7 +325,7 @@ class MyCall(pj.Call):
                 e2e = time.time() - self.speech_end_timestamp
                 track_e2e_latency(e2e)
                 self.e2e_recorded = True
-                self._log(f"⏱️ E2E Latency: {e2e*1000:.0f}ms")
+                self._log(f"️ E2E Latency: {e2e*1000:.0f}ms")
 
             # Tracking para barge-in progress
             self.response_total_bytes += len(audio_data)
@@ -339,7 +339,7 @@ class MyCall(pj.Call):
             if session_id != self.session_id:
                 return
 
-            self._log(f"🔊 Resposta completa ({self.bytes_transmitted} bytes)")
+            self._log(f" Resposta completa ({self.bytes_transmitted} bytes)")
 
             # Registra métricas
             track_rtp_transmitted(self.bytes_transmitted)
@@ -349,7 +349,7 @@ class MyCall(pj.Call):
             if self.is_first_response:
                 self.is_first_response = False
                 self.greeting_finished.set()
-                self._log("✅ Greeting concluído")
+                self._log(" Greeting concluído")
 
             # Inicia thread para aguardar playback e resumir captura
             threading.Thread(
@@ -368,7 +368,7 @@ class MyCall(pj.Call):
         # Sinaliza que greeting terminou de tocar (habilita barge-in)
         if not self.greeting_playback_done.is_set():
             self.greeting_playback_done.set()
-            self._log("🎤 Greeting reproduzido - barge-in habilitado")
+            self._log(" Greeting reproduzido - barge-in habilitado")
 
         self._resume_streaming()
 
@@ -406,7 +406,7 @@ class MyCall(pj.Call):
             self.call_media.startTransmit(self.streaming_port)
 
             self.is_streaming = True
-            self._log("🎤 Streaming de áudio iniciado")
+            self._log(" Streaming de áudio iniciado")
 
         except Exception as e:
             self._log(f"Erro ao iniciar streaming: {e}", "error")
@@ -427,14 +427,14 @@ class MyCall(pj.Call):
                 pass
 
         self.is_streaming = False
-        self._log("🎤 Streaming de áudio parado")
+        self._log(" Streaming de áudio parado")
 
     def _pause_streaming(self):
         """Pausa envio de áudio mas mantém detecção de fala para barge-in"""
         if self.streaming_port:
             # Modo monitor: detecta fala mas não envia áudio
             self.streaming_port.monitor_mode = True
-            self._log("⏸️ Streaming em modo monitor (barge-in ativo)")
+            self._log("️ Streaming em modo monitor (barge-in ativo)")
 
     def _resume_streaming(self):
         """Resume o streaming após playback"""
@@ -470,9 +470,9 @@ class MyCall(pj.Call):
             progress = bytes_played / self.response_total_bytes if self.response_total_bytes > 0 else 0.0
             progress = max(0.0, min(1.0, progress))  # Clamp 0-1
             track_barge_in_progress(progress)
-            self._log(f"🛑 BARGE-IN: Usuário interrompeu em {progress*100:.0f}% da resposta")
+            self._log(f" BARGE-IN: Usuário interrompeu em {progress*100:.0f}% da resposta")
         else:
-            self._log("🛑 BARGE-IN: Usuário interrompeu - cancelando playback")
+            self._log(" BARGE-IN: Usuário interrompeu - cancelando playback")
 
         # Registra métrica
         track_barge_in()
@@ -503,7 +503,7 @@ class MyCall(pj.Call):
         self.response_total_bytes = 0
         self.response_played_bytes = 0
 
-        self._log("🔇 Fim de fala detectado - aguardando resposta")
+        self._log(" Fim de fala detectado - aguardando resposta")
         # O streaming_port já envia audio.end automaticamente
 
     def onCallMediaState(self, prm):
@@ -514,7 +514,7 @@ class MyCall(pj.Call):
             if mi.type == pj.PJMEDIA_TYPE_AUDIO and mi.status == pj.PJSUA_CALL_MEDIA_ACTIVE:
                 try:
                     self.call_media = self.getAudioMedia(i)
-                    self._log("🎤 Mídia de áudio ativa")
+                    self._log(" Mídia de áudio ativa")
                 except Exception as e:
                     self._log(f"Erro ao obter mídia: {e}", "error")
                 break

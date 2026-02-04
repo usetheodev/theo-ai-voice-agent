@@ -19,7 +19,7 @@
       },
       "id": 100,
       "panels": [],
-      "title": "📊 Status dos Componentes",
+      "title": " Status dos Componentes",
       "type": "row"
     },
     {
@@ -38,22 +38,22 @@
                 "registered": {
                   "color": "green",
                   "index": 0,
-                  "text": "✅ REGISTERED"
+                  "text": " REGISTERED"
                 },
                 "unregistered": {
                   "color": "red",
                   "index": 1,
-                  "text": "❌ UNREGISTERED"
+                  "text": " UNREGISTERED"
                 },
                 "registering": {
                   "color": "yellow",
                   "index": 2,
-                  "text": "⏳ REGISTERING"
+                  "text": " REGISTERING"
                 },
                 "failed": {
                   "color": "red",
                   "index": 3,
-                  "text": "❌ FAILED"
+                  "text": " FAILED"
                 }
               },
               "type": "value"
@@ -122,22 +122,22 @@
                 "connected": {
                   "color": "green",
                   "index": 0,
-                  "text": "✅ CONNECTED"
+                  "text": " CONNECTED"
                 },
                 "disconnected": {
                   "color": "red",
                   "index": 1,
-                  "text": "❌ DISCONNECTED"
+                  "text": " DISCONNECTED"
                 },
                 "connecting": {
                   "color": "yellow",
                   "index": 2,
-                  "text": "⏳ CONNECTING"
+                  "text": " CONNECTING"
                 },
                 "reconnecting": {
                   "color": "orange",
                   "index": 3,
-                  "text": "🔄 RECONNECTING"
+                  "text": " RECONNECTING"
                 }
               },
               "type": "value"
@@ -257,7 +257,7 @@
           "refId": "A"
         }
       ],
-      "title": "📞 Calls Active",
+      "title": " Calls Active",
       "type": "stat"
     },
     {
@@ -327,7 +327,7 @@
           "refId": "A"
         }
       ],
-      "title": "🤖 Sessions Active",
+      "title": " Sessions Active",
       "type": "stat"
     },
     {
@@ -389,7 +389,7 @@
           "refId": "A"
         }
       ],
-      "title": "🔌 WS Connections",
+      "title": " WS Connections",
       "type": "stat"
     },
     {
@@ -455,7 +455,7 @@
           "refId": "A"
         }
       ],
-      "title": "⚠️ Pipeline Errors",
+      "title": "️ Pipeline Errors",
       "type": "stat"
     },
     {
@@ -468,7 +468,7 @@
       },
       "id": 101,
       "panels": [],
-      "title": "📥 Fluxo de Entrada: Asterisk → Media Server → AI Agent",
+      "title": " Fluxo de Entrada: Asterisk → Media Server → AI Agent",
       "type": "row"
     },
     {
@@ -601,7 +601,7 @@
           "refId": "B"
         }
       ],
-      "title": "📥 Entrada: RTP → WebSocket → Agent",
+      "title": " Entrada: RTP → WebSocket → Agent",
       "type": "timeseries"
     },
     {
@@ -786,7 +786,7 @@
           "refId": "A"
         }
       ],
-      "title": "📊 Transfer Rate In",
+      "title": " Transfer Rate In",
       "type": "stat"
     },
     {
@@ -808,11 +808,11 @@
           "showLineNumbers": false,
           "showMiniMap": false
         },
-        "content": "```\n📞 Asterisk                    📡 Media Server                    🤖 AI Agent\n    │                               │                                  │\n    │  ──── RTP Audio ────────────▶ │                                  │\n    │                               │  ──── WebSocket ───────────────▶ │\n    │                               │       (Audio Frames)             │\n    │                               │                                  │\n```\n\n**Fluxo:** `SIP Call` → `RTP Stream` → `Media Server` → `WebSocket` → `AI Agent Buffer`",
+        "content": "```\n Asterisk                     Media Server                     AI Agent\n    │                               │                                  │\n    │  ──── RTP Audio ────────────▶ │                                  │\n    │                               │  ──── WebSocket ───────────────▶ │\n    │                               │       (Audio Frames)             │\n    │                               │                                  │\n```\n\n**Fluxo:** `SIP Call` → `RTP Stream` → `Media Server` → `WebSocket` → `AI Agent Buffer`",
         "mode": "markdown"
       },
       "pluginVersion": "10.2.2",
-      "title": "📥 Fluxo de Entrada",
+      "title": " Fluxo de Entrada",
       "type": "text"
     },
     {
@@ -825,7 +825,7 @@
       },
       "id": 102,
       "panels": [],
-      "title": "⚙️ Pipeline Processing: STT → LLM → TTS",
+      "title": "️ Pipeline Processing: STT → LLM → TTS",
       "type": "row"
     },
     {
@@ -992,7 +992,7 @@
           "refId": "C"
         }
       ],
-      "title": "⏱️ Pipeline Latency by Component (P95)",
+      "title": "️ Pipeline Latency by Component (P95)",
       "type": "timeseries"
     },
     {
@@ -1059,7 +1059,7 @@
           "refId": "A"
         }
       ],
-      "title": "🎤 STT (P95)",
+      "title": " STT (P95)",
       "type": "stat"
     },
     {
@@ -1126,7 +1126,7 @@
           "refId": "A"
         }
       ],
-      "title": "🧠 LLM (P95)",
+      "title": " LLM (P95)",
       "type": "stat"
     },
     {
@@ -1193,7 +1193,7 @@
           "refId": "A"
         }
       ],
-      "title": "🔊 TTS (P95)",
+      "title": " TTS (P95)",
       "type": "stat"
     },
     {
@@ -1260,7 +1260,7 @@
           "refId": "A"
         }
       ],
-      "title": "⏱️ Total (P95)",
+      "title": "️ Total (P95)",
       "type": "stat"
     },
     {
@@ -1412,7 +1412,7 @@
           "refId": "A"
         }
       ],
-      "title": "❌ Pipeline Errors by Component",
+      "title": " Pipeline Errors by Component",
       "type": "timeseries"
     },
     {
@@ -1425,7 +1425,7 @@
       },
       "id": 103,
       "panels": [],
-      "title": "📤 Fluxo de Saída: AI Agent → Media Server → Asterisk",
+      "title": " Fluxo de Saída: AI Agent → Media Server → Asterisk",
       "type": "row"
     },
     {
@@ -1558,7 +1558,7 @@
           "refId": "B"
         }
       ],
-      "title": "📤 Saída: Agent → WebSocket → RTP",
+      "title": " Saída: Agent → WebSocket → RTP",
       "type": "timeseries"
     },
     {
@@ -1743,7 +1743,7 @@
           "refId": "A"
         }
       ],
-      "title": "📊 Transfer Rate Out",
+      "title": " Transfer Rate Out",
       "type": "stat"
     },
     {
@@ -1765,11 +1765,11 @@
           "showLineNumbers": false,
           "showMiniMap": false
         },
-        "content": "```\n🤖 AI Agent                    📡 Media Server                    📞 Asterisk\n    │                               │                                  │\n    │  ──── WebSocket ────────────▶ │                                  │\n    │       (TTS Audio)             │  ──── RTP Audio ───────────────▶ │\n    │                               │                                  │\n```\n\n**Fluxo:** `TTS Response` → `WebSocket` → `Media Server` → `RTP Stream` → `SIP Call`",
+        "content": "```\n AI Agent                     Media Server                     Asterisk\n    │                               │                                  │\n    │  ──── WebSocket ────────────▶ │                                  │\n    │       (TTS Audio)             │  ──── RTP Audio ───────────────▶ │\n    │                               │                                  │\n```\n\n**Fluxo:** `TTS Response` → `WebSocket` → `Media Server` → `RTP Stream` → `SIP Call`",
         "mode": "markdown"
       },
       "pluginVersion": "10.2.2",
-      "title": "📤 Fluxo de Saída",
+      "title": " Fluxo de Saída",
       "type": "text"
     },
     {
@@ -1782,7 +1782,7 @@
       },
       "id": 104,
       "panels": [],
-      "title": "📈 Comparação E2E: Entrada vs Saída",
+      "title": " Comparação E2E: Entrada vs Saída",
       "type": "row"
     },
     {
@@ -1843,7 +1843,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "📥 Input (RTP → Agent)"
+              "options": " Input (RTP → Agent)"
             },
             "properties": [
               {
@@ -1858,7 +1858,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "📤 Output (Agent → RTP)"
+              "options": " Output (Agent → RTP)"
             },
             "properties": [
               {
@@ -1899,7 +1899,7 @@
           },
           "editorMode": "code",
           "expr": "rate(media_server_rtp_bytes_received_total[30s]) + rate(ai_agent_audio_bytes_received_total[30s])",
-          "legendFormat": "📥 Input (RTP → Agent)",
+          "legendFormat": " Input (RTP → Agent)",
           "range": true,
           "refId": "A"
         },
@@ -1910,12 +1910,12 @@
           },
           "editorMode": "code",
           "expr": "rate(ai_agent_audio_bytes_sent_total[30s]) + rate(media_server_rtp_bytes_transmitted_total[30s])",
-          "legendFormat": "📤 Output (Agent → RTP)",
+          "legendFormat": " Output (Agent → RTP)",
           "range": true,
           "refId": "B"
         }
       ],
-      "title": "📊 E2E Data Flow: Input vs Output",
+      "title": " E2E Data Flow: Input vs Output",
       "type": "timeseries"
     },
     {
@@ -1937,11 +1937,11 @@
           "showLineNumbers": false,
           "showMiniMap": false
         },
-        "content": "## 🔄 Fluxo Completo E2E\n\n```\n     ENTRADA                    PROCESSAMENTO                    SAÍDA\n┌─────────────┐             ┌─────────────────┐             ┌─────────────┐\n│  Asterisk   │             │    AI Agent     │             │  Asterisk   │\n│    SIP      │────────────▶│                 │────────────▶│    SIP      │\n│   (RTP)     │             │  STT→LLM→TTS    │             │   (RTP)     │\n└─────────────┘             └─────────────────┘             └─────────────┘\n      │                            │                              ▲\n      │                            │                              │\n      ▼                            ▼                              │\n┌─────────────┐             ┌─────────────────┐             ┌─────────────┐\n│   Media     │             │                 │             │   Media     │\n│   Server    │────────────▶│   Buffer/VAD    │────────────▶│   Server    │\n│  (Bridge)   │  WebSocket  │                 │  WebSocket  │  (Bridge)   │\n└─────────────┘             └─────────────────┘             └─────────────┘\n```\n\n### Pontos de Monitoramento:\n1. **RTP Received** - Áudio do usuário\n2. **Audio Received** - Dados no AI Agent\n3. **Pipeline Latency** - STT + LLM + TTS\n4. **Audio Sent** - Resposta do TTS\n5. **RTP Transmitted** - Áudio de volta",
+        "content": "##  Fluxo Completo E2E\n\n```\n     ENTRADA                    PROCESSAMENTO                    SAÍDA\n┌─────────────┐             ┌─────────────────┐             ┌─────────────┐\n│  Asterisk   │             │    AI Agent     │             │  Asterisk   │\n│    SIP      │────────────▶│                 │────────────▶│    SIP      │\n│   (RTP)     │             │  STT→LLM→TTS    │             │   (RTP)     │\n└─────────────┘             └─────────────────┘             └─────────────┘\n      │                            │                              ▲\n      │                            │                              │\n      ▼                            ▼                              │\n┌─────────────┐             ┌─────────────────┐             ┌─────────────┐\n│   Media     │             │                 │             │   Media     │\n│   Server    │────────────▶│   Buffer/VAD    │────────────▶│   Server    │\n│  (Bridge)   │  WebSocket  │                 │  WebSocket  │  (Bridge)   │\n└─────────────┘             └─────────────────┘             └─────────────┘\n```\n\n### Pontos de Monitoramento:\n1. **RTP Received** - Áudio do usuário\n2. **Audio Received** - Dados no AI Agent\n3. **Pipeline Latency** - STT + LLM + TTS\n4. **Audio Sent** - Resposta do TTS\n5. **RTP Transmitted** - Áudio de volta",
         "mode": "markdown"
       },
       "pluginVersion": "10.2.2",
-      "title": "📋 Diagrama E2E",
+      "title": " Diagrama E2E",
       "type": "text"
     }
   ],

@@ -59,7 +59,7 @@ class LLMProvider(ABC):
 
                     if sentence:
                         sentence_count += 1
-                        logger.debug(f"📤 Sentença {sentence_count}: {sentence}")
+                        logger.debug(f" Sentença {sentence_count}: {sentence}")
                         yield sentence
                 else:
                     break
@@ -67,15 +67,15 @@ class LLMProvider(ABC):
         # Yield resto do buffer
         if buffer.strip():
             sentence_count += 1
-            logger.debug(f"📤 Sentença final {sentence_count}: {buffer.strip()}")
+            logger.debug(f" Sentença final {sentence_count}: {buffer.strip()}")
             yield buffer.strip()
 
-        logger.info(f"📊 Total sentenças geradas: {sentence_count}")
+        logger.info(f" Total sentenças geradas: {sentence_count}")
 
     def reset_conversation(self):
         """Limpa histórico da conversa"""
         self.conversation_history = []
-        logger.info("🔄 Histórico de conversa limpo")
+        logger.info(" Histórico de conversa limpo")
 
     @property
     def supports_streaming(self) -> bool:
@@ -99,7 +99,7 @@ class AnthropicLLM(LLMProvider):
             if not api_key:
                 raise ValueError("ANTHROPIC_API_KEY não configurada")
             self.client = anthropic.Anthropic(api_key=api_key)
-            logger.info("✅ Cliente Anthropic inicializado (streaming habilitado)")
+            logger.info(" Cliente Anthropic inicializado (streaming habilitado)")
         except ImportError:
             logger.error("Anthropic não instalado. Execute: pip install anthropic")
             raise
@@ -134,7 +134,7 @@ class AnthropicLLM(LLMProvider):
                 "content": assistant_message
             })
 
-            logger.info(f"🤖 LLM: '{assistant_message}'")
+            logger.info(f" LLM: '{assistant_message}'")
             return assistant_message
 
         except Exception as e:
@@ -172,7 +172,7 @@ class AnthropicLLM(LLMProvider):
                 "content": full_response
             })
 
-            logger.info(f"🤖 LLM (stream completo): '{full_response}'")
+            logger.info(f" LLM (stream completo): '{full_response}'")
 
         except Exception as e:
             logger.error(f"Erro no LLM Anthropic streaming: {e}")
@@ -195,7 +195,7 @@ class OpenAILLM(LLMProvider):
             if not api_key:
                 raise ValueError("OPENAI_API_KEY não configurada")
             self.client = OpenAI(api_key=api_key)
-            logger.info("✅ Cliente OpenAI inicializado para LLM (streaming habilitado)")
+            logger.info(" Cliente OpenAI inicializado para LLM (streaming habilitado)")
         except ImportError:
             logger.error("OpenAI não instalado. Execute: pip install openai")
             raise
@@ -233,7 +233,7 @@ class OpenAILLM(LLMProvider):
                 "content": assistant_message
             })
 
-            logger.info(f"🤖 LLM: '{assistant_message}'")
+            logger.info(f" LLM: '{assistant_message}'")
             return assistant_message
 
         except Exception as e:
@@ -278,7 +278,7 @@ class OpenAILLM(LLMProvider):
                 "content": full_response
             })
 
-            logger.info(f"🤖 LLM (stream completo): '{full_response}'")
+            logger.info(f" LLM (stream completo): '{full_response}'")
 
         except Exception as e:
             logger.error(f"Erro no LLM OpenAI streaming: {e}")
@@ -290,7 +290,7 @@ class MockLLM(LLMProvider):
 
     def __init__(self):
         super().__init__()
-        logger.info("✅ Mock LLM inicializado (modo teste)")
+        logger.info(" Mock LLM inicializado (modo teste)")
 
     def generate(self, user_message: str) -> str:
         """Gera resposta mock"""
@@ -304,11 +304,11 @@ class MockLLM(LLMProvider):
         user_lower = user_message.lower()
         for key, response in responses.items():
             if key in user_lower:
-                logger.info(f"🤖 LLM (mock): '{response}'")
+                logger.info(f" LLM (mock): '{response}'")
                 return response
 
         default = f"Você disse: {user_message}. Como posso ajudar?"
-        logger.info(f"🤖 LLM (mock): '{default}'")
+        logger.info(f" LLM (mock): '{default}'")
         return default
 
     def generate_stream(self, user_message: str) -> Generator[str, None, None]:

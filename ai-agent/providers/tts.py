@@ -241,7 +241,7 @@ class KokoroTTS(TTSProvider):
         executor_workers = TTS_CONFIG.get("executor_workers", 2)
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=executor_workers)
 
-        logger.info("✅ Kokoro TTS inicializado")
+        logger.info(" Kokoro TTS inicializado")
 
     async def disconnect(self) -> None:
         """Release Kokoro resources."""
@@ -317,7 +317,7 @@ class KokoroTTS(TTSProvider):
         _ = await self.synthesize(warmup_text)
         elapsed_ms = (time.perf_counter() - start) * 1000
         self._is_warmed_up = True
-        logger.info(f"🔥 Kokoro warmup: {elapsed_ms:.1f}ms")
+        logger.info(f" Kokoro warmup: {elapsed_ms:.1f}ms")
         return elapsed_ms
 
     def _preprocess_text(self, text: str) -> str:
@@ -409,7 +409,7 @@ class KokoroTTS(TTSProvider):
 
             if pcm_data:
                 logger.info(
-                    f"🔊 TTS (Kokoro): {len(pcm_data)} bytes "
+                    f" TTS (Kokoro): {len(pcm_data)} bytes "
                     f"(latency: {latency_ms:.0f}ms)"
                 )
 
@@ -499,7 +499,7 @@ class GoogleTTS(TTSProvider):
         try:
             from gtts import gTTS
             self.gTTS = gTTS
-            logger.info("✅ gTTS inicializado")
+            logger.info(" gTTS inicializado")
         except ImportError:
             raise ImportError(
                 "gTTS não instalado. Execute: pip install gtts"
@@ -545,7 +545,7 @@ class GoogleTTS(TTSProvider):
             self._metrics.record_success(latency_ms)
 
             logger.info(
-                f"🔊 TTS (gTTS): {len(pcm_data)} bytes "
+                f" TTS (gTTS): {len(pcm_data)} bytes "
                 f"(latency: {latency_ms:.0f}ms)"
             )
             return pcm_data
@@ -630,7 +630,7 @@ class OpenAITTS(TTSProvider):
             raise ValueError("OPENAI_API_KEY não configurada para TTS")
 
         self.client = OpenAI(api_key=api_key)
-        logger.info("✅ OpenAI TTS inicializado")
+        logger.info(" OpenAI TTS inicializado")
 
     async def disconnect(self) -> None:
         """Close client."""
@@ -675,7 +675,7 @@ class OpenAITTS(TTSProvider):
             self._metrics.record_success(latency_ms)
 
             logger.info(
-                f"🔊 TTS (OpenAI): {len(pcm_8k)} bytes "
+                f" TTS (OpenAI): {len(pcm_8k)} bytes "
                 f"(latency: {latency_ms:.0f}ms)"
             )
             return pcm_8k
@@ -751,7 +751,7 @@ class MockTTS(TTSProvider):
 
     async def connect(self) -> None:
         await super().connect()
-        logger.info("✅ Mock TTS inicializado")
+        logger.info(" Mock TTS inicializado")
 
     async def _do_health_check(self) -> HealthCheckResult:
         return HealthCheckResult(
@@ -773,7 +773,7 @@ class MockTTS(TTSProvider):
             samples.append(struct.pack('<h', sample))
 
         pcm_data = b''.join(samples)
-        logger.info(f"🔊 TTS (mock): {len(pcm_data)} bytes")
+        logger.info(f" TTS (mock): {len(pcm_data)} bytes")
         return pcm_data
 
 

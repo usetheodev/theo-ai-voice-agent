@@ -180,7 +180,7 @@ def start_metrics_server(port: int = 9091):
     """Inicia servidor HTTP para expor métricas"""
     try:
         start_http_server(port)
-        logger.info(f"📊 Metrics server iniciado na porta {port}")
+        logger.info(f" Metrics server iniciado na porta {port}")
     except Exception as e:
         logger.error(f"Erro ao iniciar metrics server: {e}")
 

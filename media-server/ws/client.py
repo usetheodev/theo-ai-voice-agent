@@ -89,7 +89,7 @@ class WebSocketClient:
         WEBSOCKET_STATUS.state('connecting')
 
         try:
-            logger.info(f"🔌 Conectando ao AI Agent: {self.url}")
+            logger.info(f" Conectando ao AI Agent: {self.url}")
 
             self.ws = await websockets.connect(
                 self.url,
@@ -98,17 +98,17 @@ class WebSocketClient:
                 close_timeout=AI_AGENT_CONFIG.get("close_timeout", 5),
             )
 
-            logger.info("✅ Conectado ao AI Agent")
+            logger.info(" Conectado ao AI Agent")
 
             # ASP: Aguarda capabilities do servidor
             success, caps = await self._asp_handler.receive_capabilities(self.ws)
 
             if success:
                 self._asp_mode = True
-                logger.info(f"🔒 Modo ASP ativado (server v{caps.version})")
+                logger.info(f" Modo ASP ativado (server v{caps.version})")
             else:
                 self._asp_mode = False
-                logger.info("📜 Modo legado (servidor sem ASP)")
+                logger.info(" Modo legado (servidor sem ASP)")
 
             self._connected.set()
             track_websocket_connected()
@@ -119,7 +119,7 @@ class WebSocketClient:
             return True
 
         except Exception as e:
-            logger.error(f"❌ Erro ao conectar: {e}")
+            logger.error(f" Erro ao conectar: {e}")
             self._connected.clear()
             track_websocket_disconnected()
             return False
@@ -156,7 +156,7 @@ class WebSocketClient:
             self.ws = None
 
         track_websocket_disconnected()
-        logger.info("📴 Desconectado do AI Agent")
+        logger.info(" Desconectado do AI Agent")
 
     async def wait_connected(self, timeout: float = 30) -> bool:
         """Aguarda conexão estar pronta"""
@@ -281,7 +281,7 @@ class WebSocketClient:
             self._session_hash_lookup[hash_hex] = session_id
             logger.debug(f"[{session_id[:8]}] Hash registrado: {hash_hex}")
 
-            logger.info(f"✅ Sessão iniciada (legado): {session_id[:8]}")
+            logger.info(f" Sessão iniciada (legado): {session_id[:8]}")
             return True
         except asyncio.TimeoutError:
             logger.error(f"Timeout ao iniciar sessão: {session_id[:8]}")
@@ -340,7 +340,7 @@ class WebSocketClient:
             hash_hex = session_id_to_hash(session_id).hex()
             self._session_hash_lookup.pop(hash_hex, None)
 
-            logger.info(f"📴 Sessão encerrada: {session_id[:8]}")
+            logger.info(f" Sessão encerrada: {session_id[:8]}")
 
         except Exception as e:
             logger.error(f"Erro ao encerrar sessão: {e}")
@@ -436,7 +436,7 @@ class WebSocketClient:
                     self.on_session_started(msg.session_id)
 
             elif isinstance(msg, ResponseStartMessage):
-                logger.info(f"[{msg.session_id[:8]}] 🤖 Resposta: {msg.text[:50]}...")
+                logger.info(f"[{msg.session_id[:8]}]  Resposta: {msg.text[:50]}...")
                 if self.on_response_start:
                     self.on_response_start(msg.session_id, msg.text)
 
@@ -519,10 +519,10 @@ class WebSocketClient:
                 return
 
             track_websocket_reconnection()
-            logger.info(f"🔄 Tentando reconectar ({attempt + 1}/{max_attempts})...")
+            logger.info(f" Tentando reconectar ({attempt + 1}/{max_attempts})...")
             await asyncio.sleep(interval)
 
             if await self.connect():
                 return
 
-        logger.error("❌ Falha ao reconectar após múltiplas tentativas")
+        logger.error(" Falha ao reconectar após múltiplas tentativas")

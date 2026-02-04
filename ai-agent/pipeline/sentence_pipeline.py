@@ -140,7 +140,7 @@ class SentencePipeline:
                     break
 
                 self._metrics.sentences_generated += 1
-                logger.debug(f"📝 Sentença {self._metrics.sentences_generated}: {sentence[:50]}...")
+                logger.debug(f" Sentença {self._metrics.sentences_generated}: {sentence[:50]}...")
 
                 # Sintetiza sentença e yield chunks imediatamente
                 async for audio_chunk in self._synthesize_sentence(sentence):
@@ -151,7 +151,7 @@ class SentencePipeline:
                             (first_audio_time - start_time) * 1000
                         )
                         logger.info(
-                            f"⚡ Primeiro áudio em {self._metrics.first_audio_latency_ms:.0f}ms"
+                            f" Primeiro áudio em {self._metrics.first_audio_latency_ms:.0f}ms"
                         )
 
                     self._metrics.audio_chunks_produced += 1
@@ -169,7 +169,7 @@ class SentencePipeline:
             # Registra métricas finais
             self._metrics.total_latency_ms = (time.perf_counter() - start_time) * 1000
             logger.info(
-                f"✅ Pipeline: {self._metrics.sentences_generated} sentenças, "
+                f" Pipeline: {self._metrics.sentences_generated} sentenças, "
                 f"{self._metrics.audio_chunks_produced} chunks, "
                 f"total {self._metrics.total_latency_ms:.0f}ms"
             )
@@ -199,7 +199,7 @@ class SentencePipeline:
             # Coloca cada sentença na fila
             for sentence in sentences:
                 await queue.put(sentence)
-                logger.debug(f"📤 Sentença enfileirada: {sentence[:30]}...")
+                logger.debug(f" Sentença enfileirada: {sentence[:30]}...")
 
         except Exception as e:
             logger.error(f"Erro no produtor LLM: {e}")

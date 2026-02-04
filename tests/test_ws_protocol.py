@@ -47,7 +47,7 @@ def test_control_messages():
     assert isinstance(parsed, SessionStartMessage)
     assert parsed.session_id == "test-session-123"
     assert parsed.audio_config.sample_rate == 8000
-    print("  ✅ SessionStartMessage OK")
+    print("   SessionStartMessage OK")
 
     # SessionStartedMessage
     msg = SessionStartedMessage(session_id="test-session-123")
@@ -55,7 +55,7 @@ def test_control_messages():
     parsed = parse_control_message(json_str)
     assert isinstance(parsed, SessionStartedMessage)
     assert parsed.session_id == "test-session-123"
-    print("  ✅ SessionStartedMessage OK")
+    print("   SessionStartedMessage OK")
 
     # SessionEndMessage
     msg = SessionEndMessage(session_id="test-session-123", reason="user_hangup")
@@ -63,14 +63,14 @@ def test_control_messages():
     parsed = parse_control_message(json_str)
     assert isinstance(parsed, SessionEndMessage)
     assert parsed.reason == "user_hangup"
-    print("  ✅ SessionEndMessage OK")
+    print("   SessionEndMessage OK")
 
     # AudioEndMessage
     msg = AudioEndMessage(session_id="test-session-123")
     json_str = msg.to_json()
     parsed = parse_control_message(json_str)
     assert isinstance(parsed, AudioEndMessage)
-    print("  ✅ AudioEndMessage OK")
+    print("   AudioEndMessage OK")
 
     # ResponseStartMessage
     msg = ResponseStartMessage(session_id="test-session-123", text="Olá!")
@@ -78,14 +78,14 @@ def test_control_messages():
     parsed = parse_control_message(json_str)
     assert isinstance(parsed, ResponseStartMessage)
     assert parsed.text == "Olá!"
-    print("  ✅ ResponseStartMessage OK")
+    print("   ResponseStartMessage OK")
 
     # ResponseEndMessage
     msg = ResponseEndMessage(session_id="test-session-123")
     json_str = msg.to_json()
     parsed = parse_control_message(json_str)
     assert isinstance(parsed, ResponseEndMessage)
-    print("  ✅ ResponseEndMessage OK")
+    print("   ResponseEndMessage OK")
 
     # ErrorMessage
     msg = ErrorMessage(session_id="test-session-123", code="LLM_FAILED", message="Timeout")
@@ -93,7 +93,7 @@ def test_control_messages():
     parsed = parse_control_message(json_str)
     assert isinstance(parsed, ErrorMessage)
     assert parsed.code == "LLM_FAILED"
-    print("  ✅ ErrorMessage OK")
+    print("   ErrorMessage OK")
 
 
 def test_audio_frames():
@@ -110,7 +110,7 @@ def test_audio_frames():
         direction=AudioDirection.INBOUND
     )
     assert is_audio_frame(frame_bytes)
-    print("  ✅ Audio frame creation OK")
+    print("   Audio frame creation OK")
 
     # Parse com lookup
     session_hash = session_id_to_hash(session_id).hex()
@@ -119,7 +119,7 @@ def test_audio_frames():
     assert frame.session_id == session_id
     assert frame.direction == AudioDirection.INBOUND
     assert frame.audio_data == audio_data
-    print("  ✅ Audio frame parsing OK")
+    print("   Audio frame parsing OK")
 
     # Cria frame outbound
     frame_bytes = create_audio_frame(
@@ -129,7 +129,7 @@ def test_audio_frames():
     )
     frame = parse_audio_frame(frame_bytes, lookup)
     assert frame.direction == AudioDirection.OUTBOUND
-    print("  ✅ Outbound audio frame OK")
+    print("   Outbound audio frame OK")
 
 
 def test_session_hash():
@@ -141,7 +141,7 @@ def test_session_hash():
     assert len(hash_bytes) == 4
     print(f"  Session: {session_id}")
     print(f"  Hash: {hash_bytes.hex()}")
-    print("  ✅ Session hash OK")
+    print("   Session hash OK")
 
 
 if __name__ == "__main__":
@@ -154,10 +154,10 @@ if __name__ == "__main__":
         test_audio_frames()
         test_session_hash()
         print("\n" + "=" * 50)
-        print("✅ All tests passed!")
+        print(" All tests passed!")
         print("=" * 50)
     except Exception as e:
-        print(f"\n❌ Test failed: {e}")
+        print(f"\n Test failed: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

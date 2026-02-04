@@ -298,14 +298,14 @@ Nível 5: Root Cause (30+ minutos)
 
 **Quando Marina ouve isso, ela já sabe que vai dar problema:**
 
-❌ "Não precisamos de tracing, temos logs"
+ "Não precisamos de tracing, temos logs"
 ```
 Resposta: Logs te dizem O QUE aconteceu. Traces te dizem QUANDO e POR QUE.
 Em sistemas distribuídos de voz, você TEM que correlacionar eventos 
 através de 5+ componentes. Logs não fazem isso sozinhos.
 ```
 
-❌ "Asterisk não escala, vamos usar [X] comercial"
+ "Asterisk não escala, vamos usar [X] comercial"
 ```
 Resposta: Asterisk escala perfeitamente até 10K concurrent calls por instância
 se você souber configurar. O problema é quase sempre:
@@ -317,7 +317,7 @@ se você souber configurar. O problema é quase sempre:
 Já escalei Asterisk para 500K+ calls em cluster. O problema não é o Asterisk.
 ```
 
-❌ "Vamos usar TCP para SIP porque é mais confiável"
+ "Vamos usar TCP para SIP porque é mais confiável"
 ```
 Resposta: UDP é o padrão por uma razão. TCP para SIP:
 - Adiciona 20-50ms de latência (3-way handshake)
@@ -328,7 +328,7 @@ Resposta: UDP é o padrão por uma razão. TCP para SIP:
 Use UDP. Se tiver packet loss, conserte a rede, não mude o protocolo.
 ```
 
-❌ "MOS score de 3.0 está bom o suficiente"
+ "MOS score de 3.0 está bom o suficiente"
 ```
 Resposta: MOS 3.0 é "aceitável", não "bom":
 - 4.5: Excelente (PSTN quality)
@@ -341,7 +341,7 @@ Se você aceita 3.0, está competindo com qualidade de celular 3G.
 Seus usuários merecem melhor.
 ```
 
-❌ "Não conseguimos reproduzir o bug de qualidade"
+ "Não conseguimos reproduzir o bug de qualidade"
 ```
 Resposta: Voice quality bugs são não-determinísticos por natureza.
 Você precisa de:

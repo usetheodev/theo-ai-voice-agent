@@ -2,7 +2,292 @@
 
 Sistema de PABX com Asterisk, SoftPhone WebRTC em React e Agente de Conversação com IA.
 
-## Arquitetura
+---
+
+## Visão Macro do Sistema
+
+### Arquitetura Geral
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              INFRAESTRUTURA DE VOZ                              │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  ┌─────────────┐         ┌─────────────┐         ┌─────────────────────────┐   │
+│  │  SoftPhone  │  WebRTC │             │  SIP    │                         │   │
+│  │   (React)   │◄───────►│  Asterisk   │◄───────►│     Media Server        │   │
+│  │  :3000      │  WSS    │   (PABX)    │  RTP    │     (SIP Bridge)        │   │
+│  └─────────────┘  :8189  │   :5160     │ :40000  │                         │   │
+│                          └─────────────┘         │  ┌───────────────────┐  │   │
+│  ┌─────────────┐                │                │  │ PJSUA2 SIP Stack  │  │   │
+│  │  Zoiper /   │     SIP/RTP    │                │  │ VAD (WebRTC)      │  │   │
+│  │  Linphone   │◄───────────────┘                │  │ Audio Streaming   │  │   │
+│  └─────────────┘                                 │  └───────────────────┘  │   │
+│                                                  └───────────┬─────────────┘   │
+│                                                              │                 │
+│                              WebSocket + ASP Protocol        │                 │
+│                              (Audio Session Protocol)        │                 │
+│                                                              ▼                 │
+│                                                  ┌─────────────────────────┐   │
+│                                                  │       AI Agent          │   │
+│                                                  │   (Conversation Server) │   │
+│                                                  │                         │   │
+│                                                  │  ┌───────────────────┐  │   │
+│                                                  │  │ Pipeline:         │  │   │
+│                                                  │  │  STT → LLM → TTS  │  │   │
+│                                                  │  └───────────────────┘  │   │
+│                                                  │  ┌───────────────────┐  │   │
+│                                                  │  │ Providers:        │  │   │
+│                                                  │  │  • Whisper (STT)  │  │   │
+│                                                  │  │  • Claude (LLM)   │  │   │
+│                                                  │  │  • Kokoro (TTS)   │  │   │
+│                                                  │  └───────────────────┘  │   │
+│                                                  └─────────────────────────┘   │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Fluxo de uma Chamada Completa
+
+```
+┌────────────┐      ┌──────────┐      ┌──────────────┐      ┌────────────┐
+│  Usuário   │      │ Asterisk │      │ Media Server │      │  AI Agent  │
+│ (SoftPhone)│      │  (PABX)  │      │ (SIP Bridge) │      │(Conversação)│
+└─────┬──────┘      └────┬─────┘      └──────┬───────┘      └─────┬──────┘
+      │                  │                   │                    │
+      │  1. INVITE       │                   │                    │
+      │  (ligar 2000)    │                   │                    │
+      │─────────────────►│                   │                    │
+      │                  │                   │                    │
+      │                  │  2. INVITE        │                    │
+      │                  │─────────────────►│                    │
+      │                  │                   │                    │
+      │                  │  3. 200 OK        │                    │
+      │                  │◄─────────────────│                    │
+      │                  │                   │                    │
+      │  4. 200 OK       │                   │  3a. session.start │
+      │◄─────────────────│                   │────────────────────►
+      │                  │                   │                    │
+      │  5. ACK          │                   │  3b. session.started
+      │─────────────────►│                   │◄────────────────────
+      │                  │                   │                    │
+      │                  │                   │  4. greeting audio │
+      │                  │  4a. RTP Audio    │◄────────────────────
+      │  4b. RTP Audio   │◄─────────────────│                    │
+      │◄─────────────────│                   │                    │
+      │                  │                   │                    │
+      │ ══════════════ LOOP DE CONVERSAÇÃO ══════════════════════│
+      │                  │                   │                    │
+      │  5. Fala (RTP)   │                   │                    │
+      │─────────────────►│  5a. RTP Audio    │                    │
+      │                  │─────────────────►│                    │
+      │                  │                   │                    │
+      │                  │                   │  5b. audio frames  │
+      │                  │                   │  (streaming)       │
+      │                  │                   │────────────────────►
+      │                  │                   │                    │
+      │                  │                   │  5c. VAD detecta   │
+      │                  │                   │  fim de fala       │
+      │                  │                   │                    │
+      │                  │                   │  6. audio.end      │
+      │                  │                   │────────────────────►
+      │                  │                   │                    │
+      │                  │                   │        ┌───────────┤
+      │                  │                   │        │ Pipeline: │
+      │                  │                   │        │ STT→LLM→TTS
+      │                  │                   │        └───────────┤
+      │                  │                   │                    │
+      │                  │                   │  7. response.start │
+      │                  │                   │◄────────────────────
+      │                  │                   │                    │
+      │                  │                   │  8. audio chunks   │
+      │                  │  8a. RTP Audio    │◄────────────────────
+      │  8b. RTP Audio   │◄─────────────────│  (streaming)       │
+      │◄─────────────────│                   │                    │
+      │                  │                   │                    │
+      │                  │                   │  9. response.end   │
+      │                  │                   │◄────────────────────
+      │                  │                   │                    │
+      │ ═══════════════ FIM DO LOOP (repete até desligar) ═══════│
+      │                  │                   │                    │
+      │  10. BYE         │                   │                    │
+      │─────────────────►│  10a. BYE         │                    │
+      │                  │─────────────────►│  10b. session.end  │
+      │                  │                   │────────────────────►
+      │                  │                   │                    │
+```
+
+---
+
+### Protocolo ASP (Audio Session Protocol)
+
+Protocolo de negociação entre Media Server e AI Agent:
+
+```
+┌──────────────┐                              ┌──────────────┐
+│ Media Server │                              │   AI Agent   │
+│   (Cliente)  │                              │  (Servidor)  │
+└──────┬───────┘                              └──────┬───────┘
+       │                                             │
+       │  1. WebSocket Connect                       │
+       │ ───────────────────────────────────────────►│
+       │                                             │
+       │  2. protocol.capabilities                   │
+       │ ◄───────────────────────────────────────────│
+       │    {                                        │
+       │      version: "1.0.0",                      │
+       │      supported_sample_rates: [8000, 16000], │
+       │      supported_encodings: ["pcm_s16le"],    │
+       │      features: ["barge_in", "streaming_tts"]│
+       │    }                                        │
+       │                                             │
+       │  3. session.start                           │
+       │ ───────────────────────────────────────────►│
+       │    {                                        │
+       │      session_id: "uuid",                    │
+       │      audio: { sample_rate: 8000, ... },     │
+       │      vad: { silence_threshold_ms: 500, ... }│
+       │    }                                        │
+       │                                             │
+       │  4. session.started                         │
+       │ ◄───────────────────────────────────────────│
+       │    {                                        │
+       │      status: "accepted",                    │
+       │      negotiated: { audio: {...}, vad: {...}}│
+       │    }                                        │
+       │                                             │
+       │  ═══════════ SESSÃO ATIVA ══════════════   │
+       │                                             │
+       │  5. Audio Frames (binário)                  │
+       │ ───────────────────────────────────────────►│
+       │                                             │
+       │  6. audio.end (fim de fala)                 │
+       │ ───────────────────────────────────────────►│
+       │                                             │
+       │  7. response.start                          │
+       │ ◄───────────────────────────────────────────│
+       │                                             │
+       │  8. Audio Frames (resposta)                 │
+       │ ◄───────────────────────────────────────────│
+       │                                             │
+       │  9. response.end                            │
+       │ ◄───────────────────────────────────────────│
+       │                                             │
+       │  10. session.end                            │
+       │ ───────────────────────────────────────────►│
+       │                                             │
+       │  11. session.ended (com estatísticas)       │
+       │ ◄───────────────────────────────────────────│
+       │                                             │
+```
+
+> **Documentação completa:** [docs/ASP_SPECIFICATION.md](docs/ASP_SPECIFICATION.md)
+
+---
+
+### Pipeline de Processamento de Áudio
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           AI AGENT - PIPELINE DE VOZ                            │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  ENTRADA (do Media Server)                                                      │
+│  ════════════════════════                                                       │
+│                                                                                 │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                      │
+│  │ Audio Frame  │───►│ Audio Buffer │───►│     VAD      │                      │
+│  │  (PCM 8kHz)  │    │  (até 60s)   │    │  (WebRTC)    │                      │
+│  └──────────────┘    └──────────────┘    └──────┬───────┘                      │
+│                                                 │                               │
+│                            Detecta fim de fala  │                               │
+│                            (audio.end)          ▼                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │                        PROCESSAMENTO (STT → LLM → TTS)                  │   │
+│  ├─────────────────────────────────────────────────────────────────────────┤   │
+│  │                                                                         │   │
+│  │  ┌────────────────┐     ┌────────────────┐     ┌────────────────┐      │   │
+│  │  │      STT       │     │      LLM       │     │      TTS       │      │   │
+│  │  │                │     │                │     │                │      │   │
+│  │  │ faster-whisper │────►│ Claude/GPT     │────►│ Kokoro/gTTS    │      │   │
+│  │  │                │     │                │     │                │      │   │
+│  │  │ Audio → Texto  │     │ Texto → Texto  │     │ Texto → Audio  │      │   │
+│  │  └────────────────┘     └────────────────┘     └────────┬───────┘      │   │
+│  │         │                      │                        │              │   │
+│  │         ▼                      ▼                        ▼              │   │
+│  │   "Olá, preciso         "Claro! Posso           PCM 8kHz mono        │   │
+│  │    de ajuda"             ajudar com..."          (streaming)          │   │
+│  │                                                                         │   │
+│  └─────────────────────────────────────────────────────────────────────────┘   │
+│                                                 │                               │
+│                                                 ▼                               │
+│  SAÍDA (para Media Server)                                                      │
+│  ═════════════════════════                                                      │
+│                                                                                 │
+│  ┌──────────────────────────────────────────────────────────────────────────┐  │
+│  │                       STREAMING DE RESPOSTA                              │  │
+│  ├──────────────────────────────────────────────────────────────────────────┤  │
+│  │                                                                          │  │
+│  │  response.start ──► audio_chunk ──► audio_chunk ──► ... ──► response.end │  │
+│  │       │                  │               │                      │        │  │
+│  │       ▼                  ▼               ▼                      ▼        │  │
+│  │   "Iniciando"      [bytes PCM]     [bytes PCM]            "Completo"     │  │
+│  │                                                                          │  │
+│  └──────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                 │
+│  ┌───────────────────────────────────────────────────────────────────────────┐ │
+│  │ MÉTRICAS                                                                  │ │
+│  │ • TTFB (Time to First Byte): ~300-500ms                                   │ │
+│  │ • STT Latency: ~100-300ms (modelo tiny)                                   │ │
+│  │ • LLM Latency: ~200-500ms (streaming)                                     │ │
+│  │ • TTS Latency: ~100-200ms (primeiro chunk)                                │ │
+│  └───────────────────────────────────────────────────────────────────────────┘ │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Barge-In (Interrupção)
+
+O sistema suporta barge-in, permitindo que o usuário interrompa a resposta do agente:
+
+```
+┌──────────┐     ┌──────────────┐     ┌────────────┐
+│ Usuário  │     │ Media Server │     │  AI Agent  │
+└────┬─────┘     └──────┬───────┘     └─────┬──────┘
+     │                  │                   │
+     │                  │  response.start   │
+     │                  │◄──────────────────│
+     │                  │                   │
+     │  Ouvindo resposta│  audio chunks     │
+     │◄─────────────────│◄──────────────────│
+     │                  │                   │
+     │  INTERROMPE!     │                   │
+     │  (começa falar)  │                   │
+     │─────────────────►│                   │
+     │                  │                   │
+     │                  │  VAD detecta fala │
+     │                  │  durante playback │
+     │                  │                   │
+     │                  │  PARA playback    │
+     │                  │  imediatamente    │
+     │                  │                   │
+     │                  │  audio.end        │
+     │                  │  (nova fala)      │
+     │                  │──────────────────►│
+     │                  │                   │
+     │                  │  response.start   │
+     │                  │  (nova resposta)  │
+     │                  │◄──────────────────│
+     │                  │                   │
+```
+
+---
+
+## Arquitetura Detalhada
 
 ```
 ┌──────────────────────┐    WebSocket     ┌──────────────────────┐
@@ -11,7 +296,7 @@ Sistema de PABX com Asterisk, SoftPhone WebRTC em React e Agente de Conversaçã
 ├──────────────────────┤                  ├──────────────────────┤
 │ • PJSUA2 SIP/RTP     │                  │ • STT (Whisper)      │
 │ • Call control       │                  │ • LLM (Claude)       │
-│ • Audio capture      │                  │ • TTS (gTTS)         │
+│ • Audio capture      │                  │ • TTS (Kokoro)       │
 │ • Audio playback     │                  │ • VAD                │
 │ • WS Client          │                  │ • Session Manager    │
 └──────────────────────┘                  └──────────────────────┘
@@ -250,6 +535,25 @@ Consulte [docs/SBC-INTEGRATION.md](docs/SBC-INTEGRATION.md) para:
 # Verificar se o sistema está pronto para SBC
 ./scripts/validate-sbc.sh [IP_DO_SBC]
 ```
+
+---
+
+## Documentação
+
+| Documento | Descrição |
+|-----------|-----------|
+| [ASP_SPECIFICATION.md](docs/ASP_SPECIFICATION.md) | Especificação completa do Audio Session Protocol |
+| [ASP_PROTOCOL.md](docs/ASP_PROTOCOL.md) | Visão geral e exemplos do protocolo |
+| [ASP_INTEGRATION.md](docs/ASP_INTEGRATION.md) | Guia de integração com o ASP |
+| [ASP_TROUBLESHOOTING.md](docs/ASP_TROUBLESHOOTING.md) | Diagnóstico de problemas do ASP |
+| [SBC-INTEGRATION.md](docs/SBC-INTEGRATION.md) | Integração com Session Border Controller |
+
+### Configuração por Ambiente
+
+| Arquivo | Descrição |
+|---------|-----------|
+| `ai-agent/.env.example` | Todas as variáveis do AI Agent documentadas |
+| `media-server/.env.example` | Todas as variáveis do Media Server documentadas |
 
 ---
 

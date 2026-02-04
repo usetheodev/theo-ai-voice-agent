@@ -175,12 +175,12 @@ class BaseProvider(ABC):
     async def connect(self) -> None:
         """Connect to the provider. Override for initialization."""
         self._connected = True
-        logger.info(f"✅ {self.provider_name} connected")
+        logger.info(f" {self.provider_name} connected")
 
     async def disconnect(self) -> None:
         """Disconnect from the provider. Override for cleanup."""
         self._connected = False
-        logger.info(f"🔌 {self.provider_name} disconnected")
+        logger.info(f" {self.provider_name} disconnected")
 
     async def __aenter__(self):
         await self.connect()

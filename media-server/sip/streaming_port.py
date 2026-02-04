@@ -119,7 +119,7 @@ class StreamingVAD:
                 self.is_speaking = True
                 speech_started = True
                 track_vad_event('speech_start')
-                logger.debug("🎤 Fala detectada")
+                logger.debug(" Fala detectada")
 
             self.speech_frames += 1
             self.silence_frames = 0
@@ -135,10 +135,10 @@ class StreamingVAD:
                         speech_ended = True
                         track_vad_event('speech_end')
                         track_vad_utterance_duration(speech_ms)
-                        logger.debug(f"🔇 Fim de fala: {speech_ms}ms de fala, {silence_ms}ms de silêncio")
+                        logger.debug(f" Fim de fala: {speech_ms}ms de fala, {silence_ms}ms de silêncio")
                     else:
                         track_vad_event('too_short')
-                        logger.debug(f"⏭️ Fala muito curta ignorada: {speech_ms}ms")
+                        logger.debug(f"️ Fala muito curta ignorada: {speech_ms}ms")
 
                     self.reset()
 
@@ -375,7 +375,7 @@ class StreamingAudioPort(pj.AudioMediaPort):
                 self.audio_destination.send_audio_end(self.session_id),
                 self.loop
             )
-            logger.info(f"[{self.session_id[:8]}] 🔇 audio.end enviado (frames: {self.frames_processed}, bytes: {self.bytes_sent})")
+            logger.info(f"[{self.session_id[:8]}]  audio.end enviado (frames: {self.frames_processed}, bytes: {self.bytes_sent})")
         except Exception as e:
             logger.error(f"[{self.session_id[:8]}] Erro ao enviar audio.end: {e}")
 

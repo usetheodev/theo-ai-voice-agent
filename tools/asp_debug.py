@@ -75,17 +75,17 @@ def print_header(text: str):
 
 def print_success(text: str):
     """Imprime mensagem de sucesso."""
-    print(colored(f"✅ {text}", Colors.GREEN))
+    print(colored(f" {text}", Colors.GREEN))
 
 
 def print_warning(text: str):
     """Imprime aviso."""
-    print(colored(f"⚠️  {text}", Colors.YELLOW))
+    print(colored(f"️  {text}", Colors.YELLOW))
 
 
 def print_error(text: str):
     """Imprime erro."""
-    print(colored(f"❌ {text}", Colors.RED))
+    print(colored(f" {text}", Colors.RED))
 
 
 def print_info(text: str):
@@ -96,7 +96,7 @@ def print_info(text: str):
 def print_timing(label: str, duration_ms: float):
     """Imprime timing."""
     color = Colors.GREEN if duration_ms < 100 else (Colors.YELLOW if duration_ms < 500 else Colors.RED)
-    print(f"   ⏱️  {label}: {colored(f'{duration_ms:.1f}ms', color)}")
+    print(f"   ️  {label}: {colored(f'{duration_ms:.1f}ms', color)}")
 
 
 def print_capabilities(caps: ProtocolCapabilities):

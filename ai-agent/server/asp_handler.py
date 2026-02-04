@@ -127,7 +127,7 @@ class ASPHandler:
             server_id="ai-agent"
         )
         await websocket.send(msg.to_json())
-        logger.debug(f"📤 Enviado protocol.capabilities v{ASP_VERSION}")
+        logger.debug(f" Enviado protocol.capabilities v{ASP_VERSION}")
 
     async def handle_session_start(
         self,
@@ -145,7 +145,7 @@ class ASPHandler:
             Tuple (sucesso, ASPSession se aceito)
         """
         handshake_start = time.perf_counter()
-        logger.info(f"📞 ASP session.start: {message.session_id[:8]}")
+        logger.info(f" ASP session.start: {message.session_id[:8]}")
 
         # Negocia configuração
         result = negotiate_config(
@@ -168,7 +168,7 @@ class ASPHandler:
         handshake_duration = time.perf_counter() - handshake_start
 
         if result.success:
-            logger.info(f"✅ Sessão ASP aceita: {message.session_id[:8]} (status={result.status.value})")
+            logger.info(f" Sessão ASP aceita: {message.session_id[:8]} (status={result.status.value})")
 
             # Registra métricas de sucesso
             track_asp_handshake_success(result.status.value, handshake_duration)
@@ -183,7 +183,7 @@ class ASPHandler:
 
             if result.negotiated.has_adjustments():
                 for adj in result.negotiated.adjustments:
-                    logger.info(f"   ⚠️ Ajuste: {adj.field}: {adj.requested} → {adj.applied}")
+                    logger.info(f"   ️ Ajuste: {adj.field}: {adj.requested} → {adj.applied}")
                     track_asp_negotiation_adjustment(adj.field)
 
             return True, ASPSession(
@@ -194,7 +194,7 @@ class ASPHandler:
                 metadata=message.metadata
             )
         else:
-            logger.warning(f"❌ Sessão ASP rejeitada: {message.session_id[:8]}")
+            logger.warning(f" Sessão ASP rejeitada: {message.session_id[:8]}")
             for err in result.errors:
                 logger.warning(f"   - [{err.code}] {err.message}")
                 track_asp_handshake_failure(err.category)
@@ -217,7 +217,7 @@ class ASPHandler:
         Returns:
             Tuple (sucesso, NegotiatedConfig atualizada)
         """
-        logger.info(f"🔄 ASP session.update: {message.session_id[:8]}")
+        logger.info(f" ASP session.update: {message.session_id[:8]}")
 
         # Negocia apenas VAD (áudio não pode mudar mid-session)
         result = negotiate_config(
@@ -236,10 +236,10 @@ class ASPHandler:
         await websocket.send(response.to_json())
 
         if result.success:
-            logger.info(f"✅ Sessão ASP atualizada: {message.session_id[:8]}")
+            logger.info(f" Sessão ASP atualizada: {message.session_id[:8]}")
             return True, result.negotiated
         else:
-            logger.warning(f"❌ Update ASP rejeitado: {message.session_id[:8]}")
+            logger.warning(f" Update ASP rejeitado: {message.session_id[:8]}")
             return False, None
 
     async def handle_session_end(
@@ -258,7 +258,7 @@ class ASPHandler:
             duration_seconds: Duração da sessão
             statistics: Estatísticas da sessão
         """
-        logger.info(f"📴 ASP session.end: {message.session_id[:8]} (reason={message.reason})")
+        logger.info(f" ASP session.end: {message.session_id[:8]} (reason={message.reason})")
 
         from asp_protocol import SessionStatistics
 
@@ -277,7 +277,7 @@ class ASPHandler:
         # Limpa métricas da sessão
         clear_asp_session_metrics(message.session_id)
 
-        logger.info(f"✅ Sessão ASP encerrada: {message.session_id[:8]}")
+        logger.info(f" Sessão ASP encerrada: {message.session_id[:8]}")
 
     async def send_error(
         self,
@@ -298,7 +298,7 @@ class ASPHandler:
             session_id=session_id
         )
         await websocket.send(msg.to_json())
-        logger.warning(f"📤 Enviado protocol.error: [{error.code}] {error.message}")
+        logger.warning(f" Enviado protocol.error: [{error.code}] {error.message}")
 
     def is_asp_message(self, data: str) -> bool:
         """

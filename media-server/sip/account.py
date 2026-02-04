@@ -41,10 +41,10 @@ class MyAccount(pj.Account):
         """Estado de registro mudou"""
         ai = self.getInfo()
         if ai.regStatus == 200:
-            logger.info(f"✅ Registrado! Ramal: {SIP_CONFIG['username']}")
+            logger.info(f" Registrado! Ramal: {SIP_CONFIG['username']}")
             track_sip_registration(success=True)
         elif ai.regStatus >= 400:
-            logger.error(f"❌ Registro falhou: {ai.regStatus}")
+            logger.error(f" Registro falhou: {ai.regStatus}")
             track_sip_registration(success=False, error_code=ai.regStatus)
 
     def onIncomingCall(self, prm):
@@ -57,13 +57,13 @@ class MyAccount(pj.Account):
         track_incoming_call()
 
         logger.info("=" * 50)
-        logger.info(f"[{cid}] 📞 CHAMADA RECEBIDA!")
+        logger.info(f"[{cid}]  CHAMADA RECEBIDA!")
         logger.info(f"[{cid}]    De: {ci.remoteUri}")
         logger.info("=" * 50)
 
         # Verifica se já há chamada em andamento
         if self.current_call is not None:
-            logger.warning(f"[{cid}] ⚠️ Rejeitando chamada - agente ocupado")
+            logger.warning(f"[{cid}] ️ Rejeitando chamada - agente ocupado")
             track_call_rejected("busy")
             call_prm = pj.CallOpParam()
             call_prm.statusCode = 486  # Busy Here
@@ -75,7 +75,7 @@ class MyAccount(pj.Account):
 
         # Verifica se destino de áudio está conectado
         if not self.audio_destination or not self.audio_destination.is_connected:
-            logger.warning(f"[{cid}] ⚠️ Rejeitando chamada - destino de áudio não conectado")
+            logger.warning(f"[{cid}] ️ Rejeitando chamada - destino de áudio não conectado")
             track_call_rejected("unavailable")
             call_prm = pj.CallOpParam()
             call_prm.statusCode = 503  # Service Unavailable
@@ -86,7 +86,7 @@ class MyAccount(pj.Account):
             return
 
         # Atende
-        logger.info(f"[{cid}] 🤖 Atendendo...")
+        logger.info(f"[{cid}]  Atendendo...")
         call_prm = pj.CallOpParam()
         call_prm.statusCode = 200
 

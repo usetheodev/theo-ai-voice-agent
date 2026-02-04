@@ -39,7 +39,7 @@ class MediaServer:
     async def start(self):
         """Inicia o Media Server"""
         logger.info("=" * 60)
-        logger.info("📡 MEDIA SERVER - SIP Bridge")
+        logger.info(" MEDIA SERVER - SIP Bridge")
         logger.info("=" * 60)
 
         # Inicia servidor de métricas Prometheus
@@ -86,7 +86,7 @@ class MediaServer:
     def _log_status(self):
         """Exibe status do servidor"""
         logger.info("")
-        logger.info("📦 Componentes:")
+        logger.info(" Componentes:")
         logger.info(f"   • WebSocket Client -> {AI_AGENT_CONFIG['url']}")
         logger.info(f"   • SIP Endpoint -> {SIP_CONFIG['domain']}:{SIP_CONFIG['port']}")
         if METRICS_CONFIG.get("enabled", True):
@@ -94,24 +94,24 @@ class MediaServer:
         logger.info("")
 
         if SBC_CONFIG["enabled"]:
-            logger.info("📡 Modo: SBC Externo")
+            logger.info(" Modo: SBC Externo")
             logger.info(f"   SBC: {SBC_CONFIG['host']}:{SBC_CONFIG['port']}")
         else:
-            logger.info("📡 Modo: Asterisk Local")
+            logger.info(" Modo: Asterisk Local")
             logger.info(f"   Servidor: {SIP_CONFIG['domain']}:{SIP_CONFIG['port']}")
 
         logger.info("")
         logger.info(f"   Ramal: {SIP_CONFIG['username']}")
         logger.info("")
         logger.info("   Fluxo de dados:")
-        logger.info("   📞 SIP/RTP ←→ 🌐 WebSocket ←→ 🤖 AI Agent")
+        logger.info("    SIP/RTP ←→  WebSocket ←→  AI Agent")
         logger.info("")
         logger.info("   Aguardando chamadas...")
         logger.info("=" * 60)
 
     async def stop(self):
         """Para o Media Server"""
-        logger.info("🛑 Parando Media Server...")
+        logger.info(" Parando Media Server...")
         self.running = False
 
         if self.sip_endpoint:
@@ -121,7 +121,7 @@ class MediaServer:
             await self.audio_destination.disconnect()
 
         self._shutdown_event.set()
-        logger.info("✅ Media Server parado")
+        logger.info(" Media Server parado")
 
     def trigger_shutdown(self):
         """Dispara shutdown (chamado de signal handler)"""

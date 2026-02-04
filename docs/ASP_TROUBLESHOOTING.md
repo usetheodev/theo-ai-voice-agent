@@ -23,7 +23,7 @@ python tools/asp_debug.py ws://localhost:8765 --vad-silence 700 --vad-threshold 
 
 **Sintoma:**
 ```
-❌ Timeout waiting for server response
+ Timeout waiting for server response
 ```
 
 **Causas:**
@@ -47,7 +47,7 @@ nc -zv localhost 8765
 
 **Sintoma:**
 ```
-📜 Modo legado (servidor sem ASP)
+ Modo legado (servidor sem ASP)
 ```
 
 **Causas:**
@@ -153,7 +153,7 @@ if response.is_accepted:
 
 **Sintoma:**
 ```
-⚠️ Ajuste: vad.threshold: 0.05 → 0.1 (Value below minimum)
+️ Ajuste: vad.threshold: 0.05 → 0.1 (Value below minimum)
 ```
 
 **Causa:**
@@ -174,7 +174,7 @@ Consulte os ranges válidos na especificação:
 
 **Sintoma:**
 ```
-⏱️  Total time: 2500ms
+️  Total time: 2500ms
 ```
 
 **Diagnóstico:**
@@ -210,16 +210,16 @@ logging.getLogger("asp").setLevel(logging.DEBUG)
 
 **Servidor (AI Agent):**
 ```
-📞 ASP session.start: 550e8400 (call: sip-123)
-✅ Sessão ASP aceita: 550e8400 (status=accepted)
+ ASP session.start: 550e8400 (call: sip-123)
+ Sessão ASP aceita: 550e8400 (status=accepted)
    VAD config aplicada: silence=500ms, min_speech=250ms
 ```
 
 **Cliente (Media Server):**
 ```
-📥 Recebido capabilities v1.0.0
-📤 Enviado session.start: 550e8400
-✅ Sessão ASP aceita: 550e8400 (status=accepted)
+ Recebido capabilities v1.0.0
+ Enviado session.start: 550e8400
+ Sessão ASP aceita: 550e8400 (status=accepted)
    Config negociada: sample_rate=8000, vad.silence=500ms
 ```
 
@@ -306,9 +306,9 @@ else:
 
 **Logs:**
 ```
-🔒 Modo ASP ativado (server v1.0.0)
+ Modo ASP ativado (server v1.0.0)
 # ou
-📜 Modo legado (servidor sem ASP)
+ Modo legado (servidor sem ASP)
 ```
 
 ### Q: Por que meu threshold foi ajustado de 0.05 para 0.1?

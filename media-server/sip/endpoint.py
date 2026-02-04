@@ -34,14 +34,14 @@ class SIPEndpoint:
 
     def start(self):
         """Inicia o endpoint SIP"""
-        logger.info("🚀 Iniciando Endpoint SIP...")
+        logger.info(" Iniciando Endpoint SIP...")
 
         if SBC_CONFIG["enabled"]:
-            logger.info("📡 Modo SBC habilitado")
+            logger.info(" Modo SBC habilitado")
             logger.info(f"   SBC Host: {SBC_CONFIG['host']}:{SBC_CONFIG['port']}")
             logger.info(f"   Transporte: {SBC_CONFIG['transport'].upper()}")
         else:
-            logger.info("📡 Modo local (Asterisk direto)")
+            logger.info(" Modo local (Asterisk direto)")
 
         # Cria endpoint PJSIP
         self.ep = pj.Endpoint()
@@ -60,13 +60,13 @@ class SIPEndpoint:
 
         # Null audio device
         self.ep.audDevManager().setNullDev()
-        logger.info("🔇 Null audio device configurado")
+        logger.info(" Null audio device configurado")
 
         # Configura transporte
         self._setup_transport()
 
         self.ep.libStart()
-        logger.info("✅ Endpoint SIP iniciado")
+        logger.info(" Endpoint SIP iniciado")
 
         # Registra
         self._register()
@@ -87,18 +87,18 @@ class SIPEndpoint:
 
             if transport_type == "tcp":
                 self.ep.transportCreate(pj.PJSIP_TRANSPORT_TCP, tp_cfg)
-                logger.info("🔌 Transporte TCP configurado")
+                logger.info(" Transporte TCP configurado")
             elif transport_type == "tls":
                 tp_cfg.tlsConfig.method = pj.PJSIP_TLSV1_2_METHOD
                 self.ep.transportCreate(pj.PJSIP_TRANSPORT_TLS, tp_cfg)
-                logger.info("🔒 Transporte TLS configurado")
+                logger.info(" Transporte TLS configurado")
             else:
                 self.ep.transportCreate(pj.PJSIP_TRANSPORT_UDP, tp_cfg)
-                logger.info("🔌 Transporte UDP configurado")
+                logger.info(" Transporte UDP configurado")
         else:
             tp_cfg.port = SIP_CONFIG["rtp_port_start"]
             self.ep.transportCreate(pj.PJSIP_TRANSPORT_UDP, tp_cfg)
-            logger.info("🔌 Transporte UDP local configurado")
+            logger.info(" Transporte UDP local configurado")
 
     def _register(self):
         """Registra no servidor SIP"""
@@ -109,7 +109,7 @@ class SIPEndpoint:
             sbc_port = SBC_CONFIG["port"]
             transport = SBC_CONFIG["transport"].lower()
 
-            logger.info(f"📝 Registrando via SBC: {SIP_CONFIG['username']}@{sbc_host}:{sbc_port}")
+            logger.info(f" Registrando via SBC: {SIP_CONFIG['username']}@{sbc_host}:{sbc_port}")
 
             acc_cfg.idUri = f"sip:{SIP_CONFIG['username']}@{sbc_host}"
 
@@ -146,7 +146,7 @@ class SIPEndpoint:
             realm = SBC_CONFIG["realm"] if SBC_CONFIG["realm"] else "*"
 
         else:
-            logger.info(f"📝 Registrando: {SIP_CONFIG['username']}@{SIP_CONFIG['domain']}:{SIP_CONFIG['port']}")
+            logger.info(f" Registrando: {SIP_CONFIG['username']}@{SIP_CONFIG['domain']}:{SIP_CONFIG['port']}")
             acc_cfg.idUri = f"sip:{SIP_CONFIG['username']}@{SIP_CONFIG['domain']}"
             acc_cfg.regConfig.registrarUri = f"sip:{SIP_CONFIG['domain']}:{SIP_CONFIG['port']}"
             realm = "*"
@@ -166,7 +166,7 @@ class SIPEndpoint:
 
     def stop(self):
         """Para o endpoint"""
-        logger.info("🛑 Parando endpoint SIP...")
+        logger.info(" Parando endpoint SIP...")
         self.running = False
 
         if self.account:
@@ -180,4 +180,4 @@ class SIPEndpoint:
         if self.ep:
             self.ep.libDestroy()
 
-        logger.info("✅ Endpoint SIP parado")
+        logger.info(" Endpoint SIP parado")

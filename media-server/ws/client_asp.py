@@ -110,7 +110,7 @@ class ASPClientHandler:
                 return False, None
 
             self._server_capabilities = msg.capabilities
-            logger.info(f"📥 Recebido capabilities v{msg.capabilities.version}")
+            logger.info(f" Recebido capabilities v{msg.capabilities.version}")
             logger.debug(f"   Sample rates: {msg.capabilities.supported_sample_rates}")
             logger.debug(f"   Encodings: {msg.capabilities.supported_encodings}")
             logger.debug(f"   Features: {msg.capabilities.features}")
@@ -164,7 +164,7 @@ class ASPClientHandler:
 
         try:
             await websocket.send(msg.to_json())
-            logger.info(f"📤 Enviado session.start: {session_id[:8]}")
+            logger.info(f" Enviado session.start: {session_id[:8]}")
             return True
         except Exception as e:
             logger.error(f"Erro ao enviar session.start: {e}")
@@ -188,11 +188,11 @@ class ASPClientHandler:
             Tuple (sucesso, ASPClientSession se aceita)
         """
         if response.is_accepted:
-            logger.info(f"✅ Sessão ASP aceita: {session_id[:8]} (status={response.status.value})")
+            logger.info(f" Sessão ASP aceita: {session_id[:8]} (status={response.status.value})")
 
             if response.negotiated and response.negotiated.has_adjustments():
                 for adj in response.negotiated.adjustments:
-                    logger.info(f"   ⚠️ Ajuste: {adj.field}: {adj.requested} → {adj.applied}")
+                    logger.info(f"   ️ Ajuste: {adj.field}: {adj.requested} → {adj.applied}")
 
             self._session = ASPClientSession(
                 session_id=session_id,
@@ -205,7 +205,7 @@ class ASPClientHandler:
             return True, self._session
 
         else:
-            logger.warning(f"❌ Sessão ASP rejeitada: {session_id[:8]}")
+            logger.warning(f" Sessão ASP rejeitada: {session_id[:8]}")
             if response.errors:
                 for err in response.errors:
                     logger.warning(f"   - [{err.code}] {err.message}")
@@ -236,7 +236,7 @@ class ASPClientHandler:
         )
 
         await websocket.send(msg.to_json())
-        logger.info(f"📤 Enviado session.update: {session_id[:8]}")
+        logger.info(f" Enviado session.update: {session_id[:8]}")
 
         try:
             response_data = await asyncio.wait_for(websocket.recv(), timeout=timeout)
@@ -248,12 +248,12 @@ class ASPClientHandler:
 
             if isinstance(response, SessionUpdatedMessage):
                 if response.status in [SessionStatus.ACCEPTED, SessionStatus.ACCEPTED_WITH_CHANGES]:
-                    logger.info(f"✅ Sessão atualizada: {session_id[:8]}")
+                    logger.info(f" Sessão atualizada: {session_id[:8]}")
                     if self._session:
                         self._session.negotiated = response.negotiated
                     return True, response.negotiated
                 else:
-                    logger.warning(f"❌ Update rejeitado: {session_id[:8]}")
+                    logger.warning(f" Update rejeitado: {session_id[:8]}")
                     return False, None
 
             return False, None
@@ -286,7 +286,7 @@ class ASPClientHandler:
 
         try:
             await websocket.send(msg.to_json())
-            logger.info(f"📤 Enviado session.end: {session_id[:8]}")
+            logger.info(f" Enviado session.end: {session_id[:8]}")
 
             # Não aguardamos session.ended - encerramento é fire-and-forget
             self._session = None

@@ -28,7 +28,7 @@ logger = logging.getLogger("ai-agent")
 async def main():
     """Função principal"""
     logger.info("=" * 60)
-    logger.info("🤖 AI AGENT - Servidor de Conversação")
+    logger.info(" AI AGENT - Servidor de Conversação")
     logger.info("=" * 60)
 
     # Inicia servidor de métricas Prometheus
@@ -37,7 +37,7 @@ async def main():
         start_metrics_server(metrics_port)
     else:
         metrics_port = None
-        logger.info("📊 Métricas Prometheus desabilitadas")
+        logger.info(" Métricas Prometheus desabilitadas")
 
     # Cria servidor
     server = AIAgentServer()
@@ -58,7 +58,7 @@ async def main():
         await server.start()
 
         logger.info("")
-        logger.info("📦 Componentes:")
+        logger.info(" Componentes:")
         logger.info("   • WebSocket Server")
         logger.info("   • STT (Speech-to-Text)")
         logger.info("   • LLM (Language Model)")
@@ -66,12 +66,12 @@ async def main():
         if metrics_port:
             logger.info("   • Prometheus Metrics")
         logger.info("")
-        logger.info(f"🔌 Escutando em: ws://{WS_CONFIG['host']}:{WS_CONFIG['port']}")
+        logger.info(f" Escutando em: ws://{WS_CONFIG['host']}:{WS_CONFIG['port']}")
         if metrics_port:
-            logger.info(f"📊 Métricas em: http://0.0.0.0:{metrics_port}/metrics")
+            logger.info(f" Métricas em: http://0.0.0.0:{metrics_port}/metrics")
         logger.info("")
         logger.info("   Pipeline de conversação:")
-        logger.info("   🎤 Áudio → 📝 STT → 🧠 LLM → 🔊 TTS → 🎤 Áudio")
+        logger.info("    Áudio →  STT →  LLM →  TTS →  Áudio")
         logger.info("")
         logger.info("   Aguardando conexões do Media Server...")
         logger.info("=" * 60)
@@ -86,9 +86,9 @@ async def main():
         sys.exit(1)
 
     finally:
-        logger.info("🛑 Parando servidor...")
+        logger.info(" Parando servidor...")
         await server.stop()
-        logger.info("✅ Servidor parado")
+        logger.info(" Servidor parado")
 
 
 if __name__ == "__main__":

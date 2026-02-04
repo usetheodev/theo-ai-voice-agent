@@ -212,7 +212,7 @@ class FasterWhisperSTT(STTProvider):
         executor_workers = STT_CONFIG.get("executor_workers", 2)
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=executor_workers)
 
-        logger.info(f"✅ faster-whisper carregado: {self._stt_config.model}")
+        logger.info(f" faster-whisper carregado: {self._stt_config.model}")
 
     def _load_model(self):
         """Load model (blocking)."""
@@ -307,7 +307,7 @@ class FasterWhisperSTT(STTProvider):
         await loop.run_in_executor(self._executor, _warmup)
         elapsed_ms = (time.perf_counter() - start) * 1000
         self._is_warmed_up = True
-        logger.info(f"🔥 faster-whisper warmup: {elapsed_ms:.1f}ms")
+        logger.info(f" faster-whisper warmup: {elapsed_ms:.1f}ms")
         return elapsed_ms
 
     async def transcribe(self, audio_data: bytes) -> str:
@@ -369,7 +369,7 @@ class FasterWhisperSTT(STTProvider):
 
             if text:
                 logger.info(
-                    f"📝 STT: '{text}' "
+                    f" STT: '{text}' "
                     f"(lang: {info.language}, prob: {info.language_probability:.2f}, "
                     f"latency: {latency_ms:.0f}ms)"
                 )
@@ -424,7 +424,7 @@ class WhisperLocalSTT(STTProvider):
             lambda: whisper.load_model(self._whisper_config.model),
         )
 
-        logger.info("✅ Modelo Whisper carregado")
+        logger.info(" Modelo Whisper carregado")
 
     async def disconnect(self) -> None:
         """Release model resources."""
@@ -492,7 +492,7 @@ class WhisperLocalSTT(STTProvider):
             self._metrics.record_success(latency_ms)
 
             if text:
-                logger.info(f"📝 STT: '{text}' (latency: {latency_ms:.0f}ms)")
+                logger.info(f" STT: '{text}' (latency: {latency_ms:.0f}ms)")
             return text
 
         except Exception as e:
@@ -540,7 +540,7 @@ class OpenAIWhisperSTT(STTProvider):
             raise ValueError("OPENAI_API_KEY não configurada")
 
         self.client = OpenAI(api_key=api_key)
-        logger.info("✅ Cliente OpenAI inicializado para STT")
+        logger.info(" Cliente OpenAI inicializado para STT")
 
     async def disconnect(self) -> None:
         """Close client."""
@@ -592,7 +592,7 @@ class OpenAIWhisperSTT(STTProvider):
             self._metrics.record_success(latency_ms)
 
             if text:
-                logger.info(f"📝 STT: '{text}' (latency: {latency_ms:.0f}ms)")
+                logger.info(f" STT: '{text}' (latency: {latency_ms:.0f}ms)")
             return text
 
         except Exception as e:
@@ -625,7 +625,7 @@ class OpenAIWhisperSTT(STTProvider):
             self._metrics.record_success(latency_ms)
 
             if text:
-                logger.info(f"📝 STT: '{text}' (latency: {latency_ms:.0f}ms)")
+                logger.info(f" STT: '{text}' (latency: {latency_ms:.0f}ms)")
             return text
 
         except Exception as e:

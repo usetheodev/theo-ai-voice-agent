@@ -73,18 +73,18 @@ class ConversationPipeline:
                     loop = asyncio.get_running_loop()
                     # Se chegou aqui, tem loop rodando - não podemos usar asyncio.run()
                     # O connect será feito depois via init_providers_async()
-                    logger.info("✅ STT criado (connect pendente - use init_providers_async)")
+                    logger.info(" STT criado (connect pendente - use init_providers_async)")
                 except RuntimeError:
                     # Não há loop rodando - podemos usar asyncio.run()
                     asyncio.run(self.stt.connect())
                     asyncio.run(self.stt.warmup())
-                    logger.info("✅ STT inicializado e conectado")
+                    logger.info(" STT inicializado e conectado")
         except Exception as e:
             logger.warning(f"STT não disponível: {e}")
 
         try:
             self.llm = create_llm_provider()
-            logger.info("✅ LLM inicializado")
+            logger.info(" LLM inicializado")
         except Exception as e:
             logger.warning(f"LLM não disponível: {e}")
 
@@ -94,12 +94,12 @@ class ConversationPipeline:
                 try:
                     loop = asyncio.get_running_loop()
                     # Loop rodando - connect será feito depois
-                    logger.info("✅ TTS criado (connect pendente - use init_providers_async)")
+                    logger.info(" TTS criado (connect pendente - use init_providers_async)")
                 except RuntimeError:
                     # Não há loop - podemos conectar agora
                     asyncio.run(self.tts.connect())
                     asyncio.run(self.tts.warmup())
-                    logger.info("✅ TTS inicializado e conectado")
+                    logger.info(" TTS inicializado e conectado")
         except Exception as e:
             logger.warning(f"TTS não disponível: {e}")
 
@@ -110,19 +110,19 @@ class ConversationPipeline:
 
         try:
             self.stt = await create_stt_provider()
-            logger.info("✅ STT inicializado (async)")
+            logger.info(" STT inicializado (async)")
         except Exception as e:
             logger.warning(f"STT não disponível: {e}")
 
         try:
             self.llm = create_llm_provider()
-            logger.info("✅ LLM inicializado")
+            logger.info(" LLM inicializado")
         except Exception as e:
             logger.warning(f"LLM não disponível: {e}")
 
         try:
             self.tts = await create_tts_provider()
-            logger.info("✅ TTS inicializado (async)")
+            logger.info(" TTS inicializado (async)")
         except Exception as e:
             logger.warning(f"TTS não disponível: {e}")
 
@@ -132,7 +132,7 @@ class ConversationPipeline:
             await self.stt.disconnect()
         if self.tts and hasattr(self.tts, 'disconnect'):
             await self.tts.disconnect()
-        logger.info("🔌 Pipeline desconectado")
+        logger.info(" Pipeline desconectado")
 
     # ==================== Health Check ====================
 
@@ -214,11 +214,11 @@ class ConversationPipeline:
             logger.debug("STT não detectou fala")
             return None, None
 
-        logger.info(f"📝 Usuário: {text}")
+        logger.info(f" Usuário: {text}")
 
         # 2. LLM
         response = self._generate_response(text)
-        logger.info(f"🤖 Agente: {response}")
+        logger.info(f" Agente: {response}")
 
         # 3. Text-to-Speech
         audio_response = self._synthesize(response)
@@ -226,7 +226,7 @@ class ConversationPipeline:
         # Registra latência total
         pipeline_elapsed = time.perf_counter() - pipeline_start
         PIPELINE_LATENCY.observe(pipeline_elapsed)
-        logger.debug(f"⏱️ Pipeline total: {pipeline_elapsed:.2f}s")
+        logger.debug(f"️ Pipeline total: {pipeline_elapsed:.2f}s")
 
         return response, audio_response
 
@@ -250,12 +250,12 @@ class ConversationPipeline:
             logger.debug("STT não detectou fala")
             return
 
-        logger.info(f"📝 Usuário: {text}")
+        logger.info(f" Usuário: {text}")
 
         # 2+3. LLM → TTS streaming (frase por frase)
         if self.llm and self.llm.supports_streaming and self.tts:
             for sentence in self.llm.generate_sentences(text):
-                logger.info(f"🤖 Agente (frase): {sentence}")
+                logger.info(f" Agente (frase): {sentence}")
 
                 # Sintetiza a frase
                 for audio_chunk in self._synthesize_stream_sync(sentence):
@@ -270,7 +270,7 @@ class ConversationPipeline:
         # Registra latência
         pipeline_elapsed = time.perf_counter() - pipeline_start
         PIPELINE_LATENCY.observe(pipeline_elapsed)
-        logger.debug(f"⏱️ Pipeline stream total: {pipeline_elapsed:.2f}s")
+        logger.debug(f"️ Pipeline stream total: {pipeline_elapsed:.2f}s")
 
     # ==================== Processing (Async) ====================
 
@@ -292,12 +292,12 @@ class ConversationPipeline:
             logger.debug("STT não detectou fala")
             return None, None
 
-        logger.info(f"📝 Usuário: {text}")
+        logger.info(f" Usuário: {text}")
 
         # 2. LLM (sync in thread)
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(None, self._generate_response, text)
-        logger.info(f"🤖 Agente: {response}")
+        logger.info(f" Agente: {response}")
 
         # 3. Text-to-Speech (async)
         audio_response = await self._synthesize_async(response)
@@ -305,7 +305,7 @@ class ConversationPipeline:
         # Registra latência
         pipeline_elapsed = time.perf_counter() - pipeline_start
         PIPELINE_LATENCY.observe(pipeline_elapsed)
-        logger.debug(f"⏱️ Pipeline async total: {pipeline_elapsed:.2f}s")
+        logger.debug(f"️ Pipeline async total: {pipeline_elapsed:.2f}s")
 
         return response, audio_response
 
@@ -333,7 +333,7 @@ class ConversationPipeline:
             logger.debug("STT não detectou fala")
             return
 
-        logger.info(f"📝 Usuário: {text}")
+        logger.info(f" Usuário: {text}")
 
         # 2+3. LLM → TTS streaming sentence-level
         if self.llm and self.llm.supports_streaming and self.tts:
@@ -353,7 +353,7 @@ class ConversationPipeline:
             # Log métricas do pipeline
             metrics = sentence_pipeline.metrics
             logger.info(
-                f"📊 SentencePipeline: first_audio={metrics.first_audio_latency_ms:.0f}ms, "
+                f" SentencePipeline: first_audio={metrics.first_audio_latency_ms:.0f}ms, "
                 f"total={metrics.total_latency_ms:.0f}ms"
             )
         else:
@@ -368,7 +368,7 @@ class ConversationPipeline:
         # Registra latência total
         pipeline_elapsed = time.perf_counter() - pipeline_start
         PIPELINE_LATENCY.observe(pipeline_elapsed)
-        logger.debug(f"⏱️ Pipeline stream async total: {pipeline_elapsed:.2f}s")
+        logger.debug(f"️ Pipeline stream async total: {pipeline_elapsed:.2f}s")
 
     # ==================== Component Methods ====================
 
@@ -608,7 +608,7 @@ class ConversationPipeline:
         """Reseta estado da conversa."""
         if self.llm:
             self.llm.reset_conversation()
-        logger.info("🔄 Pipeline resetado")
+        logger.info(" Pipeline resetado")
 
     @property
     def is_ready(self) -> bool:

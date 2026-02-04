@@ -82,7 +82,7 @@ class AIAgentServer:
             max_size=10 * 1024 * 1024,  # 10MB max message
         )
 
-        logger.info(f"🚀 AI Agent Server iniciado em ws://{host}:{port}")
+        logger.info(f" AI Agent Server iniciado em ws://{host}:{port}")
 
         # Task de limpeza de sessões
         asyncio.create_task(self._cleanup_loop())
@@ -99,7 +99,7 @@ class AIAgentServer:
         for ws in self.connections.copy():
             await ws.close()
 
-        logger.info("🛑 AI Agent Server parado")
+        logger.info(" AI Agent Server parado")
 
     async def _handle_connection(self, websocket: WebSocketServerProtocol):
         """Handler para nova conexão WebSocket
@@ -112,7 +112,7 @@ class AIAgentServer:
         self.connections.add(websocket)
         track_websocket_connect()
         client_addr = websocket.remote_address
-        logger.info(f"🔌 Cliente conectado: {client_addr}")
+        logger.info(f" Cliente conectado: {client_addr}")
 
         try:
             # ASP: Envia capabilities imediatamente após conexão
@@ -122,7 +122,7 @@ class AIAgentServer:
                 await self._handle_message(websocket, message)
 
         except websockets.ConnectionClosed as e:
-            logger.info(f"📴 Cliente desconectado: {client_addr} ({e.code})")
+            logger.info(f" Cliente desconectado: {client_addr} ({e.code})")
         except Exception as e:
             logger.error(f"Erro na conexão {client_addr}: {e}")
         finally:
@@ -304,7 +304,7 @@ class AIAgentServer:
 
     async def _handle_session_start(self, websocket: WebSocketServerProtocol, msg: SessionStartMessage):
         """Inicia nova sessão de conversação"""
-        logger.info(f"📞 Iniciando sessão: {msg.session_id[:8]} (call: {msg.call_id})")
+        logger.info(f" Iniciando sessão: {msg.session_id[:8]} (call: {msg.call_id})")
 
         # Cria sessão
         session = await self.session_manager.create_session(
@@ -353,7 +353,7 @@ class AIAgentServer:
 
     async def _handle_session_end(self, websocket: WebSocketServerProtocol, msg: SessionEndMessage):
         """Encerra sessão"""
-        logger.info(f"📴 Encerrando sessão: {msg.session_id[:8]} (motivo: {msg.reason})")
+        logger.info(f" Encerrando sessão: {msg.session_id[:8]} (motivo: {msg.reason})")
         await self.session_manager.end_session(msg.session_id, reason=msg.reason)
 
     async def _handle_audio_frame(self, websocket: WebSocketServerProtocol, data: bytes):
@@ -386,7 +386,7 @@ class AIAgentServer:
                 # Log apenas ocasionalmente para não poluir
                 session._ignored_frames = getattr(session, '_ignored_frames', 0) + 1
                 if session._ignored_frames <= 3 or session._ignored_frames % 50 == 0:
-                    logger.debug(f"[{frame.session_id[:8]}] ⏸️ Ignorando frames (state={session.state}, count={session._ignored_frames})")
+                    logger.debug(f"[{frame.session_id[:8]}] ️ Ignorando frames (state={session.state}, count={session._ignored_frames})")
                 return
 
             # Adiciona ao buffer SEM VAD (o media-server já faz VAD e envia audio.end)
@@ -398,7 +398,7 @@ class AIAgentServer:
 
     async def _handle_audio_end(self, websocket: WebSocketServerProtocol, msg: AudioEndMessage):
         """Processa fim do áudio do usuário"""
-        logger.info(f"[{msg.session_id[:8]}] 🔇 Recebido audio.end")
+        logger.info(f"[{msg.session_id[:8]}]  Recebido audio.end")
 
         session = await self.session_manager.get_session(msg.session_id)
         if not session:
@@ -514,7 +514,7 @@ class AIAgentServer:
                     )
                     await websocket.send(start_msg.to_json())
                     response_started = True
-                    logger.info(f"[{session.session_id[:8]}] 🎙️ Streaming iniciado: {text_chunk[:30]}...")
+                    logger.info(f"[{session.session_id[:8]}] ️ Streaming iniciado: {text_chunk[:30]}...")
 
                 # Envia chunk IMEDIATAMENTE - sem acumular!
                 if audio_chunk:
@@ -526,7 +526,7 @@ class AIAgentServer:
                 logger.debug(f"[{session.session_id[:8]}] Nenhum chunk gerado")
                 return
 
-            logger.info(f"[{session.session_id[:8]}] ✅ Streaming completo: {chunks_sent} chunks enviados")
+            logger.info(f"[{session.session_id[:8]}]  Streaming completo: {chunks_sent} chunks enviados")
 
         except Exception as e:
             logger.error(f"[{session.session_id[:8]}] Erro no streaming: {e}")
@@ -545,7 +545,7 @@ class AIAgentServer:
             ttfb = time.perf_counter() - session.audio_end_timestamp
             VOICE_TTFB_SECONDS.observe(ttfb)
             session.ttfb_recorded = True
-            logger.debug(f"[{session_id[:8]}] ⏱️ TTFB: {ttfb*1000:.0f}ms")
+            logger.debug(f"[{session_id[:8]}] ️ TTFB: {ttfb*1000:.0f}ms")
 
         frame = create_audio_frame(
             session_id=session_id,
@@ -584,7 +584,7 @@ class AIAgentServer:
             try:
                 removed = await self.session_manager.cleanup_stale_sessions(max_idle_seconds=max_idle_seconds)
                 if removed > 0:
-                    logger.info(f"🧹 Removidas {removed} sessões inativas")
+                    logger.info(f" Removidas {removed} sessões inativas")
             except Exception as e:
                 logger.error(f"Erro na limpeza: {e}")
 

@@ -101,7 +101,7 @@ class SessionManager:
             # Registra métricas
             track_session_start()
 
-            logger.info(f"✅ Sessão criada: {session_id[:8]} (call: {call_id})")
+            logger.info(f" Sessão criada: {session_id[:8]} (call: {call_id})")
             return session
 
     async def get_session(self, session_id: str) -> Optional[Session]:
@@ -137,7 +137,7 @@ class SessionManager:
             # Remove sessão
             del self.sessions[session_id]
 
-            logger.info(f"📴 Sessão encerrada: {session_id[:8]} (duração: {duration:.1f}s)")
+            logger.info(f" Sessão encerrada: {session_id[:8]} (duração: {duration:.1f}s)")
             return True
 
     def get_session_id_lookup(self) -> Dict[str, str]:
@@ -174,6 +174,6 @@ class SessionManager:
                 if session.session_hash in self._hash_to_session:
                     del self._hash_to_session[session.session_hash]
                 del self.sessions[session_id]
-                logger.info(f"🧹 Sessão removida por inatividade: {session_id[:8]}")
+                logger.info(f" Sessão removida por inatividade: {session_id[:8]}")
 
             return len(stale)
