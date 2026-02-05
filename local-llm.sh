@@ -236,7 +236,13 @@ test_model() {
         }" 2>/dev/null)
 
     if [ $? -eq 0 ] && [ -n "$response" ]; then
+        # Tenta extrair content primeiro
         local content=$(echo "$response" | grep -o '"content":"[^"]*"' | head -1 | sed 's/"content":"//;s/"$//')
+
+        # Se content vazio, tenta reasoning_content (modelos de raciocinio)
+        if [ -z "$content" ]; then
+            content=$(echo "$response" | grep -o '"reasoning_content":"[^"]*"' | head -1 | sed 's/"reasoning_content":"//;s/"$//')
+        fi
 
         if [ -n "$content" ]; then
             log_success "Modelo funcionando!"

@@ -30,7 +30,9 @@ from metrics import (
     track_transcription,
     track_es_index,
     track_es_connection_status,
+    track_embedding,
 )
+from embeddings import EmbeddingProvider
 
 logger = logging.getLogger("ai-transcribe.server")
 
@@ -85,10 +87,12 @@ class TranscribeServer:
         stt_provider: STTProvider,
         es_client: ElasticsearchClient,
         bulk_indexer: BulkIndexer,
+        embedding_provider: Optional[EmbeddingProvider] = None,
     ):
         self.stt = stt_provider
         self.es_client = es_client
         self.bulk_indexer = bulk_indexer
+        self.embedding_provider = embedding_provider
         self.doc_builder = DocumentBuilder()
 
         self.session_manager = SessionManager()
@@ -391,7 +395,34 @@ class TranscribeServer:
                 status="success"
             )
 
-            # Cria documento
+            # Gera embedding se disponivel
+            text_embedding = None
+            embedding_model = None
+            embedding_latency_ms = None
+
+            if self.embedding_provider and self.embedding_provider.is_connected:
+                try:
+                    embedding_result = await self.embedding_provider.embed(result.text)
+                    text_embedding = embedding_result.embedding
+                    embedding_model = embedding_result.model_name
+                    embedding_latency_ms = embedding_result.latency_ms
+
+                    # Registra metricas de embedding
+                    track_embedding(
+                        latency_seconds=embedding_result.latency_ms / 1000,
+                        status="success"
+                    )
+
+                    logger.debug(
+                        f"[{session.session_id[:8]}] Embedding gerado: "
+                        f"{len(text_embedding)} dims, {embedding_latency_ms:.0f}ms"
+                    )
+
+                except Exception as e:
+                    logger.warning(f"[{session.session_id[:8]}] Erro ao gerar embedding: {e}")
+                    track_embedding(latency_seconds=0, status="error")
+
+            # Cria documento com embedding
             doc = self.doc_builder.build(
                 session_id=session.session_id,
                 call_id=session.call_id,
@@ -403,6 +434,9 @@ class TranscribeServer:
                 speaker=speaker,
                 caller_id=session.caller_id,
                 metadata=session.metadata,
+                text_embedding=text_embedding,
+                embedding_model=embedding_model,
+                embedding_latency_ms=embedding_latency_ms,
             )
 
             # Adiciona ao bulk indexer
@@ -446,9 +480,15 @@ async def run_server(
     stt_provider: STTProvider,
     es_client: ElasticsearchClient,
     bulk_indexer: BulkIndexer,
+    embedding_provider: Optional[EmbeddingProvider] = None,
 ):
     """Funcao helper para rodar o servidor."""
-    server = TranscribeServer(stt_provider, es_client, bulk_indexer)
+    server = TranscribeServer(
+        stt_provider,
+        es_client,
+        bulk_indexer,
+        embedding_provider,
+    )
     await server.start()
 
     try:

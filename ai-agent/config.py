@@ -181,10 +181,12 @@ LLM_CONFIG = {
     # LLM LOCAL (Docker Model Runner / vLLM / Ollama)
     # =========================================================================
     # URL base do servidor local (OpenAI-compatible API)
-    # Docker Model Runner: http://localhost:12434/engines/llama.cpp/v1
-    # vLLM: http://localhost:8000/v1
-    # Ollama: http://localhost:11434/v1
-    "local_base_url": os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:12434/engines/llama.cpp/v1"),
+    # Em Docker, use host.docker.internal para acessar servicos no host:
+    #   Docker Model Runner: http://host.docker.internal:12434/engines/llama.cpp/v1
+    #   vLLM: http://host.docker.internal:8000/v1
+    #   Ollama: http://host.docker.internal:11434/v1
+    # Fora do Docker (desenvolvimento local), use localhost
+    "local_base_url": os.getenv("LOCAL_LLM_BASE_URL", "http://host.docker.internal:12434/engines/llama.cpp/v1"),
 
     # Modelo local a usar
     # Docker Model Runner: ai/smollm3, ai/phi4, ai/qwen3, ai/functiongemma

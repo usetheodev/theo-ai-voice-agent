@@ -342,6 +342,22 @@ class LocalLLM(LLMProvider):
     def supports_streaming(self) -> bool:
         return True
 
+    def _extract_content(self, message) -> str:
+        """
+        Extrai conteudo da mensagem (modo batch).
+
+        Para modelos de raciocinio (SmolLM3, DeepSeek R1, QwQ, etc):
+        - reasoning_content: pensamento interno do modelo (logado para debug)
+        - content: resposta final para o usuario (retornado para TTS)
+        """
+        # Loga reasoning para debug (pensamento interno do modelo)
+        reasoning = getattr(message, 'reasoning_content', None)
+        if reasoning:
+            logger.debug(f"[reasoning] {reasoning}")
+
+        # Retorna apenas content (resposta final para TTS)
+        return getattr(message, 'content', None) or ""
+
     def generate(self, user_message: str) -> str:
         """Gera resposta usando modelo local (modo batch)"""
         if not self.client:
@@ -363,7 +379,7 @@ class LocalLLM(LLMProvider):
                 messages=messages
             )
 
-            assistant_message = response.choices[0].message.content
+            assistant_message = self._extract_content(response.choices[0].message)
 
             self.conversation_history.append({
                 "role": "assistant",
@@ -376,6 +392,22 @@ class LocalLLM(LLMProvider):
         except Exception as e:
             logger.error(f"Erro no LLM Local: {e}")
             return "Desculpe, tive um problema ao processar sua mensagem."
+
+    def _extract_delta_content(self, delta) -> str:
+        """
+        Extrai conteudo do delta de streaming.
+
+        Para modelos de raciocinio (SmolLM3, DeepSeek R1, QwQ, etc):
+        - reasoning_content: pensamento interno do modelo (ignorado para TTS)
+        - content: resposta final para o usuario (retornado para TTS)
+        """
+        # Loga reasoning para debug (pensamento interno do modelo)
+        reasoning = getattr(delta, 'reasoning_content', None)
+        if reasoning:
+            logger.debug(f"[reasoning] {reasoning}")
+
+        # Retorna apenas content (resposta final para TTS)
+        return getattr(delta, 'content', None) or ""
 
     def generate_stream(self, user_message: str) -> Generator[str, None, None]:
         """Gera resposta usando modelo local com streaming"""
@@ -404,10 +436,11 @@ class LocalLLM(LLMProvider):
             )
 
             for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    text = chunk.choices[0].delta.content
-                    full_response += text
-                    yield text
+                if chunk.choices:
+                    text = self._extract_delta_content(chunk.choices[0].delta)
+                    if text:
+                        full_response += text
+                        yield text
 
             # Salva resposta completa no histórico
             self.conversation_history.append({

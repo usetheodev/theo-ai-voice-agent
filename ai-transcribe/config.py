@@ -104,3 +104,42 @@ SESSION_CONFIG = {
     "max_idle_seconds": int(os.getenv("SESSION_MAX_IDLE_SECONDS", "300")),
     "cleanup_interval": int(os.getenv("SESSION_CLEANUP_INTERVAL", "60")),
 }
+
+
+# =============================================================================
+# EMBEDDINGS
+# =============================================================================
+
+EMBEDDING_CONFIG = {
+    "enabled": parse_bool(os.getenv("EMBEDDING_ENABLED", "true"), True),
+    "model": os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-small"),
+    "device": os.getenv("EMBEDDING_DEVICE", "cpu"),
+    "batch_size": int(os.getenv("EMBEDDING_BATCH_SIZE", "8")),
+    "executor_workers": int(os.getenv("EMBEDDING_EXECUTOR_WORKERS", "2")),
+    "normalize": parse_bool(os.getenv("EMBEDDING_NORMALIZE", "true"), True),
+}
+
+
+# =============================================================================
+# ENRICHMENT (Opcional - para futuro)
+# =============================================================================
+
+ENRICHMENT_CONFIG = {
+    "enabled": parse_bool(os.getenv("ENRICHMENT_ENABLED", "false"), False),
+    "sentiment_enabled": parse_bool(os.getenv("SENTIMENT_ENABLED", "true"), True),
+    "topics_enabled": parse_bool(os.getenv("TOPICS_ENABLED", "false"), False),
+    "intent_enabled": parse_bool(os.getenv("INTENT_ENABLED", "false"), False),
+}
+
+
+# =============================================================================
+# HTTP API (Busca Semantica)
+# =============================================================================
+
+HTTP_API_CONFIG = {
+    "enabled": parse_bool(os.getenv("HTTP_API_ENABLED", "true"), True),
+    "host": os.getenv("HTTP_API_HOST", "0.0.0.0"),
+    "port": int(os.getenv("HTTP_API_PORT", "8767")),
+    "default_results": int(os.getenv("HTTP_API_DEFAULT_RESULTS", "10")),
+    "max_results": int(os.getenv("HTTP_API_MAX_RESULTS", "100")),
+}

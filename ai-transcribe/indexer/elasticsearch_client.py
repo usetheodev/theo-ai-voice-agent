@@ -14,6 +14,9 @@ from config import ES_CONFIG
 logger = logging.getLogger("ai-transcribe.elasticsearch")
 
 
+# Dimensoes do embedding (intfloat/multilingual-e5-small)
+EMBEDDING_DIMS = 384
+
 # Mapeamento do indice de transcricoes
 INDEX_MAPPING = {
     "settings": {
@@ -47,7 +50,23 @@ INDEX_MAPPING = {
             "language_probability": {"type": "float"},
             "speaker": {"type": "keyword"},
             "caller_id": {"type": "keyword"},
-            "metadata": {"type": "object", "enabled": True}
+            "metadata": {"type": "object", "enabled": True},
+
+            # Embedding fields
+            "text_embedding": {
+                "type": "dense_vector",
+                "dims": EMBEDDING_DIMS,
+                "index": True,
+                "similarity": "cosine"
+            },
+            "embedding_model": {"type": "keyword"},
+            "embedding_latency_ms": {"type": "float"},
+
+            # Enrichment fields
+            "sentiment_label": {"type": "keyword"},
+            "sentiment_score": {"type": "float"},
+            "topics": {"type": "keyword"},
+            "intent": {"type": "keyword"}
         }
     }
 }
@@ -305,3 +324,180 @@ class ElasticsearchClient:
         except Exception as e:
             logger.error(f"Erro no health check: {e}")
             return {"status": "error", "error": str(e)}
+
+    async def semantic_search(
+        self,
+        query_embedding: List[float],
+        query_text: Optional[str] = None,
+        k: int = 10,
+        num_candidates: int = 100,
+        filters: Optional[Dict[str, Any]] = None,
+        hybrid: bool = True,
+        hybrid_boost: float = 0.5,
+    ) -> Dict[str, Any]:
+        """
+        Busca semantica usando kNN + text search hibrido.
+
+        Combina busca por similaridade de vetores (embeddings) com
+        busca textual tradicional para resultados mais relevantes.
+
+        Args:
+            query_embedding: Vetor de embedding da query (384 dims)
+            query_text: Texto da query para busca hibrida (opcional)
+            k: Numero de resultados a retornar
+            num_candidates: Numero de candidatos para kNN (maior = mais preciso, mais lento)
+            filters: Filtros adicionais (ex: {"term": {"speaker": "caller"}})
+            hybrid: Se True, combina kNN com text search
+            hybrid_boost: Peso da busca textual no score hibrido (0.0-1.0)
+
+        Returns:
+            Resultado da busca com hits ordenados por score
+
+        Example:
+            # Busca semantica pura
+            results = await es.semantic_search(
+                query_embedding=embedding_provider.embed_query("reclamacao atendimento").embedding
+            )
+
+            # Busca hibrida com filtro
+            results = await es.semantic_search(
+                query_embedding=query_emb,
+                query_text="cliente reclamou do atendimento",
+                filters={"term": {"speaker": "caller"}},
+                hybrid=True
+            )
+        """
+        if not self._connected:
+            logger.warning("Tentando busca semantica sem conexao")
+            return {"hits": {"total": {"value": 0}, "hits": []}}
+
+        if len(query_embedding) != EMBEDDING_DIMS:
+            logger.error(
+                f"Embedding com dimensoes invalidas: {len(query_embedding)} "
+                f"(esperado: {EMBEDDING_DIMS})"
+            )
+            return {"hits": {"total": {"value": 0}, "hits": []}}
+
+        try:
+            # Constroi query kNN
+            knn_query = {
+                "field": "text_embedding",
+                "query_vector": query_embedding,
+                "k": k,
+                "num_candidates": num_candidates,
+            }
+
+            # Adiciona filtro ao kNN se fornecido
+            if filters:
+                knn_query["filter"] = filters
+
+            search_body = {
+                "knn": knn_query,
+                "size": k,
+            }
+
+            # Busca hibrida: combina kNN com text search
+            if hybrid and query_text:
+                search_body["query"] = {
+                    "bool": {
+                        "should": [
+                            {
+                                "match": {
+                                    "text": {
+                                        "query": query_text,
+                                        "boost": hybrid_boost,
+                                    }
+                                }
+                            }
+                        ],
+                        "filter": filters if filters else [],
+                    }
+                }
+
+            # Campos a retornar (exclui embedding para economizar bandwidth)
+            search_body["_source"] = {
+                "excludes": ["text_embedding"]
+            }
+
+            result = await self._client.search(
+                index=f"{self._index_prefix}-*",
+                body=search_body,
+            )
+
+            logger.debug(
+                f"Busca semantica: {result['hits']['total']['value']} hits "
+                f"(k={k}, hybrid={hybrid})"
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Erro na busca semantica: {e}")
+            return {"hits": {"total": {"value": 0}, "hits": []}}
+
+    async def find_similar(
+        self,
+        document_id: str,
+        k: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Encontra documentos similares a um documento existente.
+
+        Usa o embedding do documento de referencia para buscar
+        documentos semanticamente similares.
+
+        Args:
+            document_id: ID do documento de referencia
+            k: Numero de documentos similares a retornar
+            filters: Filtros adicionais
+
+        Returns:
+            Documentos similares ordenados por score
+
+        Example:
+            # Encontrar conversas similares
+            similar = await es.find_similar(
+                document_id="abc123",
+                k=10,
+                filters={"range": {"timestamp": {"gte": "now-7d"}}}
+            )
+        """
+        if not self._connected:
+            logger.warning("Tentando find_similar sem conexao")
+            return {"hits": {"total": {"value": 0}, "hits": []}}
+
+        try:
+            # Busca o documento de referencia para pegar o embedding
+            ref_doc = await self._client.get(
+                index=f"{self._index_prefix}-*",
+                id=document_id,
+                _source=["text_embedding"],
+            )
+
+            embedding = ref_doc.get("_source", {}).get("text_embedding")
+            if not embedding:
+                logger.warning(f"Documento {document_id} nao tem embedding")
+                return {"hits": {"total": {"value": 0}, "hits": []}}
+
+            # Adiciona filtro para excluir o documento de referencia
+            exclude_filter = {"bool": {"must_not": {"ids": {"values": [document_id]}}}}
+            if filters:
+                combined_filter = {
+                    "bool": {
+                        "must": [filters, exclude_filter]
+                    }
+                }
+            else:
+                combined_filter = exclude_filter
+
+            return await self.semantic_search(
+                query_embedding=embedding,
+                k=k,
+                filters=combined_filter,
+                hybrid=False,
+            )
+
+        except Exception as e:
+            logger.error(f"Erro no find_similar: {e}")
+            return {"hits": {"total": {"value": 0}, "hits": []}}

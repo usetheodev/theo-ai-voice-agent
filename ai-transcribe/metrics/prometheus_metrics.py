@@ -96,6 +96,34 @@ ES_BULK_SIZE = Histogram(
     buckets=[1, 5, 10, 25, 50, 100]
 )
 
+# =============================================================================
+# EMBEDDING METRICS
+# =============================================================================
+
+EMBEDDING_LATENCY = Histogram(
+    "ai_transcribe_embedding_latency_seconds",
+    "Latencia da geracao de embeddings",
+    buckets=[0.01, 0.025, 0.05, 0.1, 0.25, 0.5]
+)
+
+EMBEDDING_TOTAL = Counter(
+    "ai_transcribe_embeddings_total",
+    "Total de embeddings gerados",
+    ["status"]  # success, error, skipped
+)
+
+SEMANTIC_SEARCH_LATENCY = Histogram(
+    "ai_transcribe_semantic_search_latency_seconds",
+    "Latencia de buscas semanticas",
+    buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
+)
+
+SEMANTIC_SEARCH_TOTAL = Counter(
+    "ai_transcribe_semantic_search_total",
+    "Total de buscas semanticas",
+    ["status"]  # success, error
+)
+
 
 # =============================================================================
 # HELPER FUNCTIONS
@@ -159,6 +187,31 @@ def track_es_index(latency_seconds: float, success: bool, batch_size: int = 1):
 def track_es_connection_status(connected: bool):
     """Atualiza status de conexao com Elasticsearch."""
     ES_CONNECTION_STATUS.set(1 if connected else 0)
+
+
+def track_embedding(latency_seconds: float, status: str = "success"):
+    """
+    Registra geracao de embedding.
+
+    Args:
+        latency_seconds: Latencia da geracao
+        status: success, error, skipped
+    """
+    if latency_seconds > 0:
+        EMBEDDING_LATENCY.observe(latency_seconds)
+    EMBEDDING_TOTAL.labels(status=status).inc()
+
+
+def track_semantic_search(latency_seconds: float, status: str = "success"):
+    """
+    Registra busca semantica.
+
+    Args:
+        latency_seconds: Latencia da busca
+        status: success, error
+    """
+    SEMANTIC_SEARCH_LATENCY.observe(latency_seconds)
+    SEMANTIC_SEARCH_TOTAL.labels(status=status).inc()
 
 
 def start_metrics_server(port: int):

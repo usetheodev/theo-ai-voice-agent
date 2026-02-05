@@ -13,6 +13,7 @@ WORKDIR /app
 
 # Copia modulos compartilhados PRIMEIRO (mudam menos frequentemente)
 COPY shared/asp_protocol/ ./shared/asp_protocol/
+COPY shared/shared_config/ ./shared/shared_config/
 COPY shared/ws/ ./shared/ws/
 
 # Copia codigo do ai-agent por ULTIMO (muda frequentemente)
@@ -58,6 +59,9 @@ ENV SILENCE_THRESHOLD_MS=500
 
 # Metricas
 ENV METRICS_PORT=9090
+
+# Python path para modulos compartilhados
+ENV PYTHONPATH=/app:/app/shared
 
 # Expoe portas
 EXPOSE 8765 9090

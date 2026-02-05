@@ -63,6 +63,8 @@ services:
       - WS_HOST=0.0.0.0
       - WS_PORT=8765
       - METRICS_PORT=9090
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ai-agent-cache:/root/.cache  # Cache do modelo Whisper
     healthcheck:
@@ -111,11 +113,13 @@ services:
     restart: unless-stopped
     ports:
       - "8766:8766"
+      - "8767:8767"  # HTTP API (Busca Semantica)
       - "9093:9093"  # Metricas Prometheus
     environment:
       - TZ=America/Sao_Paulo
       - WS_HOST=0.0.0.0
       - WS_PORT=8766
+      - HTTP_API_PORT=8767
       - METRICS_PORT=9093
       - ES_HOSTS=http://elasticsearch:9200
       - STT_MODEL=tiny
@@ -155,7 +159,7 @@ services:
 
   # Kibana - Visualizacao de transcricoes
   kibana:
-    image: docker.elastic.co/kibana/kibana:9.2.4
+    image: elastic/kibana:9.2.4
     container_name: kibana
     restart: unless-stopped
     ports:

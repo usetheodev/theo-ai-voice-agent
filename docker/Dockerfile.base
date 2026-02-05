@@ -128,6 +128,16 @@ print('Modelo Kokoro OK')" && \
     cp -r /root/.cache/huggingface /tmp/hf-cache 2>/dev/null || true && \
     cp -r /root/.cache/kokoro /tmp/kokoro-cache 2>/dev/null || true
 
+# Baixa modelo de embeddings (sentence-transformers E5 multilingual)
+RUN --mount=type=cache,id=voice-model-cache,target=/root/.cache,sharing=locked \
+    python -c "\
+from sentence_transformers import SentenceTransformer; \
+print('Baixando modelo E5 multilingual (embeddings)'); \
+model = SentenceTransformer('intfloat/multilingual-e5-small'); \
+print('Modelo E5 OK')" && \
+    # Copia para a imagem
+    cp -r /root/.cache/huggingface /tmp/hf-cache 2>/dev/null || true
+
 # Move os modelos do cache temporario para a imagem final
 RUN mkdir -p /root/.cache && \
     mv /tmp/hf-cache /root/.cache/huggingface 2>/dev/null || true && \

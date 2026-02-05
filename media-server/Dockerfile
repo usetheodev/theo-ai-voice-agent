@@ -13,6 +13,7 @@ WORKDIR /app
 
 # Copia modulos compartilhados PRIMEIRO (mudam menos frequentemente)
 COPY shared/asp_protocol/ ./shared/asp_protocol/
+COPY shared/shared_config/ ./shared/shared_config/
 COPY shared/ws/ ./shared/ws/
 
 # Copia codigo do media-server
@@ -35,6 +36,9 @@ ENV METRICS_PORT=9091
 
 # PJSIP libs
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+
+# Python path para modulos compartilhados
+ENV PYTHONPATH=/app:/app/shared
 
 # Expoe porta de metricas
 EXPOSE 9091
