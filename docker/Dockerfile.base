@@ -1,0 +1,155 @@
+# syntax=docker/dockerfile:1.4
+# =============================================================================
+# Dockerfile Base - Imagem base para todos os servicos
+# =============================================================================
+# Usado por: ai-agent, media-server, ai-transcribe
+#
+# Build (usar o script build-base.sh):
+#   ./docker/build-base.sh
+#   ./docker/build-base.sh --model medium
+#
+# Cache gerenciado pelo BuildKit (persistente entre builds):
+#   - voice-apt-cache    -> pacotes apt
+#   - voice-pip-cache    -> pacotes pip
+#   - voice-model-cache  -> modelos ML (whisper, kokoro)
+# =============================================================================
+
+FROM python:3.11-slim AS base
+
+LABEL maintainer="paulohenriquevn"
+LABEL description="Imagem base com todas as dependencias para servicos de voz"
+
+WORKDIR /app
+
+# =============================================================================
+# Stage 1: Dependencias de Sistema
+# =============================================================================
+
+RUN rm -f /etc/apt/apt.conf.d/docker-clean && \
+    echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache
+
+RUN --mount=type=cache,id=voice-apt-cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=voice-apt-lib,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    swig \
+    git \
+    curl \
+    ffmpeg \
+    espeak-ng \
+    libasound2-dev \
+    libsamplerate0-dev \
+    portaudio19-dev \
+    libopus-dev \
+    libspeex-dev \
+    libspeexdsp-dev \
+    libssl-dev
+
+# =============================================================================
+# Stage 2: PJSIP Compilation
+# =============================================================================
+
+WORKDIR /tmp
+RUN git clone --depth 1 --branch 2.14 https://github.com/pjsip/pjproject.git
+
+WORKDIR /tmp/pjproject
+RUN ./configure \
+    --enable-shared \
+    --disable-video \
+    --disable-v4l2 \
+    --disable-opencore-amr \
+    --disable-silk \
+    --disable-bcg729 \
+    --disable-gsm-codec \
+    --disable-ilbc-codec \
+    --disable-l16-codec \
+    --disable-g722-codec \
+    --disable-g7221-codec \
+    --with-external-opus \
+    --with-external-speex \
+    CFLAGS="-fPIC -O2" \
+    && make dep \
+    && make -j$(nproc) \
+    && make install \
+    && ldconfig
+
+WORKDIR /tmp/pjproject/pjsip-apps/src/swig/python
+RUN make && python setup.py install
+
+RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/pjsip.conf && ldconfig
+RUN rm -rf /tmp/pjproject
+
+# =============================================================================
+# Stage 3: Dependencias Python
+# =============================================================================
+
+WORKDIR /app
+
+# Instala dependencias Python pesadas
+RUN --mount=type=cache,id=voice-pip-cache,target=/root/.cache/pip,sharing=locked \
+    pip install --progress-bar off \
+    numpy>=1.24.0 \
+    torch>=2.0.0 \
+    faster-whisper>=1.0.0 \
+    kokoro>=0.3.0 \
+    soundfile>=0.12.0
+
+# Instala demais dependencias
+COPY docker/requirements.base.txt /tmp/requirements.base.txt
+RUN --mount=type=cache,id=voice-pip-cache,target=/root/.cache/pip,sharing=locked \
+    pip install --progress-bar off -r /tmp/requirements.base.txt
+
+# =============================================================================
+# Stage 4: Pre-download de Modelos ML
+# =============================================================================
+
+ARG WHISPER_MODEL=tiny
+
+# Baixa modelo Whisper para o cache do BuildKit
+# O modelo fica em /root/.cache/huggingface/hub/
+RUN --mount=type=cache,id=voice-model-cache,target=/root/.cache,sharing=locked \
+    python -c "\
+from faster_whisper import WhisperModel; \
+print('Baixando modelo Whisper: ${WHISPER_MODEL}'); \
+model = WhisperModel('${WHISPER_MODEL}', device='cpu', compute_type='int8'); \
+print('Modelo Whisper OK')" && \
+    # Copia para a imagem (cache mount nao persiste na imagem final)
+    cp -r /root/.cache/huggingface /tmp/hf-cache || true
+
+# Baixa modelo Kokoro para o cache do BuildKit
+RUN --mount=type=cache,id=voice-model-cache,target=/root/.cache,sharing=locked \
+    python -c "\
+import kokoro; \
+print('Baixando modelo Kokoro TTS'); \
+pipeline = kokoro.KPipeline(lang_code='a'); \
+print('Modelo Kokoro OK')" && \
+    # Copia para a imagem
+    cp -r /root/.cache/huggingface /tmp/hf-cache 2>/dev/null || true && \
+    cp -r /root/.cache/kokoro /tmp/kokoro-cache 2>/dev/null || true
+
+# Move os modelos do cache temporario para a imagem final
+RUN mkdir -p /root/.cache && \
+    mv /tmp/hf-cache /root/.cache/huggingface 2>/dev/null || true && \
+    mv /tmp/kokoro-cache /root/.cache/kokoro 2>/dev/null || true
+
+# =============================================================================
+# Configuracoes Finais
+# =============================================================================
+
+WORKDIR /app
+
+ENV PJSIP_INSTALLED=1
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+ENV HF_HOME=/root/.cache/huggingface
+ENV TORCH_HOME=/root/.cache/torch
+
+RUN mkdir -p /app/shared
+
+ARG BUILD_DATE
+ARG VERSION=1.0.0
+LABEL version="${VERSION}"
+LABEL build_date="${BUILD_DATE}"
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD python -c "import sys; sys.exit(0)" || exit 1

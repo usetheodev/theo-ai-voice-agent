@@ -69,6 +69,8 @@ show_usage() {
     echo "   asterisk, ast    - Logs do Asterisk"
     echo "   agent, ai        - Logs do AI Agent"
     echo "   media            - Logs do Media Server"
+    echo "   transcribe, tr   - Logs do AI Transcribe"
+    echo "   elasticsearch,es - Logs do Elasticsearch"
     echo "   prometheus       - Logs do Prometheus"
     echo "   grafana          - Logs do Grafana"
     echo "   coturn           - Logs do CoTURN"
@@ -82,6 +84,7 @@ show_usage() {
     echo "Exemplos:"
     echo "   $0               - Mostra todos os logs (acompanhando)"
     echo "   $0 asterisk      - Mostra logs do Asterisk"
+    echo "   $0 transcribe    - Mostra logs do AI Transcribe"
     echo "   $0 agent -n      - Mostra logs do Agent sem acompanhar"
     echo "   $0 -t 50         - Ultimas 50 linhas de todos"
 }
@@ -109,7 +112,7 @@ while [[ $# -gt 0 ]]; do
             show_usage
             exit 0
             ;;
-        asterisk|ast|agent|ai|media|prometheus|grafana|coturn|all)
+        asterisk|ast|agent|ai|media|transcribe|tr|elasticsearch|es|prometheus|grafana|coturn|all)
             SERVICE="$1"
             shift
             ;;
@@ -131,6 +134,8 @@ get_container_name() {
         asterisk|ast) echo "asterisk-pabx" ;;
         agent|ai) echo "ai-conversation-agent" ;;
         media) echo "sip-media-server" ;;
+        transcribe|tr) echo "ai-transcribe" ;;
+        elasticsearch|es) echo "elasticsearch" ;;
         prometheus) echo "prometheus" ;;
         grafana) echo "grafana" ;;
         coturn) echo "coturn-turn" ;;
@@ -155,7 +160,7 @@ show_service_logs() {
 }
 
 case "$SERVICE" in
-    asterisk|ast|agent|ai|media|prometheus|grafana|coturn)
+    asterisk|ast|agent|ai|media|transcribe|tr|elasticsearch|es|prometheus|grafana|coturn)
         container=$(get_container_name "$SERVICE")
         log_info "Logs de $SERVICE ($container):"
         show_service_logs "$container"

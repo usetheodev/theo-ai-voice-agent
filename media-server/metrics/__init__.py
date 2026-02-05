@@ -33,6 +33,17 @@ from metrics.prometheus_metrics import (
     RTP_JITTER_MS,
     RTP_PACKETS_TOTAL,
     RTP_PACKET_LOSS_RATIO,
+    # Media Fork
+    MEDIA_FORK_BUFFER_SIZE_BYTES,
+    MEDIA_FORK_BUFFER_SIZE_MS,
+    MEDIA_FORK_BUFFER_FILL_RATIO,
+    MEDIA_FORK_FRAMES_RECEIVED,
+    MEDIA_FORK_FRAMES_DROPPED,
+    MEDIA_FORK_OVERFLOW_EVENTS,
+    MEDIA_FORK_CONSUMER_LAG_MS,
+    MEDIA_FORK_CONSUMER_ERRORS,
+    MEDIA_FORK_AI_AGENT_AVAILABLE,
+    MEDIA_FORK_FALLBACK_ACTIVE,
     # Helpers
     start_metrics_server,
     track_sip_registration,
@@ -55,6 +66,15 @@ from metrics.prometheus_metrics import (
     track_rtp_jitter,
     track_rtp_packet,
     track_rtp_packet_loss_ratio,
+    # Media Fork Helpers
+    track_fork_buffer_size,
+    track_fork_frame_received,
+    track_fork_frame_dropped,
+    track_fork_overflow,
+    track_fork_consumer_lag,
+    track_fork_consumer_error,
+    track_fork_ai_agent_available,
+    track_fork_fallback_active,
 )
 
 __all__ = [
@@ -101,4 +121,23 @@ __all__ = [
     'track_rtp_jitter',
     'track_rtp_packet',
     'track_rtp_packet_loss_ratio',
+    # Media Fork
+    'MEDIA_FORK_BUFFER_SIZE_BYTES',
+    'MEDIA_FORK_BUFFER_SIZE_MS',
+    'MEDIA_FORK_BUFFER_FILL_RATIO',
+    'MEDIA_FORK_FRAMES_RECEIVED',
+    'MEDIA_FORK_FRAMES_DROPPED',
+    'MEDIA_FORK_OVERFLOW_EVENTS',
+    'MEDIA_FORK_CONSUMER_LAG_MS',
+    'MEDIA_FORK_CONSUMER_ERRORS',
+    'MEDIA_FORK_AI_AGENT_AVAILABLE',
+    'MEDIA_FORK_FALLBACK_ACTIVE',
+    'track_fork_buffer_size',
+    'track_fork_frame_received',
+    'track_fork_frame_dropped',
+    'track_fork_overflow',
+    'track_fork_consumer_lag',
+    'track_fork_consumer_error',
+    'track_fork_ai_agent_available',
+    'track_fork_fallback_active',
 ]

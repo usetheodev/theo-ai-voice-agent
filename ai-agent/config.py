@@ -163,7 +163,11 @@ STT_CONFIG = {
 # =============================================================================
 
 LLM_CONFIG = {
-    # Provider: anthropic, openai, mock
+    # Provider: anthropic, openai, local, mock
+    # - anthropic: Claude API (requer ANTHROPIC_API_KEY)
+    # - openai: OpenAI API (requer OPENAI_API_KEY)
+    # - local: Docker Model Runner ou qualquer servidor OpenAI-compatible
+    # - mock: Respostas simuladas para testes
     "provider": os.getenv("LLM_PROVIDER", "anthropic"),
 
     # API Keys
@@ -175,6 +179,21 @@ LLM_CONFIG = {
 
     # Modelo OpenAI
     "openai_model": os.getenv("OPENAI_LLM_MODEL", "gpt-3.5-turbo"),
+
+    # =========================================================================
+    # LLM LOCAL (Docker Model Runner / vLLM / Ollama)
+    # =========================================================================
+    # URL base do servidor local (OpenAI-compatible API)
+    # Docker Model Runner: http://localhost:12434/engines/llama.cpp/v1
+    # vLLM: http://localhost:8000/v1
+    # Ollama: http://localhost:11434/v1
+    "local_base_url": os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:12434/engines/llama.cpp/v1"),
+
+    # Modelo local a usar
+    # Docker Model Runner: ai/smollm3, ai/phi4, ai/qwen3, ai/functiongemma
+    # vLLM: depende do modelo carregado
+    # Ollama: llama3, mistral, phi3, etc.
+    "local_model": os.getenv("LOCAL_LLM_MODEL", "ai/smollm3"),
 
     # Número máximo de tokens na resposta
     "max_tokens": int(os.getenv("LLM_MAX_TOKENS", "256")),

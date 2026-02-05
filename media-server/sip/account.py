@@ -24,6 +24,7 @@ from metrics import (
 
 if TYPE_CHECKING:
     from ports.audio_destination import IAudioDestination
+    from core.media_fork_manager import MediaForkManager
 
 logger = logging.getLogger("media-server.account")
 
@@ -31,10 +32,16 @@ logger = logging.getLogger("media-server.account")
 class MyAccount(pj.Account):
     """Gerencia a conta SIP"""
 
-    def __init__(self, audio_destination: "IAudioDestination", loop):
+    def __init__(
+        self,
+        audio_destination: "IAudioDestination",
+        loop,
+        fork_manager: Optional["MediaForkManager"] = None,
+    ):
         pj.Account.__init__(self)
         self.audio_destination = audio_destination
         self.loop = loop
+        self.fork_manager = fork_manager
         self.current_call: Optional[MyCall] = None
 
     def onRegState(self, prm):
@@ -49,7 +56,13 @@ class MyAccount(pj.Account):
 
     def onIncomingCall(self, prm):
         """Chamada recebida"""
-        call = MyCall(self, self.audio_destination, self.loop, prm.callId)
+        call = MyCall(
+            self,
+            self.audio_destination,
+            self.loop,
+            prm.callId,
+            fork_manager=self.fork_manager,
+        )
         ci = call.getInfo()
         cid = call.unique_call_id
 

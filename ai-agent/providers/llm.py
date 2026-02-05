@@ -1,7 +1,12 @@
 """
 LLM (Large Language Model) - Processa texto e gera respostas
-Suporta: Anthropic Claude, OpenAI GPT
-Versão com streaming para reduzir latência
+
+Providers suportados:
+- Anthropic Claude (API cloud)
+- OpenAI GPT (API cloud)
+- Local (Docker Model Runner, vLLM, Ollama - OpenAI-compatible)
+
+Todos os providers suportam streaming para reduzir latência.
 """
 
 import logging
@@ -285,12 +290,144 @@ class OpenAILLM(LLMProvider):
             yield "Desculpe, tive um problema ao processar sua mensagem."
 
 
+class LocalLLM(LLMProvider):
+    """
+    LLM local usando Docker Model Runner, vLLM, Ollama ou qualquer servidor OpenAI-compatible.
+
+    Suporta streaming e não requer API key.
+
+    Configuração:
+        LOCAL_LLM_BASE_URL: URL do servidor (ex: http://localhost:12434/engines/llama.cpp/v1)
+        LOCAL_LLM_MODEL: Nome do modelo (ex: ai/smollm3)
+
+    Modelos recomendados para voz (baixa latência):
+        - ai/functiongemma (270M) - function-calling, edge devices
+        - ai/smollm3 (3.1B) - chat em tempo real
+        - ai/phi4 (~3B) - raciocínio compacto
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.client = None
+        self.model = None
+        self._init_client()
+
+    def _init_client(self):
+        """Inicializa cliente OpenAI apontando para servidor local"""
+        try:
+            from openai import OpenAI
+
+            base_url = LLM_CONFIG.get("local_base_url", "http://localhost:12434/engines/llama.cpp/v1")
+            self.model = LLM_CONFIG.get("local_model", "ai/smollm3")
+
+            # Docker Model Runner e similares não precisam de API key real
+            self.client = OpenAI(
+                api_key="not-needed",
+                base_url=base_url,
+                timeout=LLM_CONFIG["timeout"]
+            )
+
+            logger.info(f"Cliente LLM Local inicializado")
+            logger.info(f"  Base URL: {base_url}")
+            logger.info(f"  Modelo: {self.model}")
+
+        except ImportError:
+            logger.error("OpenAI não instalado. Execute: pip install openai")
+            raise
+        except Exception as e:
+            logger.error(f"Erro ao inicializar LLM Local: {e}")
+            raise
+
+    @property
+    def supports_streaming(self) -> bool:
+        return True
+
+    def generate(self, user_message: str) -> str:
+        """Gera resposta usando modelo local (modo batch)"""
+        if not self.client:
+            return "Desculpe, não consegui processar sua mensagem."
+
+        try:
+            self.conversation_history.append({
+                "role": "user",
+                "content": user_message
+            })
+
+            messages = [{"role": "system", "content": self.system_prompt}]
+            messages.extend(self.conversation_history)
+
+            response = self.client.chat.completions.create(
+                model=self.model,
+                max_tokens=LLM_CONFIG["max_tokens"],
+                temperature=LLM_CONFIG["temperature"],
+                messages=messages
+            )
+
+            assistant_message = response.choices[0].message.content
+
+            self.conversation_history.append({
+                "role": "assistant",
+                "content": assistant_message
+            })
+
+            logger.info(f"LLM Local: '{assistant_message}'")
+            return assistant_message
+
+        except Exception as e:
+            logger.error(f"Erro no LLM Local: {e}")
+            return "Desculpe, tive um problema ao processar sua mensagem."
+
+    def generate_stream(self, user_message: str) -> Generator[str, None, None]:
+        """Gera resposta usando modelo local com streaming"""
+        if not self.client:
+            yield "Desculpe, não consegui processar sua mensagem."
+            return
+
+        try:
+            self.conversation_history.append({
+                "role": "user",
+                "content": user_message
+            })
+
+            messages = [{"role": "system", "content": self.system_prompt}]
+            messages.extend(self.conversation_history)
+
+            full_response = ""
+
+            # Usa streaming API
+            stream = self.client.chat.completions.create(
+                model=self.model,
+                max_tokens=LLM_CONFIG["max_tokens"],
+                temperature=LLM_CONFIG["temperature"],
+                messages=messages,
+                stream=True
+            )
+
+            for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    text = chunk.choices[0].delta.content
+                    full_response += text
+                    yield text
+
+            # Salva resposta completa no histórico
+            self.conversation_history.append({
+                "role": "assistant",
+                "content": full_response
+            })
+
+            logger.info(f"LLM Local (stream completo): '{full_response}'")
+
+        except Exception as e:
+            logger.error(f"Erro no LLM Local streaming: {e}")
+            yield "Desculpe, tive um problema ao processar sua mensagem."
+
+
 class MockLLM(LLMProvider):
     """LLM mock para testes (não requer API)"""
 
     def __init__(self):
         super().__init__()
-        logger.info(" Mock LLM inicializado (modo teste)")
+        logger.info("Mock LLM inicializado (modo teste)")
 
     def generate(self, user_message: str) -> str:
         """Gera resposta mock"""
@@ -324,7 +461,17 @@ class MockLLM(LLMProvider):
 
 
 def create_llm_provider() -> LLMProvider:
-    """Factory para criar provedor LLM"""
+    """
+    Factory para criar provedor LLM.
+
+    Providers disponíveis:
+        - anthropic: Claude API (requer ANTHROPIC_API_KEY)
+        - openai: OpenAI API (requer OPENAI_API_KEY)
+        - local: Docker Model Runner, vLLM, Ollama (OpenAI-compatible)
+        - mock: Respostas simuladas para testes
+
+    Configuração via variável de ambiente LLM_PROVIDER.
+    """
     provider = LLM_CONFIG["provider"]
 
     if provider == "anthropic":
@@ -338,6 +485,13 @@ def create_llm_provider() -> LLMProvider:
             return OpenAILLM()
         except Exception as e:
             logger.warning(f"Falha ao criar OpenAI LLM: {e}. Usando mock.")
+            return MockLLM()
+    elif provider == "local":
+        try:
+            return LocalLLM()
+        except Exception as e:
+            logger.warning(f"Falha ao criar Local LLM: {e}. Usando mock.")
+            logger.warning("Verifique se o servidor local está rodando.")
             return MockLLM()
     elif provider == "mock":
         return MockLLM()
