@@ -18,6 +18,7 @@ from sip.account import MyAccount
 
 if TYPE_CHECKING:
     from ports.audio_destination import IAudioDestination
+    from core.media_fork_manager import MediaForkManager
 
 logger = logging.getLogger("media-server.endpoint")
 
@@ -25,9 +26,15 @@ logger = logging.getLogger("media-server.endpoint")
 class SIPEndpoint:
     """Endpoint SIP"""
 
-    def __init__(self, audio_destination: "IAudioDestination", loop):
+    def __init__(
+        self,
+        audio_destination: "IAudioDestination",
+        loop,
+        fork_manager: Optional["MediaForkManager"] = None,
+    ):
         self.audio_destination = audio_destination
         self.loop = loop
+        self.fork_manager = fork_manager
         self.ep: Optional[pj.Endpoint] = None
         self.account: Optional[MyAccount] = None
         self.running = False
@@ -161,7 +168,7 @@ class SIPEndpoint:
         acc_cfg.sipConfig.authCreds.append(cred)
 
         # Cria conta
-        self.account = MyAccount(self.audio_destination, self.loop)
+        self.account = MyAccount(self.audio_destination, self.loop, self.fork_manager)
         self.account.create(acc_cfg)
 
     def stop(self):

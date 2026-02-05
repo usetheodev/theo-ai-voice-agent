@@ -254,3 +254,74 @@ SBC_CONFIG = {
     # Timeout de registro SIP (segundos)
     "register_timeout": int(os.getenv("SBC_REGISTER_TIMEOUT", "300")),
 }
+
+
+# =============================================================================
+# CONFIGURAÇÕES DO AI TRANSCRIBE
+# =============================================================================
+
+TRANSCRIBE_CONFIG = {
+    # Habilitar envio de audio para transcricao
+    "enabled": _parse_bool(os.getenv("TRANSCRIBE_ENABLED", "false"), False),
+
+    # URL do servidor WebSocket do AI Transcribe
+    "url": os.getenv("TRANSCRIBE_URL", "ws://ai-transcribe:8766"),
+
+    # Intervalo entre tentativas de reconexao (segundos)
+    "reconnect_interval": int(os.getenv("TRANSCRIBE_RECONNECT_INTERVAL", "5")),
+
+    # Numero maximo de tentativas de reconexao
+    "max_reconnect_attempts": int(os.getenv("TRANSCRIBE_MAX_RECONNECT_ATTEMPTS", "10")),
+
+    # Intervalo de ping para manter conexao viva (segundos)
+    "ping_interval": int(os.getenv("TRANSCRIBE_PING_INTERVAL", "30")),
+
+    # Timeout do ping WebSocket (segundos)
+    "ping_timeout": int(os.getenv("TRANSCRIBE_PING_TIMEOUT", "10")),
+}
+
+
+# =============================================================================
+# CONFIGURAÇÕES DO MEDIA FORK
+# =============================================================================
+
+MEDIA_FORK_CONFIG = {
+    # Habilitar media forking (isolamento do path de IA)
+    # Quando habilitado, o RTP callback nunca bloqueia aguardando IA
+    "enabled": _parse_bool(os.getenv("MEDIA_FORK_ENABLED", "true"), True),
+
+    # Capacidade do ring buffer em milissegundos de áudio
+    # Valores maiores = mais tolerância a latência, mais memória
+    # Valores menores = menos latência, mais descarte
+    # Recomendado: 500ms (prod), 1000ms (debug), 1500ms (stress test)
+    "buffer_ms": int(os.getenv("MEDIA_FORK_BUFFER_MS", "500")),
+
+    # Política de descarte quando buffer cheio
+    # "drop_oldest" = descarta frames antigos (recomendado para voz)
+    # "drop_newest" = descarta frames novos (não recomendado)
+    "drop_policy": os.getenv("MEDIA_FORK_DROP_POLICY", "drop_oldest"),
+
+    # Intervalo de polling do consumer em milissegundos
+    # Menor = mais responsivo, mais CPU
+    # Maior = menos CPU, mais latência
+    "consumer_poll_ms": int(os.getenv("MEDIA_FORK_CONSUMER_POLL_MS", "10")),
+
+    # Backoff exponencial para reconexão do consumer
+    # Valores em segundos: inicial, máximo
+    "reconnect_initial_s": float(os.getenv("MEDIA_FORK_RECONNECT_INITIAL", "0.1")),
+    "reconnect_max_s": float(os.getenv("MEDIA_FORK_RECONNECT_MAX", "5.0")),
+    "reconnect_multiplier": float(os.getenv("MEDIA_FORK_RECONNECT_MULTIPLIER", "2.0")),
+
+    # Threshold de lag para alertar (ms)
+    # Se consumer_lag > threshold, loga warning
+    "lag_warning_threshold_ms": int(os.getenv("MEDIA_FORK_LAG_WARNING_MS", "100")),
+
+    # Habilitar fallback mode quando AI Agent indisponível
+    "fallback_enabled": _parse_bool(os.getenv("MEDIA_FORK_FALLBACK_ENABLED", "true"), True),
+
+    # Mensagem de fallback (arquivo de áudio ou texto para TTS local)
+    "fallback_message": os.getenv(
+        "MEDIA_FORK_FALLBACK_MESSAGE",
+        "Aguarde um momento, estamos conectando você."
+    ),
+}

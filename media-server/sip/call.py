@@ -27,13 +27,14 @@ except ImportError:
     import sys
     sys.exit(1)
 
-from config import AUDIO_CONFIG, CALL_CONFIG, PJSIP_CONFIG
+from config import AUDIO_CONFIG, CALL_CONFIG, PJSIP_CONFIG, MEDIA_FORK_CONFIG
 from metrics import track_call_ended, track_rtp_transmitted, track_barge_in, track_e2e_latency, track_barge_in_progress
 from sip.streaming_port import StreamingAudioPort, StreamingPlaybackPort
 from ports.audio_destination import SessionInfo, AudioConfig
 
 if TYPE_CHECKING:
     from ports.audio_destination import IAudioDestination
+    from core.media_fork_manager import MediaForkManager
 
 logger = logging.getLogger("media-server.call")
 
@@ -41,11 +42,22 @@ logger = logging.getLogger("media-server.call")
 class MyCall(pj.Call):
     """Gerencia uma chamada SIP com processamento streaming"""
 
-    def __init__(self, acc, audio_destination: "IAudioDestination", loop, call_id=pj.PJSUA_INVALID_ID):
+    def __init__(
+        self,
+        acc,
+        audio_destination: "IAudioDestination",
+        loop,
+        call_id=pj.PJSUA_INVALID_ID,
+        fork_manager: Optional["MediaForkManager"] = None,
+    ):
         pj.Call.__init__(self, acc, call_id)
         self.acc = acc
         self.audio_destination = audio_destination
         self.loop = loop
+
+        # Media Fork Manager (isolamento do path de IA)
+        self.fork_manager = fork_manager
+        self.use_fork = fork_manager is not None and MEDIA_FORK_CONFIG.get("enabled", True)
 
         # ID único para correlação de logs
         self.unique_call_id = str(uuid.uuid4())[:8]
@@ -154,6 +166,16 @@ class MyCall(pj.Call):
         self.stop_conversation.set()
         self.is_streaming = False
 
+        # Para fork session (se habilitado)
+        if self.use_fork and self.fork_manager:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self.fork_manager.stop_session(self.session_id),
+                    self.loop
+                ).result(timeout=2)
+            except Exception as e:
+                self._log(f"Erro ao parar fork session: {e}", "warning")
+
         # Encerra sessão no destino de áudio
         if self.audio_destination and self.audio_destination.is_connected:
             asyncio.run_coroutine_threadsafe(
@@ -176,6 +198,22 @@ class MyCall(pj.Call):
 
         # Aguarda mídia estar pronta (configurável)
         time.sleep(CALL_CONFIG.get("media_ready_delay", 0.1))
+
+        # Inicia fork session (se habilitado) - ANTES de qualquer streaming
+        if self.use_fork and self.fork_manager:
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    self.fork_manager.start_session(self.session_id, self.unique_call_id),
+                    self.loop
+                )
+                if not future.result(timeout=5):
+                    self._log("Falha ao iniciar fork session - continuando sem fork", "warning")
+                    self.use_fork = False
+                else:
+                    self._log("Fork session iniciada")
+            except Exception as e:
+                self._log(f"Erro ao iniciar fork session: {e} - continuando sem fork", "warning")
+                self.use_fork = False
 
         # Configura playback streaming ANTES dos callbacks
         self._setup_playback_streaming()
@@ -335,11 +373,31 @@ class MyCall(pj.Call):
                 self.playback_port.add_audio(audio_data)
                 self.bytes_transmitted += len(audio_data)
 
+            # Envia audio do agente para transcricao (outbound)
+            if self.use_fork and self.fork_manager:
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        self.fork_manager.send_outbound_audio(self.session_id, audio_data),
+                        self.loop
+                    )
+                except Exception:
+                    pass  # Best-effort, nao bloqueia playback
+
         def on_response_end(session_id: str):
             if session_id != self.session_id:
                 return
 
             self._log(f" Resposta completa ({self.bytes_transmitted} bytes)")
+
+            # Envia sinal de fim de audio do agente para transcricao
+            if self.use_fork and self.fork_manager:
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        self.fork_manager.send_outbound_audio_end(self.session_id),
+                        self.loop
+                    )
+                except Exception:
+                    pass  # Best-effort
 
             # Registra métricas
             track_rtp_transmitted(self.bytes_transmitted)
@@ -379,13 +437,14 @@ class MyCall(pj.Call):
             return
 
         try:
-            # Cria StreamingAudioPort
+            # Cria StreamingAudioPort com fork_manager (se habilitado)
             self.streaming_port = StreamingAudioPort(
                 audio_destination=self.audio_destination,
                 session_id=self.session_id,
                 loop=self.loop,
                 on_speech_end=self._on_speech_end,
                 on_speech_start=self._on_speech_start,
+                fork_manager=self.fork_manager if self.use_fork else None,
             )
 
             # Configura o port (clock rate interno do PJSUA2)
@@ -406,7 +465,8 @@ class MyCall(pj.Call):
             self.call_media.startTransmit(self.streaming_port)
 
             self.is_streaming = True
-            self._log(" Streaming de áudio iniciado")
+            fork_status = "(fork_enabled)" if self.use_fork else "(direct_send)"
+            self._log(f" Streaming de áudio iniciado {fork_status}")
 
         except Exception as e:
             self._log(f"Erro ao iniciar streaming: {e}", "error")
@@ -505,6 +565,16 @@ class MyCall(pj.Call):
 
         self._log(" Fim de fala detectado - aguardando resposta")
         # O streaming_port já envia audio.end automaticamente
+
+        # Notifica fork_manager para enviar audio.speech.end ao transcribe
+        if self.use_fork and self.fork_manager:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self.fork_manager.send_audio_end(self.session_id),
+                    self.loop
+                )
+            except Exception as e:
+                self._log(f"Erro ao enviar audio.end para transcribe: {e}", "warning")
 
     def onCallMediaState(self, prm):
         """Estado da mídia mudou"""

@@ -181,6 +181,45 @@ EOF
     fi
 }
 
+#-----------------------------------------------
+# Cria arquivo .env do AI Transcribe
+#-----------------------------------------------
+create_transcribe_env() {
+    if [ ! -f "ai-transcribe/.env" ]; then
+        log_warn "    Criando ai-transcribe/.env..."
+        cat > ai-transcribe/.env << 'EOF'
+# AI Transcribe Configuration
+# ===========================
+
+# WebSocket Server
+WS_HOST=0.0.0.0
+WS_PORT=8766
+
+# Elasticsearch
+ES_HOSTS=http://elasticsearch:9200
+ES_INDEX_PREFIX=voice-transcriptions
+ES_BULK_SIZE=50
+ES_BULK_INTERVAL_S=5.0
+
+# STT (Speech-to-Text)
+STT_MODEL=tiny
+STT_LANGUAGE=pt
+STT_DEVICE=cpu
+STT_COMPUTE_TYPE=int8
+
+# Metrics
+METRICS_PORT=9093
+METRICS_HOST=0.0.0.0
+
+# Logging
+LOG_LEVEL=INFO
+EOF
+        log_success "    ai-transcribe/.env criado"
+    else
+        log_success "    ai-transcribe/.env ja existe"
+    fi
+}
+
 #===============================================
 # INÍCIO DA EXECUÇÃO
 #===============================================
@@ -194,25 +233,30 @@ echo ""
 # Verificar dependências
 check_dependencies
 
-# [1/4] Criar diretórios necessários
-echo "[1/4] Criando diretorios..."
+# [1/5] Criar diretórios necessários
+echo "[1/5] Criando diretorios..."
 mkdir -p asterisk/keys
 mkdir -p asterisk/sounds
 mkdir -p observability/prometheus/rules
 mkdir -p observability/grafana/provisioning/datasources
 mkdir -p observability/grafana/provisioning/dashboards
 mkdir -p observability/grafana/dashboards
+mkdir -p ai-transcribe/tests
 
-# [2/4] Gerar certificados SSL
-echo "[2/4] Gerando certificados SSL..."
+# [2/5] Gerar certificados SSL
+echo "[2/5] Gerando certificados SSL..."
 generate_ssl_certs
 
-# [3/4] Criar arquivos .env
-echo "[3/4] Configurando variaveis de ambiente..."
+# [3/5] Criar arquivos .env
+echo "[3/5] Configurando variaveis de ambiente..."
 create_env_files
 
-# [4/4] Pull/Build das imagens
-echo "[4/4] Preparando imagens Docker..."
+# [4/5] Criar .env do AI Transcribe
+echo "[4/5] Configurando AI Transcribe..."
+create_transcribe_env
+
+# [5/5] Pull/Build das imagens
+echo "[5/5] Preparando imagens Docker..."
 $DOCKER_COMPOSE pull 2>/dev/null || true
 $DOCKER_COMPOSE build
 
@@ -230,6 +274,9 @@ echo ""
 log_info "Para iniciar o sistema:"
 echo "   ./start.sh"
 echo ""
+log_info "Para iniciar com transcricao (Elasticsearch):"
+echo "   TRANSCRIBE_ENABLED=true ./start.sh"
+echo ""
 log_info "Ramais disponiveis:"
 echo "   1001-1003: SIP (senha: ver pjsip.conf)"
 echo "   1004-1005: WebRTC (SoftPhone)"
@@ -240,4 +287,10 @@ echo "   9    : Acessar URA"
 echo "   *43  : Teste de eco"
 echo "   *60  : Hora certa"
 echo "   8000 : Sala de conferencia"
+echo ""
+log_info "URLs de acesso:"
+echo "   Grafana:       http://localhost:3000 (admin/admin)"
+echo "   Prometheus:    http://localhost:9092"
+echo "   Elasticsearch: http://localhost:9200"
+echo "   Kibana:        http://localhost:5601 (--profile debug)"
 echo ""

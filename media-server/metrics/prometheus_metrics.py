@@ -150,6 +150,63 @@ BARGE_IN_RESPONSE_PROGRESS = Histogram(
 )
 
 # =============================================================================
+# METRICAS MEDIA FORK
+# =============================================================================
+
+MEDIA_FORK_BUFFER_SIZE_BYTES = Gauge(
+    'media_server_fork_buffer_size_bytes',
+    'Tamanho atual do buffer de fork em bytes'
+)
+
+MEDIA_FORK_BUFFER_SIZE_MS = Gauge(
+    'media_server_fork_buffer_size_ms',
+    'Tamanho atual do buffer de fork em milissegundos'
+)
+
+MEDIA_FORK_BUFFER_FILL_RATIO = Gauge(
+    'media_server_fork_buffer_fill_ratio',
+    'Taxa de preenchimento do buffer (0-1)'
+)
+
+MEDIA_FORK_FRAMES_RECEIVED = Counter(
+    'media_server_fork_frames_received_total',
+    'Total de frames recebidos no fork'
+)
+
+MEDIA_FORK_FRAMES_DROPPED = Counter(
+    'media_server_fork_frames_dropped_total',
+    'Total de frames descartados por overflow'
+)
+
+MEDIA_FORK_OVERFLOW_EVENTS = Counter(
+    'media_server_fork_overflow_events_total',
+    'Total de eventos de overflow do buffer'
+)
+
+MEDIA_FORK_CONSUMER_LAG_MS = Histogram(
+    'media_server_fork_consumer_lag_ms',
+    'Lag do consumer (tempo entre captura e envio)',
+    buckets=[10, 20, 50, 100, 200, 300, 500, 1000]
+)
+
+MEDIA_FORK_CONSUMER_ERRORS = Counter(
+    'media_server_fork_consumer_errors_total',
+    'Total de erros no consumer do fork',
+    ['error_type']  # send_failed, timeout, connection_lost
+)
+
+MEDIA_FORK_AI_AGENT_AVAILABLE = Gauge(
+    'media_server_fork_ai_agent_available',
+    'Indica se AI Agent esta disponivel (1=sim, 0=nao)'
+)
+
+MEDIA_FORK_FALLBACK_ACTIVE = Gauge(
+    'media_server_fork_fallback_active',
+    'Indica se fallback mode esta ativo (1=sim, 0=nao)'
+)
+
+
+# =============================================================================
 # MÉTRICAS RTP QUALITY
 # =============================================================================
 
@@ -291,3 +348,49 @@ def track_rtp_packet(direction: str, status: str, count: int = 1):
 def track_rtp_packet_loss_ratio(direction: str, ratio: float):
     """Atualiza taxa de perda de pacotes RTP"""
     RTP_PACKET_LOSS_RATIO.labels(direction=direction).set(ratio)
+
+
+# =============================================================================
+# MEDIA FORK HELPERS
+# =============================================================================
+
+def track_fork_buffer_size(size_bytes: int, size_ms: float, fill_ratio: float):
+    """Atualiza metricas de tamanho do buffer de fork"""
+    MEDIA_FORK_BUFFER_SIZE_BYTES.set(size_bytes)
+    MEDIA_FORK_BUFFER_SIZE_MS.set(size_ms)
+    MEDIA_FORK_BUFFER_FILL_RATIO.set(fill_ratio)
+
+
+def track_fork_frame_received():
+    """Registra frame recebido no fork"""
+    MEDIA_FORK_FRAMES_RECEIVED.inc()
+
+
+def track_fork_frame_dropped():
+    """Registra frame descartado por overflow"""
+    MEDIA_FORK_FRAMES_DROPPED.inc()
+
+
+def track_fork_overflow():
+    """Registra evento de overflow do buffer"""
+    MEDIA_FORK_OVERFLOW_EVENTS.inc()
+
+
+def track_fork_consumer_lag(lag_ms: float):
+    """Registra lag do consumer em ms"""
+    MEDIA_FORK_CONSUMER_LAG_MS.observe(lag_ms)
+
+
+def track_fork_consumer_error(error_type: str):
+    """Registra erro no consumer do fork"""
+    MEDIA_FORK_CONSUMER_ERRORS.labels(error_type=error_type).inc()
+
+
+def track_fork_ai_agent_available(available: bool):
+    """Atualiza status de disponibilidade do AI Agent"""
+    MEDIA_FORK_AI_AGENT_AVAILABLE.set(1 if available else 0)
+
+
+def track_fork_fallback_active(active: bool):
+    """Atualiza status do fallback mode"""
+    MEDIA_FORK_FALLBACK_ACTIVE.set(1 if active else 0)

@@ -19,12 +19,13 @@ try:
 except ImportError:
     raise ImportError("pjsua2 não encontrado")
 
-from config import AUDIO_CONFIG, RTP_QUALITY_CONFIG
+from config import AUDIO_CONFIG, RTP_QUALITY_CONFIG, MEDIA_FORK_CONFIG
 from metrics import track_vad_event, track_vad_utterance_duration
 from sip.rtp_quality import RtpQualityTracker
 
 if TYPE_CHECKING:
     from ports.audio_destination import IAudioDestination
+    from core.media_fork_manager import MediaForkManager
 
 logger = logging.getLogger("media-server.streaming")
 
@@ -199,6 +200,7 @@ class StreamingAudioPort(pj.AudioMediaPort):
         loop: asyncio.AbstractEventLoop,
         on_speech_end: Optional[Callable[[], None]] = None,
         on_speech_start: Optional[Callable[[], None]] = None,
+        fork_manager: Optional["MediaForkManager"] = None,
     ):
         pj.AudioMediaPort.__init__(self)
 
@@ -207,6 +209,10 @@ class StreamingAudioPort(pj.AudioMediaPort):
         self.loop = loop
         self.on_speech_end = on_speech_end
         self.on_speech_start = on_speech_start
+
+        # Media Fork Manager (isolamento do path de IA)
+        self.fork_manager = fork_manager
+        self.use_fork = fork_manager is not None and MEDIA_FORK_CONFIG.get("enabled", True)
 
         # PJSUA2 usa 16kHz internamente, AI Agent espera 8kHz
         self.input_sample_rate = 16000
@@ -245,7 +251,8 @@ class StreamingAudioPort(pj.AudioMediaPort):
             direction="inbound"
         )
 
-        logger.info(f"[{session_id[:8]}] StreamingAudioPort criado")
+        fork_status = "fork_enabled" if self.use_fork else "direct_send"
+        logger.info(f"[{session_id[:8]}] StreamingAudioPort criado ({fork_status})")
 
     def createPort(self, name: str, clock_rate: int, channel_count: int,
                    samples_per_frame: int, bits_per_sample: int):
@@ -279,6 +286,9 @@ class StreamingAudioPort(pj.AudioMediaPort):
         - is_active=False: Ignora completamente
         - monitor_mode=True: Detecta fala (para barge-in) mas não envia áudio
         - Normal: Detecta fala E envia áudio
+
+        IMPORTANTE: Com fork_manager habilitado, o envio de áudio NUNCA bloqueia.
+        O áudio é copiado para um buffer e consumido assincronamente.
         """
         if not self.is_active and not self.monitor_mode:
             return
@@ -320,8 +330,16 @@ class StreamingAudioPort(pj.AudioMediaPort):
                 should_send = len(self.send_buffer) >= self.send_buffer_max or speech_ended
 
                 if should_send and len(self.send_buffer) > 0:
-                    self._send_audio_async(bytes(self.send_buffer))
+                    audio_to_send = bytes(self.send_buffer)
                     self.send_buffer = bytearray()
+
+                    # Usa fork manager se disponível (NUNCA bloqueia)
+                    if self.use_fork and self.fork_manager:
+                        self.fork_manager.fork_audio(self.session_id, audio_to_send)
+                        self.bytes_sent += len(audio_to_send)
+                    else:
+                        # Fallback: envio direto (pode bloquear se AI Agent lento)
+                        self._send_audio_async(audio_to_send)
 
                 # Notifica fim de fala
                 if speech_ended:

@@ -1,59 +1,21 @@
 # syntax=docker/dockerfile:1.4
-# Dockerfile otimizado para AI Agent
-# ===================================
-# Usa BuildKit cache para acelerar rebuilds
-# NOTA: Build context deve ser a raiz do projeto (não ./ai-agent)
+# =============================================================================
+# Dockerfile AI Agent - Usa imagem base voice-base
+# =============================================================================
+# Build context deve ser a raiz do projeto:
+#   docker build -f ai-agent/Dockerfile -t ai-agent .
+# =============================================================================
 
-FROM python:3.11-slim AS base
+ARG BASE_IMAGE=paulohenriquevn/voice-base:latest
+FROM ${BASE_IMAGE}
 
 WORKDIR /app
 
-# Instala dependências de sistema (raramente muda)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    build-essential \
-    curl \
-    espeak-ng \
-    && rm -rf /var/lib/apt/lists/*
-
-# ===================================
-# Stage: Dependências pesadas (cache)
-# ===================================
-FROM base AS deps-heavy
-
-# Instala dependências pesadas primeiro (torch/faster-whisper/kokoro) - raramente mudam
-# Usa cache mount para não baixar toda vez
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir \
-    numpy>=1.24.0 \
-    torch>=2.0.0 \
-    faster-whisper>=1.0.0 \
-    kokoro>=0.3.0 \
-    soundfile>=0.12.0
-
-# ===================================
-# Stage: Dependências leves
-# ===================================
-FROM deps-heavy AS deps
-
-# Copia requirements e instala o resto
-# NOTA: Path relativo à raiz do projeto (build context)
-COPY ai-agent/requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir -r requirements.txt
-
-# ===================================
-# Stage: Final
-# ===================================
-FROM deps AS final
-
-# Copia módulos compartilhados PRIMEIRO
-# (mudam menos frequentemente que o código principal)
+# Copia modulos compartilhados PRIMEIRO (mudam menos frequentemente)
 COPY shared/asp_protocol/ ./shared/asp_protocol/
 COPY shared/ws/ ./shared/ws/
 
-# Copia código do ai-agent por ÚLTIMO (muda frequentemente)
-# Assim não invalida cache das dependências
+# Copia codigo do ai-agent por ULTIMO (muda frequentemente)
 COPY ai-agent/config.py .
 COPY ai-agent/ai_agent.py .
 COPY ai-agent/metrics/ ./metrics/
@@ -63,7 +25,7 @@ COPY ai-agent/pipeline/ ./pipeline/
 COPY ai-agent/providers/ ./providers/
 
 # =============================================================================
-# Variáveis de ambiente padrão
+# Variaveis de ambiente padrao
 # =============================================================================
 
 # WebSocket
@@ -94,10 +56,10 @@ ENV TTS_LANG=pt
 ENV VAD_AGGRESSIVENESS=2
 ENV SILENCE_THRESHOLD_MS=500
 
-# Métricas
+# Metricas
 ENV METRICS_PORT=9090
 
-# Expõe portas
+# Expoe portas
 EXPOSE 8765 9090
 
 # Comando de entrada

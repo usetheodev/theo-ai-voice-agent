@@ -7,6 +7,35 @@
 set -e
 
 #-----------------------------------------------
+# Parsing de argumentos
+#-----------------------------------------------
+DEBUG_MODE=false
+PROFILE_ARGS=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --debug)
+            DEBUG_MODE=true
+            PROFILE_ARGS="--profile debug"
+            shift
+            ;;
+        --help|-h)
+            echo "Uso: $0 [opcoes]"
+            echo ""
+            echo "Opcoes:"
+            echo "  --debug    Inicia com Kibana e ferramentas de debug"
+            echo "  --help     Mostra esta ajuda"
+            exit 0
+            ;;
+        *)
+            echo "Opcao desconhecida: $1"
+            echo "Use --help para ver opcoes disponiveis"
+            exit 1
+            ;;
+    esac
+done
+
+#-----------------------------------------------
 # Detecta diretório do script (cross-platform)
 #-----------------------------------------------
 get_script_dir() {
@@ -217,18 +246,69 @@ check_docker_running
 # Gera certificados
 generate_ssl_certs
 
+# Verifica e obtem imagem base se necessario
+check_base_image() {
+    local base_image="${BASE_IMAGE:-paulohenriquevn/voice-base:latest}"
+
+    if ! docker image inspect "$base_image" &>/dev/null; then
+        log_warn "Imagem base '$base_image' nao encontrada localmente."
+        log_warn "Tentando baixar do Docker Hub..."
+
+        # Tenta pull do Docker Hub primeiro
+        if docker pull "$base_image" 2>/dev/null; then
+            log_success "   Imagem baixada do Docker Hub com sucesso"
+        else
+            # Se falhar o pull, tenta construir localmente
+            log_warn "   Pull falhou. Construindo imagem localmente (pode demorar)..."
+
+            if [ -x "./docker/build-base.sh" ]; then
+                ./docker/build-base.sh
+                if [ $? -ne 0 ]; then
+                    log_error "Falha ao construir imagem base!"
+                    exit 1
+                fi
+                log_success "   Imagem base construida localmente com sucesso"
+            else
+                log_error "Script docker/build-base.sh nao encontrado ou sem permissao de execucao!"
+                log_error "Execute: chmod +x docker/build-base.sh && ./docker/build-base.sh"
+                exit 1
+            fi
+        fi
+    else
+        log_success "   Imagem base '$base_image': OK"
+    fi
+}
+
+check_base_image
+
+# Usa builder default para docker-compose (evita isolamento do buildx container)
+# O builder voice-builder (docker-container) nao enxerga imagens locais
+ensure_default_builder() {
+    local current_builder=$(docker buildx inspect --bootstrap 2>/dev/null | grep -m1 "^Name:" | awk '{print $2}')
+    if [ "$current_builder" != "default" ]; then
+        log_warn "Alternando para builder 'default' (acesso a imagens locais)..."
+        docker buildx use default 2>/dev/null || true
+    fi
+}
+
+ensure_default_builder
+
 # Para containers existentes (se necessário)
 log_warn "Parando containers existentes..."
-$DOCKER_COMPOSE down 2>/dev/null || true
+$DOCKER_COMPOSE $PROFILE_ARGS down 2>/dev/null || true
 
 # Build das imagens (primeira vez pode demorar)
 log_warn "Construindo imagens Docker..."
 log_warn "(primeira execucao pode demorar alguns minutos)"
-$DOCKER_COMPOSE build
+$DOCKER_COMPOSE $PROFILE_ARGS build
 
 # Inicia todos os serviços
-log_warn "Iniciando todos os servicos..."
-$DOCKER_COMPOSE up -d
+if [ "$DEBUG_MODE" = true ]; then
+    log_warn "Iniciando todos os servicos (modo DEBUG com Kibana)..."
+else
+    log_warn "Iniciando todos os servicos..."
+fi
+$DOCKER_COMPOSE $PROFILE_ARGS up -d
 
 # Aguarda serviços principais
 log_warn "Aguardando servicos inicializarem..."
@@ -260,6 +340,16 @@ else
     exit 1
 fi
 
+# Verifica Elasticsearch (se habilitado)
+if is_container_running "elasticsearch"; then
+    log_success "   Elasticsearch: OK"
+fi
+
+# Verifica AI Transcribe (se habilitado)
+if is_container_running "ai-transcribe"; then
+    log_success "   AI Transcribe: OK"
+fi
+
 # Verifica Prometheus e Grafana (opcionais)
 if is_container_running "prometheus"; then
     log_success "   Prometheus: OK"
@@ -267,6 +357,29 @@ fi
 
 if is_container_running "grafana"; then
     log_success "   Grafana: OK"
+fi
+
+# Verifica Kibana
+if wait_for_container "kibana" 90; then
+    log_success "   Kibana: OK"
+
+    # Aguarda kibana-setup importar dashboards
+    log_warn "   Aguardando importacao dos dashboards do Kibana..."
+    sleep 5
+
+    # Verifica se kibana-setup executou
+    setup_status=$(docker inspect --format='{{.State.ExitCode}}' kibana-setup 2>/dev/null || echo "unknown")
+    if [ "$setup_status" = "0" ]; then
+        log_success "   Kibana Setup: OK (dashboards importados)"
+    elif [ "$setup_status" = "unknown" ]; then
+        log_warn "   Kibana Setup: ainda executando..."
+    else
+        log_warn "   Kibana Setup: falhou (exit code: $setup_status)"
+        log_warn "   Execute manualmente: docker compose up kibana-setup"
+    fi
+else
+    log_error "   Kibana: FALHA"
+    $DOCKER_COMPOSE logs kibana
 fi
 
 # Verifica endpoints do Asterisk
@@ -284,8 +397,11 @@ log_info "Servicos:"
 echo "   Asterisk:      porta 5160 (SIP), 8189 (WSS)"
 echo "   AI Agent:      porta 8765 (WebSocket)"
 echo "   Media Server:  portas 40000-40100 (RTP)"
+echo "   AI Transcribe: porta 8766 (WebSocket), 9093 (metrics)"
+echo "   Elasticsearch: http://localhost:9200"
 echo "   Prometheus:    http://localhost:9092"
 echo "   Grafana:       http://localhost:3000 (admin/admin)"
+echo "   Kibana:        http://localhost:5601 (dashboards pre-carregados)"
 echo ""
 log_info "Ramais:"
 echo "   1001-1003: SIP tradicional"
@@ -302,4 +418,16 @@ echo "   Ver logs:       ./logs.sh"
 echo "   Ver status:     ./status.sh"
 echo "   CLI Asterisk:   docker exec -it asterisk-pabx asterisk -rvvv"
 echo "   Parar tudo:     ./stop.sh"
+echo ""
+log_info "Transcricao (Elasticsearch):"
+echo "   Iniciar com transcricao:  ./start-with-transcribe.sh"
+echo "   Ou:  TRANSCRIBE_ENABLED=true ./start.sh"
+echo "   Testar:                   ./scripts/test-ai-transcribe.sh"
+echo "   Ver transcricoes:         curl 'http://localhost:9200/voice-transcriptions-*/_search?pretty'"
+echo ""
+log_info "LLM Local (Docker Model Runner):"
+echo "   Setup completo:           ./setup-local-llm.sh"
+echo "   Modelos disponiveis:      ./setup-local-llm.sh models"
+echo "   Testar modelo:            ./setup-local-llm.sh test smollm3"
+echo "   Vantagens: Zero latencia de rede, zero custo, 100% privacidade"
 echo ""
