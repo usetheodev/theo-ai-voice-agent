@@ -68,7 +68,7 @@ RUN ./configure \
     --disable-g7221-codec \
     --with-external-opus \
     --with-external-speex \
-    CFLAGS="-fPIC -O2" \
+    CFLAGS="-fPIC -O2 -DPJ_MAX_PKT_LEN=8192" \
     && make dep \
     && make -j$(nproc) \
     && make install \

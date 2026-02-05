@@ -1,21 +1,43 @@
+# =============================================================================
+# Docker Compose - PABX com Voice AI (Bridge Networking)
+# =============================================================================
+# Todos os serviços usam bridge networking com portas explícitas.
+# Compatível com Docker Desktop (Windows/macOS) e Linux.
+#
+# network_mode: host foi removido pois não funciona no Docker Desktop Windows.
+# A rede voip-network permite comunicação entre serviços via nome.
+# =============================================================================
+
 services:
   asterisk:
     image: mlan/asterisk
     container_name: asterisk-pabx
     restart: unless-stopped
-    network_mode: host
+    entrypoint: ["/etc/asterisk/scripts/docker-entrypoint.sh"]
+    command: ["asterisk", "-fp"]
+    networks:
+      - voip-network
+    ports:
+      - "5160:5160/udp"                  # SIP UDP
+      - "8188:8188"                      # HTTP/WebSocket
+      - "8189:8189"                      # HTTPS/WSS (WebRTC)
+      - "20000-20100:20000-20100/udp"    # RTP Media
     volumes:
-      - ./asterisk/config/pjsip.conf:/etc/asterisk/pjsip.conf:ro
+      - ./asterisk/config/pjsip.conf:/etc/asterisk/pjsip.conf    # sem :ro - entrypoint faz sed
       - ./asterisk/config/extensions.conf:/etc/asterisk/extensions.conf:ro
       - ./asterisk/config/http.conf:/etc/asterisk/http.conf:ro
       - ./asterisk/config/rtp.conf:/etc/asterisk/rtp.conf:ro
       - ./asterisk/config/modules.conf:/etc/asterisk/modules.conf:ro
       - ./asterisk/keys:/etc/asterisk/keys:ro
       - ./asterisk/sounds:/var/lib/asterisk/sounds/en:ro
+      - ./asterisk/scripts/docker-entrypoint.sh:/etc/asterisk/scripts/docker-entrypoint.sh:ro
       - asterisk-spool:/var/spool/asterisk
       - asterisk-logs:/var/log/asterisk
     environment:
       - TZ=America/Sao_Paulo
+      - EXTERNAL_MEDIA_IP=auto
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     cap_add:
       - NET_ADMIN
     healthcheck:
@@ -32,11 +54,22 @@ services:
     image: instrumentisto/coturn
     container_name: coturn-turn
     restart: unless-stopped
-    network_mode: host
+    entrypoint: ["/etc/coturn/docker-entrypoint.sh"]
+    networks:
+      - voip-network
+    ports:
+      - "3478:3478/udp"                  # STUN/TURN UDP
+      - "3478:3478/tcp"                  # TURN TCP
+      - "5349:5349/tcp"                  # TURN TLS
+      - "49152-49252:49152-49252/udp"    # Relay range (reduzido para dev)
     volumes:
       - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - ./coturn/docker-entrypoint.sh:/etc/coturn/docker-entrypoint.sh:ro
     environment:
       - TZ=America/Sao_Paulo
+      - EXTERNAL_TURN_IP=auto
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 3478 || exit 1"]
       interval: 10s
@@ -53,9 +86,11 @@ services:
         BASE_IMAGE: ${BASE_IMAGE:-paulohenriquevn/voice-base:latest}
     container_name: ai-conversation-agent
     restart: unless-stopped
+    networks:
+      - voip-network
     ports:
       - "8765:8765"
-      - "9090:9090"  # Métricas Prometheus
+      - "9090:9090"       # Métricas Prometheus
     env_file:
       - ./ai-agent/.env
     environment:
@@ -66,13 +101,13 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ai-agent-cache:/root/.cache  # Cache do modelo Whisper
+      - ai-agent-cache:/root/.cache
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:9090/metrics || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s  # Tempo para carregar modelo Whisper
+      start_period: 60s
 
   # Media Server - SIP Bridge (SIP/RTP <-> WebSocket)
   media-server:
@@ -83,15 +118,19 @@ services:
         BASE_IMAGE: ${BASE_IMAGE:-paulohenriquevn/voice-base:latest}
     container_name: sip-media-server
     restart: unless-stopped
-    network_mode: host
+    networks:
+      - voip-network
+    ports:
+      - "9091:9091"                      # Prometheus metrics
+      - "40000-40100:40000-40100/udp"    # RTP range (PJSIP)
     env_file:
       - ./media-server/.env
     environment:
       - TZ=America/Sao_Paulo
-      - WEBSOCKET_URL=ws://127.0.0.1:8765
-      - TRANSCRIBE_URL=ws://127.0.0.1:8766
+      - WEBSOCKET_URL=ws://ai-agent:8765
+      - TRANSCRIBE_URL=ws://ai-transcribe:8766
       - TRANSCRIBE_ENABLED=${TRANSCRIBE_ENABLED:-true}
-      - SIP_DOMAIN=127.0.0.1
+      - SIP_DOMAIN=asterisk
       - SIP_PORT=5160
       - METRICS_PORT=9091
     depends_on:
@@ -111,10 +150,12 @@ services:
         BASE_IMAGE: ${BASE_IMAGE:-paulohenriquevn/voice-base:latest}
     container_name: ai-transcribe
     restart: unless-stopped
+    networks:
+      - voip-network
     ports:
       - "8766:8766"
-      - "8767:8767"  # HTTP API (Busca Semantica)
-      - "9093:9093"  # Metricas Prometheus
+      - "8767:8767"       # HTTP API (Busca Semantica)
+      - "9093:9093"       # Metricas Prometheus
     environment:
       - TZ=America/Sao_Paulo
       - WS_HOST=0.0.0.0
@@ -125,7 +166,7 @@ services:
       - STT_MODEL=tiny
       - STT_LANGUAGE=pt
     volumes:
-      - ai-transcribe-cache:/root/.cache  # Cache do modelo Whisper
+      - ai-transcribe-cache:/root/.cache
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -134,13 +175,15 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s  # Tempo para carregar modelo Whisper
+      start_period: 60s
 
   # Elasticsearch - Armazenamento de transcricoes
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:9.2.4
     container_name: elasticsearch
     restart: unless-stopped
+    networks:
+      - voip-network
     ports:
       - "9200:9200"
     environment:
@@ -162,6 +205,8 @@ services:
     image: elastic/kibana:9.2.4
     container_name: kibana
     restart: unless-stopped
+    networks:
+      - voip-network
     ports:
       - "5601:5601"
     environment:
@@ -181,6 +226,8 @@ services:
   kibana-setup:
     image: curlimages/curl:8.5.0
     container_name: kibana-setup
+    networks:
+      - voip-network
     volumes:
       - ./observability/kibana:/dashboards:ro
       - ./observability/kibana/setup.sh:/setup.sh:ro
@@ -200,8 +247,10 @@ services:
     image: prom/prometheus:v2.48.0
     container_name: prometheus
     restart: unless-stopped
+    networks:
+      - voip-network
     ports:
-      - "9092:9090"  # 9092 no host para evitar conflito com ai-agent metrics
+      - "9092:9090"       # 9092 no host para evitar conflito com ai-agent metrics
     volumes:
       - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./observability/prometheus/rules:/etc/prometheus/rules:ro
@@ -212,8 +261,6 @@ services:
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--web.enable-lifecycle'
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
       interval: 30s
@@ -225,6 +272,8 @@ services:
     image: grafana/grafana:10.2.2
     container_name: grafana
     restart: unless-stopped
+    networks:
+      - voip-network
     ports:
       - "3000:3000"
     environment:
@@ -244,6 +293,10 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+networks:
+  voip-network:
+    driver: bridge
 
 volumes:
   asterisk-spool:
