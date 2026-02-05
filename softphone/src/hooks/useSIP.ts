@@ -5,7 +5,94 @@ import {
   Inviter,
   SessionState,
   RegistererState,
+  Web,
 } from 'sip.js'
+
+/**
+ * Filtra ICE candidates do SDP para prevenir PJSIP_ERXOVERFLOW.
+ *
+ * Asterisk (mlan/asterisk) usa pjproject com PJSIP_MAX_PKT_LEN=4000 bytes.
+ * Browsers geram candidates para cada interface de rede (Docker bridges,
+ * LAN, IPv6) × cada ICE server (STUN, TURN) = SDP facilmente > 4000 bytes.
+ *
+ * Sem filtro: ~19 candidates = ~3600 bytes SDP = INVITE > 4000 = ERXOVERFLOW.
+ * Com filtro: ~5 candidates = ~1500 bytes SDP = INVITE ~2000 = OK.
+ *
+ * Estratégia:
+ * - Remove TCP candidates (RTP usa UDP exclusivamente)
+ * - Remove IPv6 candidates (desnecessário em ambiente Docker/dev)
+ * - Mantém host UDP (conectividade direta — máx 3-4 interfaces)
+ * - Limita srflx a 1 (ICE connectivity checks validam reachability)
+ * - Limita relay a 1 (fallback TURN — um é suficiente)
+ */
+function filterICECandidates(sdp: string): string {
+  const lines = sdp.split('\r\n')
+  let srflxKept = 0
+  let relayKept = 0
+
+  const filtered = lines.filter((line) => {
+    if (!line.startsWith('a=candidate:')) return true
+
+    // Remove TCP — RTP usa UDP, TCP candidates são inúteis para media
+    if (line.includes(' tcp ') || line.includes('tcptype')) return false
+
+    // Remove IPv6 — endereço no campo 5 (index 4) contém ':'
+    const address = line.split(' ')[4]
+    if (address && address.includes(':')) return false
+
+    // Limita srflx a exatamente 1
+    if (line.includes(' typ srflx ')) {
+      if (srflxKept >= 1) return false
+      srflxKept++
+      return true
+    }
+
+    // Limita relay a exatamente 1
+    if (line.includes(' typ relay ')) {
+      if (relayKept >= 1) return false
+      relayKept++
+      return true
+    }
+
+    return true // Mantém host UDP
+  })
+
+  return filtered.join('\r\n')
+}
+
+/**
+ * Factory wrapper para SessionDescriptionHandler.
+ *
+ * Modifiers do sip.js rodam ANTES do ICE gathering (candidates = 0).
+ * Este wrapper intercepta getDescription() DEPOIS do ICE gathering,
+ * quando o SDP final já tem todos os candidates inline.
+ *
+ * Web.defaultSessionDescriptionHandlerFactory() retorna uma factory function.
+ * Wrappamos essa factory para interceptar o SDH criado e patchar getDescription.
+ */
+function createFilteredSDHFactory(): any {
+  const defaultFactory = Web.defaultSessionDescriptionHandlerFactory()
+  return (session: any, options: any) => {
+    const sdh: any = defaultFactory(session, options)
+
+    const originalGetDescription = sdh.getDescription.bind(sdh)
+    sdh.getDescription = async function (opts?: any, mods?: any) {
+      const result = await originalGetDescription(opts, mods)
+      if (result.body) {
+        const before = (result.body.match(/^a=candidate:/gm) || []).length
+        result.body = filterICECandidates(result.body)
+        const after = (result.body.match(/^a=candidate:/gm) || []).length
+        console.log(
+          `[ICE-FILTER] candidates: ${before} → ${after} | ` +
+            `SDP: ${result.body.length} bytes`
+        )
+      }
+      return result
+    }
+
+    return sdh
+  }
+}
 
 export type CallState = 'idle' | 'calling' | 'ringing' | 'connected' | 'ended'
 export type RegisterState = 'unregistered' | 'registering' | 'registered' | 'error'
@@ -115,6 +202,7 @@ export function useSIP() {
         authorizationUsername: config.username,
         authorizationPassword: config.password,
         displayName: config.displayName,
+        sessionDescriptionHandlerFactory: createFilteredSDHFactory(),
         sessionDescriptionHandlerFactoryOptions: {
           peerConnectionConfiguration: {
             iceServers: [

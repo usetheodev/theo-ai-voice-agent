@@ -23,7 +23,7 @@ services:
       - "8189:8189"                      # HTTPS/WSS (WebRTC)
       - "20000-20100:20000-20100/udp"    # RTP Media
     volumes:
-      - ./asterisk/config/pjsip.conf:/etc/asterisk/pjsip.conf    # sem :ro - entrypoint faz sed
+      - ./asterisk/config/pjsip.conf:/etc/asterisk/pjsip.conf.template:ro  # entrypoint copia e faz sed
       - ./asterisk/config/extensions.conf:/etc/asterisk/extensions.conf:ro
       - ./asterisk/config/http.conf:/etc/asterisk/http.conf:ro
       - ./asterisk/config/rtp.conf:/etc/asterisk/rtp.conf:ro
@@ -133,6 +133,12 @@ services:
       - SIP_DOMAIN=asterisk
       - SIP_PORT=5160
       - METRICS_PORT=9091
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9091/metrics || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     depends_on:
       asterisk:
         condition: service_healthy

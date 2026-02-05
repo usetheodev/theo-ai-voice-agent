@@ -37,7 +37,13 @@ if [ "$EXTERNAL_IP" = "auto" ]; then
     EXTERNAL_IP=$(resolve_host_ip) || EXTERNAL_IP=""
 fi
 
+PJSIP_TEMPLATE="/etc/asterisk/pjsip.conf.template"
 PJSIP_CONF="/etc/asterisk/pjsip.conf"
+
+# Template é montado como :ro (bind mount). Copia para path writável.
+if [ -f "$PJSIP_TEMPLATE" ]; then
+    cp "$PJSIP_TEMPLATE" "$PJSIP_CONF"
+fi
 
 if [ -n "$EXTERNAL_IP" ] && [ -f "$PJSIP_CONF" ]; then
     echo "[asterisk-entrypoint] NAT: external_media_address=$EXTERNAL_IP"
@@ -45,7 +51,6 @@ if [ -n "$EXTERNAL_IP" ] && [ -f "$PJSIP_CONF" ]; then
 elif [ -f "$PJSIP_CONF" ]; then
     echo "[asterisk-entrypoint] WARNING: Could not resolve host IP."
     echo "[asterisk-entrypoint] Media will rely on TURN relay for NAT traversal."
-    # Remove placeholder lines so Asterisk doesn't fail on invalid config
     sed -i '/__EXTERNAL_IP__/d' "$PJSIP_CONF"
 fi
 
