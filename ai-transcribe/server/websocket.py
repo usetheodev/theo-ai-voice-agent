@@ -113,7 +113,7 @@ class TranscribeServer:
             port,
             ping_interval=WS_CONFIG["ping_interval"],
             ping_timeout=WS_CONFIG["ping_timeout"],
-            max_size=10 * 1024 * 1024,  # 10MB max message
+            max_size=WS_CONFIG["max_message_size"],
         )
 
         logger.info(f"AI Transcribe Server iniciado em ws://{host}:{port}")

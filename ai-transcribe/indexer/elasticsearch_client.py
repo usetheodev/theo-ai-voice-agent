@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List
 
 from elasticsearch import AsyncElasticsearch
-from elasticsearch.exceptions import NotFoundError, ConnectionError as ESConnectionError
+from elasticsearch.exceptions import ConnectionError as ESConnectionError
 
 from config import ES_CONFIG
 

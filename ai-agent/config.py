@@ -6,24 +6,14 @@ Veja .env.example para documentação detalhada de cada variável.
 """
 
 import os
-from typing import List, Optional
+import sys
 from dotenv import load_dotenv
 
+# Adiciona shared ao path para imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared'))
+from shared_config import parse_bool, parse_list
+
 load_dotenv()
-
-
-def _parse_bool(value: str, default: bool = False) -> bool:
-    """Parse boolean de string"""
-    if not value:
-        return default
-    return value.lower() in ("true", "1", "yes", "on")
-
-
-def _parse_list(value: str, default: List[str]) -> List[str]:
-    """Parse lista separada por vírgula"""
-    if not value:
-        return default
-    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 # =============================================================================
@@ -48,6 +38,9 @@ WS_CONFIG = {
 
     # Timeout para fechar conexão WebSocket (segundos)
     "close_timeout": int(os.getenv("WS_CLOSE_TIMEOUT", "5")),
+
+    # Tamanho máximo de mensagem WebSocket (bytes)
+    "max_message_size": int(os.getenv("WS_MAX_MESSAGE_SIZE", str(10 * 1024 * 1024))),
 }
 
 
@@ -88,6 +81,10 @@ AUDIO_CONFIG = {
 
     # Taxa mínima de frames com fala para considerar que há fala (0.0 - 1.0)
     "vad_speech_ratio_threshold": float(os.getenv("VAD_SPEECH_RATIO_THRESHOLD", "0.4")),
+
+    # Tamanho do chunk para envio de áudio (bytes)
+    # 2000 bytes = ~125ms de áudio a 8kHz, 16-bit mono
+    "chunk_size_bytes": int(os.getenv("AUDIO_CHUNK_SIZE_BYTES", "2000")),
 }
 
 
@@ -110,7 +107,7 @@ METRICS_CONFIG = {
     "port": int(os.getenv("METRICS_PORT", "9090")),
 
     # Habilitar servidor de métricas
-    "enabled": _parse_bool(os.getenv("METRICS_ENABLED", "true"), True),
+    "enabled": parse_bool(os.getenv("METRICS_ENABLED", "true"), True),
 }
 
 
@@ -138,10 +135,10 @@ STT_CONFIG = {
     "beam_size": int(os.getenv("ASR_BEAM_SIZE", "1")),
 
     # Habilitar filtro VAD no Whisper
-    "vad_filter": _parse_bool(os.getenv("ASR_VAD_FILTER", "false"), False),
+    "vad_filter": parse_bool(os.getenv("ASR_VAD_FILTER", "false"), False),
 
     # Gerar timestamps de palavras
-    "word_timestamps": _parse_bool(os.getenv("ASR_WORD_TIMESTAMPS", "false"), False),
+    "word_timestamps": parse_bool(os.getenv("ASR_WORD_TIMESTAMPS", "false"), False),
 
     # Número de threads CPU (0 = auto)
     "cpu_threads": int(os.getenv("ASR_CPU_THREADS", "0")),
@@ -258,6 +255,9 @@ PIPELINE_CONFIG = {
 
     # Timeout para síntese TTS (segundos)
     "tts_timeout": float(os.getenv("PIPELINE_TTS_TIMEOUT", "60.0")),
+
+    # Timeout para aguardar sentença do LLM (segundos)
+    "sentence_timeout": float(os.getenv("PIPELINE_SENTENCE_TIMEOUT", "30.0")),
 }
 
 

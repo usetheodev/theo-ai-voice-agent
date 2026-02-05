@@ -186,7 +186,7 @@ class BaseProvider(ABC):
         await self.connect()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(self, _exc_type, _exc_val, _exc_tb) -> None:
         await self.disconnect()
 
     def _ensure_connected(self) -> None:
@@ -241,6 +241,50 @@ class BaseProvider(ABC):
 
     # ==================== Retry Logic ====================
 
+    async def _execute_operation(self, operation: Callable):
+        """Execute operation, handling sync or async."""
+        if asyncio.iscoroutinefunction(operation):
+            return await operation()
+        return operation()
+
+    def _calculate_backoff_delay(self, attempt: int) -> float:
+        """Calculate backoff delay with jitter."""
+        delay = min(
+            self._config.retry_delay * (self._config.retry_backoff ** attempt),
+            self._config.retry_max_delay,
+        )
+        jitter = delay * 0.25 * (2 * random.random() - 1)
+        return max(0, delay + jitter)
+
+    def _should_attempt_gpu_fallback(self, error: Exception) -> bool:
+        """Check if GPU->CPU fallback should be attempted."""
+        return (
+            not self._fallback_attempted
+            and self._config.device_fallback == DeviceFallbackStrategy.GPU_TO_CPU
+            and self._is_gpu_error(error)
+        )
+
+    async def _attempt_cpu_fallback(
+        self,
+        operation: Callable,
+        start_time: float
+    ):
+        """Attempt CPU fallback after GPU failure."""
+        self._fallback_attempted = True
+        logger.warning(
+            f"{self.provider_name}: GPU error after retries, "
+            "attempting CPU fallback"
+        )
+        await self.reconnect_with_device("cpu")
+        try:
+            result = await self._execute_operation(operation)
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            self._metrics.record_success(latency_ms)
+            return result
+        except Exception as cpu_err:
+            self._metrics.record_failure(str(cpu_err))
+            raise
+
     async def _with_retry(
         self,
         operation: Callable,
@@ -254,11 +298,7 @@ class BaseProvider(ABC):
             start_time = time.perf_counter()
 
             try:
-                if asyncio.iscoroutinefunction(operation):
-                    result = await operation()
-                else:
-                    result = operation()
-
+                result = await self._execute_operation(operation)
                 latency_ms = (time.perf_counter() - start_time) * 1000
                 self._metrics.record_success(latency_ms)
                 return result
@@ -267,41 +307,13 @@ class BaseProvider(ABC):
                 last_exception = e
 
                 if attempt >= self._config.retry_attempts:
-                    # Check for GPU→CPU fallback
-                    if (
-                        not self._fallback_attempted
-                        and self._config.device_fallback == DeviceFallbackStrategy.GPU_TO_CPU
-                        and self._is_gpu_error(e)
-                    ):
-                        self._fallback_attempted = True
-                        logger.warning(
-                            f"{self.provider_name}: GPU error after retries, "
-                            "attempting CPU fallback"
-                        )
-                        await self.reconnect_with_device("cpu")
-                        try:
-                            if asyncio.iscoroutinefunction(operation):
-                                result = await operation()
-                            else:
-                                result = operation()
-                            latency_ms = (time.perf_counter() - start_time) * 1000
-                            self._metrics.record_success(latency_ms)
-                            return result
-                        except Exception as cpu_err:
-                            self._metrics.record_failure(str(cpu_err))
-                            raise
+                    if self._should_attempt_gpu_fallback(e):
+                        return await self._attempt_cpu_fallback(operation, start_time)
 
                     self._metrics.record_failure(str(e))
                     raise
 
-                # Calculate backoff delay with jitter
-                delay = min(
-                    self._config.retry_delay * (self._config.retry_backoff ** attempt),
-                    self._config.retry_max_delay,
-                )
-                jitter = delay * 0.25 * (2 * random.random() - 1)
-                delay = max(0, delay + jitter)
-
+                delay = self._calculate_backoff_delay(attempt)
                 logger.warning(
                     f"{self.provider_name}: Retry {attempt + 1}/{self._config.retry_attempts} "
                     f"after {delay:.2f}s - {e}"

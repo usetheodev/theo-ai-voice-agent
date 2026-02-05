@@ -190,7 +190,7 @@ async def main():
     server = MediaServer()
 
     # Handler para shutdown graceful
-    def signal_handler(signum, frame):
+    def signal_handler(_signum, _frame):
         logger.info("Recebido sinal de shutdown...")
         server.trigger_shutdown()
 

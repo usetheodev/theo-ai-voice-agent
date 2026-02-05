@@ -24,6 +24,8 @@ import time
 from dataclasses import dataclass
 from typing import AsyncGenerator, Optional, Tuple, TYPE_CHECKING
 
+from config import PIPELINE_CONFIG
+
 if TYPE_CHECKING:
     from providers.llm import LLMProvider
     from providers.tts import TTSProvider
@@ -129,7 +131,7 @@ class SentencePipeline:
                 try:
                     sentence = await asyncio.wait_for(
                         sentence_queue.get(),
-                        timeout=30.0
+                        timeout=PIPELINE_CONFIG["sentence_timeout"]
                     )
                 except asyncio.TimeoutError:
                     logger.warning("Timeout aguardando sentença do LLM")

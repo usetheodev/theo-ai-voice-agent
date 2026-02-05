@@ -137,7 +137,7 @@ async def main():
     app = AITranscribe()
 
     # Handler para shutdown graceful
-    def signal_handler(signum, frame):
+    def signal_handler(_signum, _frame):
         logger.info("Recebido sinal de shutdown...")
         app.trigger_shutdown()
 

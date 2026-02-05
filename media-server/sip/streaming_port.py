@@ -277,6 +277,57 @@ class StreamingAudioPort(pj.AudioMediaPort):
         # Não usado para captura - apenas para playback
         pass
 
+    def _extract_audio_data(self, frame: pj.MediaFrame) -> Optional[bytes]:
+        """Extrai e prepara dados de áudio do frame."""
+        audio_data = bytes(frame.buf)
+        if len(audio_data) == 0:
+            return None
+
+        # Track RTP quality (antes do downsampling)
+        self.rtp_tracker.track_frame(len(audio_data))
+
+        # Downsampling: 16kHz -> 8kHz
+        if self.input_sample_rate != self.output_sample_rate:
+            audio_data = self._downsample(audio_data)
+
+        return audio_data
+
+    def _invoke_callback_safe(self, callback: Optional[Callable], name: str):
+        """Invoca callback de forma segura."""
+        if callback:
+            try:
+                callback()
+            except Exception as e:
+                logger.error(f"Erro em {name}: {e}")
+
+    def _dispatch_audio(self, audio_data: bytes):
+        """Envia áudio para o destino apropriado."""
+        if self.use_fork and self.fork_manager:
+            self.fork_manager.fork_audio(self.session_id, audio_data)
+            self.bytes_sent += len(audio_data)
+        else:
+            self._send_audio_async(audio_data)
+
+    def _handle_speech_end(self):
+        """Processa fim de fala."""
+        self._send_audio_end_async()
+        self._invoke_callback_safe(self.on_speech_end, "on_speech_end")
+
+    def _process_normal_mode(self, audio_data: bytes, speech_ended: bool):
+        """Processa audio no modo normal (acumula e envia)."""
+        self.send_buffer.extend(audio_data)
+
+        # Envia quando buffer estiver cheio ou fim de fala
+        should_send = len(self.send_buffer) >= self.send_buffer_max or speech_ended
+
+        if should_send and len(self.send_buffer) > 0:
+            audio_to_send = bytes(self.send_buffer)
+            self.send_buffer = bytearray()
+            self._dispatch_audio(audio_to_send)
+
+        if speech_ended:
+            self._handle_speech_end()
+
     def onFrameReceived(self, frame: pj.MediaFrame):
         """
         Chamado quando um frame de áudio é recebido do RTP.
@@ -295,61 +346,20 @@ class StreamingAudioPort(pj.AudioMediaPort):
 
         try:
             with self._lock:
-                # Obtém dados do frame
-                audio_data = bytes(frame.buf)
-
-                if len(audio_data) == 0:
+                audio_data = self._extract_audio_data(frame)
+                if audio_data is None:
                     return
-
-                # Track RTP quality (antes do downsampling)
-                self.rtp_tracker.track_frame(len(audio_data))
-
-                # Downsampling: 16kHz -> 8kHz
-                if self.input_sample_rate != self.output_sample_rate:
-                    audio_data = self._downsample(audio_data)
 
                 # VAD em tempo real (sempre executa para barge-in)
                 speech_started, speech_ended = self.vad.process_frame(audio_data)
 
                 # Callback de início de fala (importante para barge-in!)
-                if speech_started and self.on_speech_start:
-                    try:
-                        self.on_speech_start()
-                    except Exception as e:
-                        logger.error(f"Erro em on_speech_start: {e}")
+                if speech_started:
+                    self._invoke_callback_safe(self.on_speech_start, "on_speech_start")
 
                 # Em monitor_mode, só detecta fala - não envia áudio
-                if self.monitor_mode:
-                    self.frames_processed += 1
-                    return
-
-                # Modo normal: acumula e envia áudio
-                self.send_buffer.extend(audio_data)
-
-                # Envia quando buffer estiver cheio ou fim de fala
-                should_send = len(self.send_buffer) >= self.send_buffer_max or speech_ended
-
-                if should_send and len(self.send_buffer) > 0:
-                    audio_to_send = bytes(self.send_buffer)
-                    self.send_buffer = bytearray()
-
-                    # Usa fork manager se disponível (NUNCA bloqueia)
-                    if self.use_fork and self.fork_manager:
-                        self.fork_manager.fork_audio(self.session_id, audio_to_send)
-                        self.bytes_sent += len(audio_to_send)
-                    else:
-                        # Fallback: envio direto (pode bloquear se AI Agent lento)
-                        self._send_audio_async(audio_to_send)
-
-                # Notifica fim de fala
-                if speech_ended:
-                    self._send_audio_end_async()
-
-                    if self.on_speech_end:
-                        try:
-                            self.on_speech_end()
-                        except Exception as e:
-                            logger.error(f"Erro em on_speech_end: {e}")
+                if not self.monitor_mode:
+                    self._process_normal_mode(audio_data, speech_ended)
 
                 self.frames_processed += 1
 

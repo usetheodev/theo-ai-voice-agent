@@ -427,31 +427,49 @@ class WebSocketClient:
             # Processa mensagens de controle padrão (legado)
             msg = parse_control_message(data)
 
-            if isinstance(msg, SessionStartedMessage):
-                # Resolve future pendente (modo legado)
-                future = self._pending_sessions.get(msg.session_id)
-                if future and not future.done():
-                    future.set_result(True)
-                if self.on_session_started:
-                    self.on_session_started(msg.session_id)
-
-            elif isinstance(msg, ResponseStartMessage):
-                logger.info(f"[{msg.session_id[:8]}]  Resposta: {msg.text[:50]}...")
-                if self.on_response_start:
-                    self.on_response_start(msg.session_id, msg.text)
-
-            elif isinstance(msg, ResponseEndMessage):
-                logger.debug(f"[{msg.session_id[:8]}] Resposta concluída")
-                if self.on_response_end:
-                    self.on_response_end(msg.session_id)
-
-            elif isinstance(msg, ErrorMessage):
-                logger.error(f"[{msg.session_id[:8]}] Erro: {msg.code} - {msg.message}")
-                if self.on_error:
-                    self.on_error(msg.session_id, msg.code, msg.message)
+            # Dispatch para handlers específicos
+            handler = self._get_message_handler(msg)
+            if handler:
+                handler(msg)
 
         except Exception as e:
             logger.error(f"Erro ao processar mensagem de controle: {e}")
+
+    def _get_message_handler(self, msg) -> Optional[Callable]:
+        """Retorna handler apropriado para o tipo de mensagem."""
+        handlers = {
+            SessionStartedMessage: self._handle_session_started,
+            ResponseStartMessage: self._handle_response_start,
+            ResponseEndMessage: self._handle_response_end,
+            ErrorMessage: self._handle_error,
+        }
+        return handlers.get(type(msg))
+
+    def _handle_session_started(self, msg: SessionStartedMessage):
+        """Handler para session.started (modo legado)."""
+        future = self._pending_sessions.get(msg.session_id)
+        if future and not future.done():
+            future.set_result(True)
+        if self.on_session_started:
+            self.on_session_started(msg.session_id)
+
+    def _handle_response_start(self, msg: ResponseStartMessage):
+        """Handler para response.start."""
+        logger.info(f"[{msg.session_id[:8]}]  Resposta: {msg.text[:50]}...")
+        if self.on_response_start:
+            self.on_response_start(msg.session_id, msg.text)
+
+    def _handle_response_end(self, msg: ResponseEndMessage):
+        """Handler para response.end."""
+        logger.debug(f"[{msg.session_id[:8]}] Resposta concluída")
+        if self.on_response_end:
+            self.on_response_end(msg.session_id)
+
+    def _handle_error(self, msg: ErrorMessage):
+        """Handler para error."""
+        logger.error(f"[{msg.session_id[:8]}] Erro: {msg.code} - {msg.message}")
+        if self.on_error:
+            self.on_error(msg.session_id, msg.code, msg.message)
 
     async def _handle_asp_control_message(self, data: str):
         """Processa mensagens de controle ASP."""

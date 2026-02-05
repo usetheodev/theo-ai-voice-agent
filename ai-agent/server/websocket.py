@@ -13,7 +13,7 @@ from typing import Set, Optional, Dict
 import websockets
 from websockets.server import WebSocketServerProtocol
 
-from config import WS_CONFIG, SESSION_CONFIG
+from config import WS_CONFIG, SESSION_CONFIG, AUDIO_CONFIG
 from ws.protocol import (
     MessageType,
     AudioConfig,
@@ -35,8 +35,6 @@ from server.session import SessionManager, Session
 from server.asp_handler import (
     ASPHandler,
     ASPSession,
-    create_default_vad_config,
-    create_default_audio_config,
 )
 from metrics import (
     track_websocket_connect,
@@ -79,7 +77,7 @@ class AIAgentServer:
             port,
             ping_interval=WS_CONFIG["ping_interval"],
             ping_timeout=WS_CONFIG["ping_timeout"],
-            max_size=10 * 1024 * 1024,  # 10MB max message
+            max_size=WS_CONFIG["max_message_size"],
         )
 
         logger.info(f" AI Agent Server iniciado em ws://{host}:{port}")
@@ -179,9 +177,7 @@ class AIAgentServer:
     async def _handle_asp_message(self, websocket: WebSocketServerProtocol, data: str):
         """Processa mensagem do protocolo ASP"""
         from asp_protocol import (
-            SessionStartMessage as ASPSessionStart,
             SessionUpdateMessage,
-            SessionEndMessage as ASPSessionEnd,
             MessageType,
         )
 
@@ -208,8 +204,6 @@ class AIAgentServer:
 
     async def _handle_asp_session_start(self, websocket: WebSocketServerProtocol, msg):
         """Handler para session.start ASP"""
-        from asp_protocol import SessionStartMessage as ASPSessionStart
-
         success, asp_session = await self._asp_handler.handle_session_start(websocket, msg)
 
         if not success:
@@ -558,10 +552,10 @@ class AIAgentServer:
     async def _send_audio(self, websocket: WebSocketServerProtocol, session_id: str, audio_data: bytes):
         """Envia áudio em chunks otimizados para baixa latência
 
-        Chunk size reduzido para ~125ms (2000 bytes a 8kHz)
+        Chunk size configurável via AUDIO_CHUNK_SIZE_BYTES
         Sem delay entre chunks - WebSocket já tem flow control
         """
-        CHUNK_SIZE = 2000  # ~125ms de áudio a 8kHz (era 4000 = 250ms)
+        CHUNK_SIZE = AUDIO_CONFIG["chunk_size_bytes"]
 
         for i in range(0, len(audio_data), CHUNK_SIZE):
             chunk = audio_data[i:i + CHUNK_SIZE]

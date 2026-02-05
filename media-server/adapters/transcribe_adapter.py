@@ -103,7 +103,7 @@ class TranscribeAdapter:
     async def _receive_capabilities(self):
         """Recebe e processa protocol.capabilities."""
         try:
-            msg = await asyncio.wait_for(self.ws.recv(), timeout=5.0)
+            msg = await asyncio.wait_for(self.ws.recv(), timeout=TRANSCRIBE_CONFIG["caps_timeout"])
             # Apenas loga, nao precisa processar
             logger.debug(f"Capabilities recebidas: {msg[:100]}...")
         except asyncio.TimeoutError:

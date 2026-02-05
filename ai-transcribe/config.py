@@ -6,24 +6,14 @@ Veja .env.example para documentacao detalhada de cada variavel.
 """
 
 import os
-from typing import List
+import sys
 from dotenv import load_dotenv
 
+# Adiciona shared ao path para imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared'))
+from shared_config import parse_bool, parse_list
+
 load_dotenv()
-
-
-def _parse_bool(value: str, default: bool = False) -> bool:
-    """Parse boolean de string"""
-    if not value:
-        return default
-    return value.lower() in ("true", "1", "yes", "on")
-
-
-def _parse_list(value: str, default: List[str]) -> List[str]:
-    """Parse lista separada por virgula"""
-    if not value:
-        return default
-    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 # =============================================================================
@@ -37,6 +27,7 @@ WS_CONFIG = {
     "ping_interval": int(os.getenv("WS_PING_INTERVAL", "30")),
     "ping_timeout": int(os.getenv("WS_PING_TIMEOUT", "10")),
     "close_timeout": int(os.getenv("WS_CLOSE_TIMEOUT", "5")),
+    "max_message_size": int(os.getenv("WS_MAX_MESSAGE_SIZE", str(10 * 1024 * 1024))),
 }
 
 
@@ -45,12 +36,12 @@ WS_CONFIG = {
 # =============================================================================
 
 ES_CONFIG = {
-    "hosts": _parse_list(os.getenv("ES_HOSTS", "http://elasticsearch:9200"), ["http://elasticsearch:9200"]),
+    "hosts": parse_list(os.getenv("ES_HOSTS", "http://elasticsearch:9200"), ["http://elasticsearch:9200"]),
     "index_prefix": os.getenv("ES_INDEX_PREFIX", "voice-transcriptions"),
     "bulk_size": int(os.getenv("ES_BULK_SIZE", "50")),
     "flush_interval_ms": int(os.getenv("ES_FLUSH_INTERVAL_MS", "1000")),
     "max_retries": int(os.getenv("ES_MAX_RETRIES", "3")),
-    "retry_on_timeout": _parse_bool(os.getenv("ES_RETRY_ON_TIMEOUT", "true"), True),
+    "retry_on_timeout": parse_bool(os.getenv("ES_RETRY_ON_TIMEOUT", "true"), True),
     "request_timeout": int(os.getenv("ES_REQUEST_TIMEOUT", "30")),
 }
 
@@ -83,7 +74,7 @@ LOG_CONFIG = {
 
 METRICS_CONFIG = {
     "port": int(os.getenv("METRICS_PORT", "9093")),
-    "enabled": _parse_bool(os.getenv("METRICS_ENABLED", "true"), True),
+    "enabled": parse_bool(os.getenv("METRICS_ENABLED", "true"), True),
 }
 
 
@@ -98,7 +89,7 @@ STT_CONFIG = {
     "compute_type": os.getenv("STT_COMPUTE_TYPE", "int8"),
     "device": os.getenv("STT_DEVICE", "cpu"),
     "beam_size": int(os.getenv("STT_BEAM_SIZE", "1")),
-    "vad_filter": _parse_bool(os.getenv("STT_VAD_FILTER", "false"), False),
+    "vad_filter": parse_bool(os.getenv("STT_VAD_FILTER", "false"), False),
     "cpu_threads": int(os.getenv("STT_CPU_THREADS", "0")),
     "num_workers": int(os.getenv("STT_NUM_WORKERS", "1")),
     "executor_workers": int(os.getenv("STT_EXECUTOR_WORKERS", "2")),

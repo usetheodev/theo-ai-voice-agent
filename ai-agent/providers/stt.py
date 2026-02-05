@@ -31,7 +31,6 @@ from providers.base import (
     HealthCheckResult,
     ProviderConfig,
     ProviderHealth,
-    ProviderMetrics,
     DeviceFallbackStrategy,
 )
 
