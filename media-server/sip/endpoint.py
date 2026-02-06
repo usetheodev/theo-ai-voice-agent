@@ -4,7 +4,9 @@ Endpoint SIP com PJSUA2
 
 import logging
 import asyncio
-from typing import Optional, TYPE_CHECKING
+import time
+import threading
+from typing import Optional, Callable, TYPE_CHECKING
 
 try:
     import pjsua2 as pj
@@ -15,12 +17,19 @@ except ImportError:
 
 from config import SIP_CONFIG, SBC_CONFIG, LOG_CONFIG
 from sip.account import MyAccount
+from metrics import track_sip_registration
 
 if TYPE_CHECKING:
     from ports.audio_destination import IAudioDestination
     from core.media_fork_manager import MediaForkManager
 
 logger = logging.getLogger("media-server.endpoint")
+
+# Intervalo de health check em segundos
+HEALTH_CHECK_INTERVAL = 15
+
+# Máximo de falhas consecutivas antes de recriar endpoint
+MAX_CONSECUTIVE_FAILURES = 3
 
 
 class SIPEndpoint:
@@ -41,6 +50,28 @@ class SIPEndpoint:
         self.account: Optional[MyAccount] = None
         self.running = False
 
+        # Health check state
+        self._consecutive_failures = 0
+        self._health_check_thread: Optional[threading.Thread] = None
+        self._on_sip_state_change: Optional[Callable[[str], None]] = None
+
+    def set_on_sip_state_change(self, callback: Callable[[str], None]):
+        """Define callback para mudança de estado SIP.
+
+        Args:
+            callback: função(state: str) chamada quando estado muda.
+                      States: 'registered', 'unregistered', 'failed', 'recreated'
+        """
+        self._on_sip_state_change = callback
+
+    def _notify_state_change(self, state: str):
+        """Notifica callback de mudança de estado (thread-safe para asyncio)"""
+        if self._on_sip_state_change and self.loop:
+            try:
+                self.loop.call_soon_threadsafe(self._on_sip_state_change, state)
+            except RuntimeError:
+                pass  # Loop já fechado
+
     def start(self):
         """Inicia o endpoint SIP"""
         logger.info(" Iniciando Endpoint SIP...")
@@ -52,6 +83,18 @@ class SIPEndpoint:
         else:
             logger.info(" Modo local (Asterisk direto)")
 
+        self._create_and_start_endpoint()
+        self.running = True
+
+        # Inicia health check em thread separada
+        self._health_check_thread = threading.Thread(
+            target=self._health_check_loop, daemon=True
+        )
+        self._health_check_thread.start()
+        logger.info(f" SIP health check iniciado (intervalo={HEALTH_CHECK_INTERVAL}s)")
+
+    def _create_and_start_endpoint(self):
+        """Cria, inicializa e registra o endpoint PJSIP"""
         # Cria endpoint PJSIP
         self.ep = pj.Endpoint()
         self.ep.libCreate()
@@ -79,7 +122,6 @@ class SIPEndpoint:
 
         # Registra
         self._register()
-        self.running = True
 
     def _setup_transport(self):
         """Configura transporte SIP"""
@@ -190,10 +232,126 @@ class SIPEndpoint:
         )
         self.account.create(acc_cfg)
 
+    def _health_check_loop(self):
+        """Loop de health check periódico (roda em thread separada)"""
+        # Registra thread no PJSIP (obrigatório para chamar getInfo, setRegistration, etc)
+        try:
+            pj.Endpoint.instance().libRegisterThread("health-check")
+        except Exception:
+            pass
+
+        while self.running:
+            time.sleep(HEALTH_CHECK_INTERVAL)
+            if not self.running:
+                break
+
+            try:
+                self._check_registration()
+            except Exception as e:
+                logger.error(f"Erro no health check SIP: {e}")
+
+    def _check_registration(self):
+        """Verifica estado de registro SIP e tenta recuperar se necessário"""
+        if not self.account:
+            return
+
+        try:
+            ai = self.account.getInfo()
+            reg_status = ai.regStatus
+        except Exception as e:
+            logger.warning(f"Não foi possível obter status SIP: {e}")
+            self._consecutive_failures += 1
+            self._handle_failure()
+            return
+
+        if reg_status == 200:
+            # Registro OK
+            if self._consecutive_failures > 0:
+                logger.info("SIP registration restored")
+                self._notify_state_change('registered')
+                track_sip_registration(success=True)
+            elif self._consecutive_failures == 0:
+                # Primeira verificação após startup - notifica estado registrado
+                self._notify_state_change('registered')
+            self._consecutive_failures = 0
+        else:
+            # Registro perdido ou com problema
+            self._consecutive_failures += 1
+            logger.warning(
+                f"SIP registration lost (status={reg_status}), "
+                f"attempting re-register... "
+                f"(falha {self._consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})"
+            )
+            track_sip_registration(success=False, error_code=reg_status)
+            self._notify_state_change('unregistered')
+
+            if self._consecutive_failures < MAX_CONSECUTIVE_FAILURES:
+                # Tenta re-registro
+                try:
+                    self.account.setRegistration(True)
+                    logger.info("Re-registro SIP solicitado")
+                except Exception as e:
+                    logger.error(f"Falha ao solicitar re-registro: {e}")
+            else:
+                self._handle_failure()
+
+    def _handle_failure(self):
+        """Trata falhas consecutivas - recria endpoint se necessário"""
+        if self._consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+            logger.warning(
+                f"SIP endpoint recreated after {MAX_CONSECUTIVE_FAILURES} failures"
+            )
+            self._notify_state_change('failed')
+            self._recreate_endpoint()
+
+    def _recreate_endpoint(self):
+        """Destrói e recria o endpoint SIP"""
+        logger.info("Recriando endpoint SIP - início da recriação")
+
+        # Destrói endpoint atual
+        try:
+            if self.account:
+                if self.account.current_call:
+                    try:
+                        self.account.current_call.hangup(pj.CallOpParam())
+                    except Exception:
+                        pass
+                    # Aguarda callbacks PJSIP finalizarem após hangup
+                    time.sleep(0.5)
+                self.account.shutdown()
+                self.account = None
+                # Aguarda shutdown da account completar antes de destruir lib
+                time.sleep(0.2)
+        except Exception as e:
+            logger.warning(f"Erro ao destruir account: {e}")
+
+        try:
+            if self.ep:
+                self.ep.libDestroy()
+                self.ep = None
+        except Exception as e:
+            logger.warning(f"Erro ao destruir endpoint: {e}")
+
+        # Recria
+        try:
+            self._create_and_start_endpoint()
+            self._consecutive_failures = 0
+            self._notify_state_change('recreated')
+            logger.info("Endpoint SIP recriado com sucesso - fim da recriação")
+        except Exception as e:
+            logger.error(f"Falha ao recriar endpoint SIP: {e}")
+            # Reseta falhas para que o health check possa tentar novamente
+            self._consecutive_failures = 0
+            self._notify_state_change('failed')
+
     def stop(self):
         """Para o endpoint"""
         logger.info(" Parando endpoint SIP...")
         self.running = False
+
+        # Aguarda thread de health check encerrar
+        if self._health_check_thread and self._health_check_thread.is_alive():
+            self._health_check_thread.join(timeout=HEALTH_CHECK_INTERVAL + 2)
 
         if self.account:
             if self.account.current_call:

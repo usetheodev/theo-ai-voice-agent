@@ -203,7 +203,7 @@ class FasterWhisperSTT(STTProvider):
         )
 
         # Load model in thread pool
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         self._model = await loop.run_in_executor(None, self._load_model)
 
         # Create executor for transcription
@@ -266,7 +266,7 @@ class FasterWhisperSTT(STTProvider):
             import numpy as np
             test_audio = np.zeros(int(0.5 * 16000), dtype=np.float32)
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             segments, _ = await loop.run_in_executor(
                 self._executor,
                 lambda: self._model.transcribe(test_audio, beam_size=1),
@@ -297,7 +297,7 @@ class FasterWhisperSTT(STTProvider):
         warmup_audio = np.zeros(int(0.5 * 16000), dtype=np.float32)
 
         start = time.perf_counter()
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def _warmup():
             segments, _ = self._model.transcribe(warmup_audio, beam_size=1)
@@ -312,6 +312,14 @@ class FasterWhisperSTT(STTProvider):
     async def transcribe(self, audio_data: bytes) -> str:
         """Transcreve audio usando faster-whisper (in-memory, sem arquivo)."""
         if self._model is None:
+            return ""
+
+        # Circuit breaker: fail-fast se provider está indisponível
+        from providers.base import ProviderUnavailableError
+        try:
+            self._check_circuit_breaker()
+        except ProviderUnavailableError:
+            logger.warning(f"{self.provider_name}: circuit breaker OPEN - skipping transcription")
             return ""
 
         start_time = time.perf_counter()
@@ -333,7 +341,7 @@ class FasterWhisperSTT(STTProvider):
                 )
                 return list(segments), info
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             all_segments, info = await loop.run_in_executor(
                 self._executor, _transcribe_sync
             )
@@ -342,6 +350,7 @@ class FasterWhisperSTT(STTProvider):
 
             latency_ms = (time.perf_counter() - start_time) * 1000
             self._metrics.record_success(latency_ms)
+            self._record_circuit_success()
 
             if text:
                 logger.info(
@@ -355,6 +364,7 @@ class FasterWhisperSTT(STTProvider):
         except Exception as e:
             logger.error(f"Erro na transcrição: {e}")
             self._metrics.record_failure(str(e))
+            self._record_circuit_failure()
             return ""
 
     async def transcribe_file(self, audio_file: str) -> str:
@@ -379,7 +389,7 @@ class FasterWhisperSTT(STTProvider):
                 all_segments = list(segments)
                 return all_segments, info
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             all_segments, info = await loop.run_in_executor(
                 self._executor,
                 _transcribe_sync,
@@ -441,7 +451,7 @@ class WhisperLocalSTT(STTProvider):
 
         logger.info(f"Carregando modelo Whisper: {self._whisper_config.model}")
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         self._model = await loop.run_in_executor(
             None,
             lambda: whisper.load_model(self._whisper_config.model),
@@ -499,7 +509,7 @@ class WhisperLocalSTT(STTProvider):
         start_time = time.perf_counter()
 
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
                 lambda: self._model.transcribe(
@@ -599,7 +609,7 @@ class OpenAIWhisperSTT(STTProvider):
             audio_file.seek(0)
             audio_file.name = "audio.wav"
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(
                 None,
                 lambda: self.client.audio.transcriptions.create(
@@ -631,7 +641,7 @@ class OpenAIWhisperSTT(STTProvider):
         start_time = time.perf_counter()
 
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
 
             def _transcribe():
                 with open(audio_file, 'rb') as f:
@@ -692,9 +702,14 @@ def _create_stt_instance(provider: str = None) -> STTProvider:
     raise RuntimeError("Nenhum provedor STT disponível")
 
 
-async def create_stt_provider() -> STTProvider:
-    """Factory assíncrona para criar, conectar e aquecer provedor STT."""
-    stt = _create_stt_instance()
+async def create_stt_provider(provider_name: str = None) -> STTProvider:
+    """Factory assíncrona para criar, conectar e aquecer provedor STT.
+
+    Args:
+        provider_name: Nome do provider (ex: 'faster-whisper', 'openai').
+                      Se None, usa STT_CONFIG['provider'].
+    """
+    stt = _create_stt_instance(provider=provider_name)
     await stt.connect()
 
     # Warmup apenas para faster-whisper (modelo local)

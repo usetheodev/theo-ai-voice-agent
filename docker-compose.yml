@@ -103,7 +103,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ai-agent-cache:/root/.cache
+      - ${MODEL_CACHE_DIR:-~/.cache}:/root/.cache
     deploy:
       resources:
         limits:
@@ -194,14 +194,14 @@ services:
       - STT_MODEL=tiny
       - STT_LANGUAGE=pt
     volumes:
-      - ai-transcribe-cache:/root/.cache
+      - ${MODEL_CACHE_DIR:-~/.cache}:/root/.cache
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 2G
           cpus: '1.0'
         reservations:
-          memory: 512M
+          memory: 1G
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -343,8 +343,6 @@ networks:
 volumes:
   asterisk-spool:
   asterisk-logs:
-  ai-agent-cache:
-  ai-transcribe-cache:
   elasticsearch-data:
   prometheus-data:
   grafana-data:

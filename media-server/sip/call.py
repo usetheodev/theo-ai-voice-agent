@@ -123,6 +123,17 @@ class MyCall(pj.Call):
         log_func = getattr(logger, level, logger.info)
         log_func(f"[{self.unique_call_id}] {message}")
 
+    def _log_future_exception(self, future):
+        """Callback para logar exceções não capturadas de futures."""
+        try:
+            exc = future.exception()
+            if exc:
+                self._log(f"Future falhou: {exc}", "error")
+        except asyncio.CancelledError:
+            self._log("Future cancelado", "warning")
+        except asyncio.InvalidStateError:
+            pass
+
     def onCallState(self, prm):
         """Estado da chamada mudou"""
         ci = self.getInfo()
@@ -184,19 +195,28 @@ class MyCall(pj.Call):
         # Para fork session (se habilitado)
         if self.use_fork and self.fork_manager:
             try:
-                asyncio.run_coroutine_threadsafe(
+                future = asyncio.run_coroutine_threadsafe(
                     self.fork_manager.stop_session(self.session_id),
                     self.loop
-                ).result(timeout=2)
+                )
+                future.result(timeout=2)
+            except TimeoutError:
+                self._log("Timeout ao parar fork session", "warning")
+            except asyncio.CancelledError:
+                self._log("Fork session stop cancelado", "warning")
             except Exception as e:
                 self._log(f"Erro ao parar fork session: {e}", "warning")
 
         # Encerra sessão no destino de áudio
         if self.audio_destination and self.audio_destination.is_connected:
-            asyncio.run_coroutine_threadsafe(
-                self.audio_destination.end_session(self.session_id, "hangup"),
-                self.loop
-            )
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    self.audio_destination.end_session(self.session_id, "hangup"),
+                    self.loop
+                )
+                future.add_done_callback(self._log_future_exception)
+            except Exception as e:
+                self._log(f"Erro ao encerrar sessão de áudio: {e}", "warning")
 
         if self.conversation_thread:
             self.conversation_thread.join(timeout=2)
@@ -226,6 +246,12 @@ class MyCall(pj.Call):
                     self.use_fork = False
                 else:
                     self._log("Fork session iniciada")
+            except TimeoutError:
+                self._log("Timeout ao iniciar fork session - continuando sem fork", "warning")
+                self.use_fork = False
+            except asyncio.CancelledError:
+                self._log("Fork session start cancelado - continuando sem fork", "warning")
+                self.use_fork = False
             except Exception as e:
                 self._log(f"Erro ao iniciar fork session: {e} - continuando sem fork", "warning")
                 self.use_fork = False
@@ -290,6 +316,12 @@ class MyCall(pj.Call):
             )
             result = future.result(timeout=session_timeout)
             return result
+        except TimeoutError:
+            self._log(f"Timeout ao iniciar sessão de áudio ({session_timeout}s)", "error")
+            return False
+        except asyncio.CancelledError:
+            self._log("Início de sessão de áudio cancelado", "error")
+            return False
         except Exception as e:
             self._log(f"Erro ao iniciar sessão de áudio: {e}", "error")
             return False
@@ -453,6 +485,12 @@ class MyCall(pj.Call):
 
     def _on_playback_complete(self):
         """Chamado quando resposta termina - aguarda buffer esvaziar"""
+        # Registra thread no PJSIP (necessário caso execute hangup via pending_call_action)
+        try:
+            pj.Endpoint.instance().libRegisterThread("playback-complete")
+        except Exception:
+            pass
+
         self._wait_playback_finished()
 
         # Sinaliza que greeting terminou de tocar (habilita barge-in)
@@ -528,6 +566,12 @@ class MyCall(pj.Call):
             else:
                 self._log(f"AMI Redirect falhou para {target}", "error")
                 self._resume_streaming()
+        except TimeoutError:
+            self._log(f"Timeout no AMI Redirect para {target} (10s)", "error")
+            self._resume_streaming()
+        except asyncio.CancelledError:
+            self._log(f"AMI Redirect cancelado para {target}", "error")
+            self._resume_streaming()
         except Exception as e:
             self._log(f"Erro no AMI Redirect: {e}", "error")
             self._resume_streaming()
@@ -670,10 +714,11 @@ class MyCall(pj.Call):
         # Notifica fork_manager para enviar audio.speech.end ao transcribe
         if self.use_fork and self.fork_manager:
             try:
-                asyncio.run_coroutine_threadsafe(
+                future = asyncio.run_coroutine_threadsafe(
                     self.fork_manager.send_audio_end(self.session_id),
                     self.loop
                 )
+                future.add_done_callback(self._log_future_exception)
             except Exception as e:
                 self._log(f"Erro ao enviar audio.end para transcribe: {e}", "warning")
 

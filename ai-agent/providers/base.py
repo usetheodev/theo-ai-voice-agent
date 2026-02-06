@@ -2,7 +2,7 @@
 Base provider infrastructure for AI Agent.
 
 Provides base classes and utilities for all providers (ASR, LLM, TTS).
-Adapted from modelo_providers architecture for simplified use.
+Includes circuit breaker pattern for resilience.
 """
 
 import asyncio
@@ -32,6 +32,18 @@ class ProviderHealth(Enum):
     UNKNOWN = "unknown"
 
 
+class CircuitState(Enum):
+    """Circuit breaker states."""
+    CLOSED = "closed"      # Normal operation
+    OPEN = "open"          # Blocking all calls (fail-fast)
+    HALF_OPEN = "half_open"  # Testing recovery
+
+
+class ProviderUnavailableError(Exception):
+    """Raised when provider circuit breaker is OPEN."""
+    pass
+
+
 @dataclass
 class ProviderConfig:
     """Base configuration for providers."""
@@ -53,6 +65,16 @@ class ProviderConfig:
 
     device_fallback: DeviceFallbackStrategy = DeviceFallbackStrategy.NONE
     """Strategy for device fallback (e.g., GPU to CPU)."""
+
+    # Circuit breaker config
+    circuit_failure_threshold: int = 3
+    """Number of consecutive failures to open circuit."""
+
+    circuit_recovery_timeout: float = 30.0
+    """Seconds to wait before trying half-open."""
+
+    circuit_half_open_max_calls: int = 1
+    """Max calls allowed in half-open state."""
 
     extra: dict[str, Any] = field(default_factory=dict)
     """Additional provider-specific configuration."""
@@ -128,6 +150,7 @@ class BaseProvider(ABC):
     - Lifecycle management (connect/disconnect)
     - Health checking
     - Retry logic with exponential backoff
+    - Circuit breaker (CLOSED → OPEN → HALF_OPEN → CLOSED)
     - Metrics collection
 
     Subclasses should implement:
@@ -151,6 +174,12 @@ class BaseProvider(ABC):
         self._fallback_attempted = False
         self._is_warmed_up = False
 
+        # Circuit breaker state
+        self._circuit_state = CircuitState.CLOSED
+        self._failure_count = 0
+        self._last_failure_time: Optional[float] = None
+        self._half_open_calls = 0
+
     @property
     def config(self) -> ProviderConfig:
         return self._config
@@ -167,8 +196,84 @@ class BaseProvider(ABC):
     def health_status(self) -> ProviderHealth:
         return self._health_status
 
+    @property
+    def circuit_state(self) -> CircuitState:
+        """Current circuit breaker state (read-only, no side-effects)."""
+        return self._circuit_state
+
     def reset_metrics(self) -> None:
         self._metrics.reset()
+
+    def reset_circuit_breaker(self) -> None:
+        """Manually reset circuit breaker to CLOSED state."""
+        old_state = self._circuit_state
+        self._circuit_state = CircuitState.CLOSED
+        self._failure_count = 0
+        self._last_failure_time = None
+        self._half_open_calls = 0
+        if old_state != CircuitState.CLOSED:
+            logger.info(f"{self.provider_name}: Circuit breaker manually reset to CLOSED")
+
+    def _record_circuit_success(self) -> None:
+        """Record successful call for circuit breaker."""
+        if self._circuit_state == CircuitState.HALF_OPEN:
+            self._circuit_state = CircuitState.CLOSED
+            self._failure_count = 0
+            self._last_failure_time = None
+            self._half_open_calls = 0
+            logger.info(f"{self.provider_name}: Circuit breaker HALF_OPEN -> CLOSED (recovered)")
+        elif self._circuit_state == CircuitState.CLOSED:
+            self._failure_count = 0
+
+    def _record_circuit_failure(self) -> None:
+        """Record failed call for circuit breaker."""
+        self._failure_count += 1
+        self._last_failure_time = time.time()
+
+        if self._circuit_state == CircuitState.HALF_OPEN:
+            self._circuit_state = CircuitState.OPEN
+            logger.warning(
+                f"{self.provider_name}: Circuit breaker HALF_OPEN -> OPEN (recovery failed)"
+            )
+        elif self._circuit_state == CircuitState.CLOSED:
+            if self._failure_count >= self._config.circuit_failure_threshold:
+                self._circuit_state = CircuitState.OPEN
+                logger.warning(
+                    f"{self.provider_name}: Circuit breaker CLOSED -> OPEN "
+                    f"(after {self._failure_count} consecutive failures)"
+                )
+
+    def _check_circuit_breaker(self) -> None:
+        """Check circuit breaker state before making a call.
+
+        Also handles OPEN -> HALF_OPEN transition when recovery timeout expires.
+        """
+        # Check if OPEN should transition to HALF_OPEN
+        if self._circuit_state == CircuitState.OPEN and self._last_failure_time:
+            elapsed = time.time() - self._last_failure_time
+            if elapsed >= self._config.circuit_recovery_timeout:
+                self._circuit_state = CircuitState.HALF_OPEN
+                self._half_open_calls = 0
+                logger.info(
+                    f"{self.provider_name}: Circuit breaker OPEN -> HALF_OPEN "
+                    f"(after {elapsed:.1f}s)"
+                )
+
+        state = self._circuit_state
+
+        if state == CircuitState.OPEN:
+            raise ProviderUnavailableError(
+                f"{self.provider_name} circuit breaker is OPEN "
+                f"(will retry after {self._config.circuit_recovery_timeout}s)"
+            )
+
+        if state == CircuitState.HALF_OPEN:
+            if self._half_open_calls >= self._config.circuit_half_open_max_calls:
+                raise ProviderUnavailableError(
+                    f"{self.provider_name} circuit breaker is HALF_OPEN "
+                    f"(max test calls reached)"
+                )
+            self._half_open_calls += 1
 
     # ==================== Lifecycle ====================
 
@@ -280,9 +385,11 @@ class BaseProvider(ABC):
             result = await self._execute_operation(operation)
             latency_ms = (time.perf_counter() - start_time) * 1000
             self._metrics.record_success(latency_ms)
+            self._record_circuit_success()
             return result
         except Exception as cpu_err:
             self._metrics.record_failure(str(cpu_err))
+            self._record_circuit_failure()
             raise
 
     async def _with_retry(
@@ -290,7 +397,10 @@ class BaseProvider(ABC):
         operation: Callable,
         retry_on: Optional[tuple[type[Exception], ...]] = None,
     ):
-        """Execute operation with retry logic and exponential backoff."""
+        """Execute operation with retry logic, exponential backoff, and circuit breaker."""
+        # Check circuit breaker BEFORE attempting any call
+        self._check_circuit_breaker()
+
         retry_on = retry_on or (ConnectionError, TimeoutError)
         last_exception: Optional[Exception] = None
 
@@ -301,6 +411,7 @@ class BaseProvider(ABC):
                 result = await self._execute_operation(operation)
                 latency_ms = (time.perf_counter() - start_time) * 1000
                 self._metrics.record_success(latency_ms)
+                self._record_circuit_success()
                 return result
 
             except retry_on as e:
@@ -311,6 +422,7 @@ class BaseProvider(ABC):
                         return await self._attempt_cpu_fallback(operation, start_time)
 
                     self._metrics.record_failure(str(e))
+                    self._record_circuit_failure()
                     raise
 
                 delay = self._calculate_backoff_delay(attempt)
@@ -322,6 +434,7 @@ class BaseProvider(ABC):
 
             except Exception as e:
                 self._metrics.record_failure(str(e))
+                self._record_circuit_failure()
                 raise
 
         if last_exception:
@@ -348,7 +461,8 @@ class BaseProvider(ABC):
             f"{self.__class__.__name__}("
             f"provider_name={self.provider_name!r}, "
             f"connected={self._connected}, "
-            f"health={self._health_status.value})"
+            f"health={self._health_status.value}, "
+            f"circuit={self._circuit_state.value})"
         )
 
 

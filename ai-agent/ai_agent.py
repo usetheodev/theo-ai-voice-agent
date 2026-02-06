@@ -31,6 +31,10 @@ async def main():
     logger.info(" AI AGENT - Servidor de Conversação")
     logger.info("=" * 60)
 
+    # Valida configurações antes de iniciar
+    from config_validation import validate_config
+    validate_config()
+
     # Inicia servidor de métricas Prometheus
     if METRICS_CONFIG.get("enabled", True):
         metrics_port = METRICS_CONFIG.get("port", 9090)

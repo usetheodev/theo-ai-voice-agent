@@ -138,7 +138,7 @@ def test_session_hash():
 
     session_id = "test-session-abc123"
     hash_bytes = session_id_to_hash(session_id)
-    assert len(hash_bytes) == 4
+    assert len(hash_bytes) == 8
     print(f"  Session: {session_id}")
     print(f"  Hash: {hash_bytes.hex()}")
     print("   Session hash OK")

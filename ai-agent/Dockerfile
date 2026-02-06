@@ -18,12 +18,14 @@ COPY shared/ws/ ./shared/ws/
 
 # Copia codigo do ai-agent por ULTIMO (muda frequentemente)
 COPY ai-agent/config.py .
+COPY ai-agent/config_validation.py .
 COPY ai-agent/ai_agent.py .
 COPY ai-agent/metrics/ ./metrics/
 COPY ai-agent/ws/ ./ws/
 COPY ai-agent/server/ ./server/
 COPY ai-agent/pipeline/ ./pipeline/
 COPY ai-agent/providers/ ./providers/
+COPY ai-agent/utils/ ./utils/
 
 # =============================================================================
 # Variaveis de ambiente padrao

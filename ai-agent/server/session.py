@@ -8,9 +8,10 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional, Literal
 from datetime import datetime, timezone
 
-from config import SESSION_CONFIG
+from config import SESSION_CONFIG, AUDIO_CONFIG
 from pipeline.conversation import ConversationPipeline
 from pipeline.vad import AudioBuffer
+from pipeline.latency_budget import LatencyBudget
 from providers.pool import ProviderPool
 from ws.protocol import AudioConfig, session_id_to_hash
 from metrics import track_session_start, track_session_end, ACTIVE_SESSIONS
@@ -45,6 +46,10 @@ class Session:
     # Timestamps para métricas TTFB
     audio_end_timestamp: float = 0.0  # Quando audio.end foi recebido
     ttfb_recorded: bool = False  # Se TTFB já foi registrado para esta resposta
+
+    # Latency budget tracker (recriado a cada interação)
+    latency_budget: Optional[LatencyBudget] = None
+
 
     @property
     def session_hash(self) -> str:
@@ -90,7 +95,7 @@ class SessionManager:
 
             # Usa providers compartilhados do pool (se disponivel)
             if self._pool and self._pool.is_ready:
-                pipeline.init_with_shared_providers(self._pool.stt, self._pool.tts)
+                pipeline.init_with_shared_providers(self._pool.get_stt(), self._pool.get_tts())
             else:
                 # Fallback: inicializa providers por sessao
                 await pipeline.init_providers_async()
@@ -139,6 +144,12 @@ class SessionManager:
             # Calcula duração
             duration = (datetime.now(timezone.utc) - session.created_at).total_seconds()
 
+            # Libera recursos do pipeline (providers locais)
+            try:
+                await session.pipeline.disconnect()
+            except Exception as e:
+                logger.warning(f"[{session_id[:8]}] Erro ao desconectar pipeline: {e}")
+
             # Registra métricas
             track_session_end(reason, duration)
 
@@ -179,6 +190,12 @@ class SessionManager:
             for session_id in stale:
                 session = self.sessions[session_id]
                 duration = (now - session.created_at).total_seconds()
+
+                # Libera recursos do pipeline (providers locais)
+                try:
+                    await session.pipeline.disconnect()
+                except Exception as e:
+                    logger.warning(f"[{session_id[:8]}] Erro ao desconectar pipeline: {e}")
 
                 # Registra métricas
                 track_session_end("timeout", duration)

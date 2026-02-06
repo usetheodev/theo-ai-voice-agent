@@ -16,7 +16,7 @@ from config import LOG_CONFIG, SIP_CONFIG, AI_AGENT_CONFIG, SBC_CONFIG, METRICS_
 from adapters.ai_agent_adapter import AIAgentAdapter
 from adapters.transcribe_adapter import TranscribeAdapter
 from sip.endpoint import SIPEndpoint
-from metrics import start_metrics_server
+from metrics import start_metrics_server, SIP_REGISTRATION_STATUS
 from core.media_fork_manager import MediaForkManager
 from ami.client import AMIClient
 
@@ -41,6 +41,7 @@ class MediaServer:
         self.loop: asyncio.AbstractEventLoop = None
         self.running = False
         self._shutdown_event = asyncio.Event()
+        self._sip_ready_event: asyncio.Event = None  # Criado dentro do event loop
 
     async def start(self):
         """Inicia o Media Server"""
@@ -104,17 +105,37 @@ class MediaServer:
         else:
             logger.info("Media Fork desabilitado via config")
 
+        # Cria evento de sincronização dentro do event loop
+        self._sip_ready_event = asyncio.Event()
+
         # Inicia endpoint SIP em thread separada (pjsua2 não é asyncio)
         sip_thread = threading.Thread(target=self._run_sip, daemon=True)
         sip_thread.start()
 
-        # Aguarda SIP estar pronto
-        await asyncio.sleep(2)
+        # Aguarda SIP sinalizar que está pronto (com timeout de segurança)
+        try:
+            await asyncio.wait_for(self._sip_ready_event.wait(), timeout=15)
+        except asyncio.TimeoutError:
+            logger.warning("Timeout aguardando SIP ficar pronto - continuando")
 
         self._log_status()
 
         # Aguarda shutdown
         await self._shutdown_event.wait()
+
+    def _on_sip_state_change(self, state: str):
+        """Callback para mudança de estado SIP (chamado do event loop)"""
+        logger.info(f"SIP state change: {state}")
+
+        if state == 'registered' or state == 'recreated':
+            SIP_REGISTRATION_STATUS.state('registered')
+        elif state == 'unregistered':
+            SIP_REGISTRATION_STATUS.state('unregistered')
+        elif state == 'failed':
+            SIP_REGISTRATION_STATUS.state('failed')
+            # Notifica adaptadores que SIP caiu
+            if self.audio_destination and self.audio_destination.is_connected:
+                logger.warning("SIP down - sessões ativas podem ser afetadas")
 
     def _run_sip(self):
         """Executa endpoint SIP (em thread separada)"""
@@ -125,7 +146,11 @@ class MediaServer:
                 fork_manager=self.fork_manager,
                 ami_client=self.ami_client,
             )
+            self.sip_endpoint.set_on_sip_state_change(self._on_sip_state_change)
             self.sip_endpoint.start()
+
+            # Sinaliza que SIP está pronto (thread-safe)
+            self.loop.call_soon_threadsafe(self._sip_ready_event.set)
 
             # Loop principal do SIP
             while self.running:
@@ -135,6 +160,12 @@ class MediaServer:
             logger.error(f"Erro no SIP: {e}")
             import traceback
             traceback.print_exc()
+            # Sinaliza ready mesmo em erro para não travar o startup
+            if self._sip_ready_event and self.loop:
+                try:
+                    self.loop.call_soon_threadsafe(self._sip_ready_event.set)
+                except Exception:
+                    pass
 
     def _log_status(self):
         """Exibe status do servidor"""

@@ -99,6 +99,40 @@ PIPELINE_ERRORS = Counter(
 )
 
 # =============================================================================
+# MÉTRICAS DE CIRCUIT BREAKER
+# =============================================================================
+
+PROVIDER_CIRCUIT_BREAKER_STATE = Gauge(
+    'ai_agent_provider_circuit_breaker_state',
+    'Estado do circuit breaker (0=closed, 1=open, 2=half_open)',
+    ['provider']  # stt, llm, tts
+)
+
+# =============================================================================
+# MÉTRICAS DE BACKPRESSURE
+# =============================================================================
+
+AUDIO_FRAMES_DROPPED_BACKPRESSURE = Counter(
+    'ai_agent_audio_frames_dropped_backpressure_total',
+    'Total de frames de áudio descartados por backpressure'
+)
+
+# =============================================================================
+# MÉTRICAS DE LATÊNCIA E2E
+# =============================================================================
+
+VOICE_TO_VOICE_LATENCY = Histogram(
+    'ai_agent_voice_to_voice_latency_seconds',
+    'Latência voice-to-voice E2E (audio_end → primeiro byte de resposta)',
+    buckets=[0.5, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0]
+)
+
+LATENCY_BUDGET_EXCEEDED = Counter(
+    'ai_agent_latency_budget_exceeded_total',
+    'Total de interações que excederam o budget de latência'
+)
+
+# =============================================================================
 # MÉTRICAS DE WEBSOCKET
 # =============================================================================
 

@@ -14,6 +14,7 @@ WORKDIR /app
 # Copia modulos compartilhados PRIMEIRO
 COPY shared/asp_protocol/ ./shared/asp_protocol/
 COPY shared/shared_config/ ./shared/shared_config/
+COPY shared/ws/ ./shared/ws/
 
 # Copia codigo do ai-transcribe por ULTIMO (muda frequentemente)
 COPY ai-transcribe/config.py .

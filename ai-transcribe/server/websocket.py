@@ -37,41 +37,35 @@ from embeddings import EmbeddingProvider
 logger = logging.getLogger("ai-transcribe.server")
 
 
-# Constantes do protocolo de audio (ws/protocol.py)
-AUDIO_MAGIC = 0x01
-AUDIO_HEADER_SIZE = 8
+# Protocolo de audio - usa modulo compartilhado para evitar desincronizacao
+from ws.protocol import (
+    AUDIO_MAGIC,
+    AUDIO_HEADER_SIZE,
+    AudioDirection,
+    is_audio_frame as _is_audio_frame,
+    parse_audio_frame as _parse_audio_frame_full,
+    session_id_to_hash,
+)
 
-# Direcoes do audio
-DIRECTION_INBOUND = 0x00   # Usuario -> Agente (caller)
-DIRECTION_OUTBOUND = 0x01  # Agente -> Usuario (agent)
-
-
-def _is_audio_frame(data: bytes) -> bool:
-    """Verifica se eh um frame de audio (ws/protocol binary frame)."""
-    # Formato: MAGIC(1) + direction(1) + session_hash(4) + reserved(2) + audio_data
-    return len(data) >= AUDIO_HEADER_SIZE and data[0] == AUDIO_MAGIC
+# Direcoes do audio (re-export para compatibilidade)
+DIRECTION_INBOUND = AudioDirection.INBOUND
+DIRECTION_OUTBOUND = AudioDirection.OUTBOUND
 
 
 def _parse_audio_frame(data: bytes) -> tuple:
     """
-    Parse de frame de audio.
-
-    Formato do header (8 bytes):
-    - byte 0: AUDIO_MAGIC (0x01)
-    - byte 1: direction (0=inbound/caller, 1=outbound/agent)
-    - bytes 2-5: session_hash (4 bytes)
-    - bytes 6-7: reserved
+    Parse de frame de audio usando modulo compartilhado.
 
     Returns:
-        Tuple (session_hash, direction, audio_data)
+        Tuple (session_hash_hex, direction, audio_data)
     """
     if not _is_audio_frame(data):
         return None, None, None
 
     direction = data[1]  # 0=inbound, 1=outbound
-    session_hash = data[2]  # Primeiro byte do hash
+    session_hash = data[2:10]  # 8 bytes de hash
     audio_data = data[AUDIO_HEADER_SIZE:]
-    return session_hash, direction, audio_data
+    return session_hash.hex(), direction, audio_data
 
 
 class TranscribeServer:
@@ -98,8 +92,8 @@ class TranscribeServer:
         self.session_manager = SessionManager()
         self.connections: Set[WebSocketServerProtocol] = set()
 
-        # Mapeamento session_hash -> session_id
-        self._hash_to_session: Dict[int, str] = {}
+        # Mapeamento session_hash_hex -> session_id
+        self._hash_to_session: Dict[str, str] = {}
 
         self._server: Optional[websockets.WebSocketServer] = None
         self._running = False
@@ -276,9 +270,9 @@ class TranscribeServer:
             caller_id=getattr(msg, 'caller_id', None),
         )
 
-        # Mapeia hash -> session_id
-        session_hash = hash(msg.session_id) & 0xFF
-        self._hash_to_session[session_hash] = msg.session_id
+        # Mapeia hash -> session_id (usa mesmo hash do protocolo compartilhado)
+        session_hash_hex = session_id_to_hash(msg.session_id).hex()
+        self._hash_to_session[session_hash_hex] = msg.session_id
 
         # Associa websocket a sessao
         websocket.session_id = msg.session_id
@@ -307,8 +301,8 @@ class TranscribeServer:
         await self.session_manager.end_session(msg.session_id, reason=msg.reason)
 
         # Remove mapeamento de hash
-        session_hash = hash(msg.session_id) & 0xFF
-        self._hash_to_session.pop(session_hash, None)
+        session_hash_hex = session_id_to_hash(msg.session_id).hex()
+        self._hash_to_session.pop(session_hash_hex, None)
 
     async def _handle_audio_frame(self, websocket: WebSocketServerProtocol, data: bytes):
         """Processa frame de audio recebido."""
