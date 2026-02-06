@@ -12,12 +12,13 @@ import logging
 import asyncio
 import threading
 
-from config import LOG_CONFIG, SIP_CONFIG, AI_AGENT_CONFIG, SBC_CONFIG, METRICS_CONFIG, MEDIA_FORK_CONFIG, TRANSCRIBE_CONFIG
+from config import LOG_CONFIG, SIP_CONFIG, AI_AGENT_CONFIG, SBC_CONFIG, METRICS_CONFIG, MEDIA_FORK_CONFIG, TRANSCRIBE_CONFIG, AMI_CONFIG
 from adapters.ai_agent_adapter import AIAgentAdapter
 from adapters.transcribe_adapter import TranscribeAdapter
 from sip.endpoint import SIPEndpoint
 from metrics import start_metrics_server
 from core.media_fork_manager import MediaForkManager
+from ami.client import AMIClient
 
 # Logging
 logging.basicConfig(
@@ -35,6 +36,7 @@ class MediaServer:
         self.audio_destination: AIAgentAdapter = None
         self.transcribe_adapter: TranscribeAdapter = None
         self.fork_manager: MediaForkManager = None
+        self.ami_client: AMIClient = None
         self.sip_endpoint: SIPEndpoint = None
         self.loop: asyncio.AbstractEventLoop = None
         self.running = False
@@ -71,6 +73,23 @@ class MediaServer:
         else:
             logger.info("AI Transcribe desabilitado via config")
 
+        # Conecta ao AMI (Asterisk Manager Interface) para controle de chamadas
+        if AMI_CONFIG.get("enabled", True):
+            self.ami_client = AMIClient(
+                host=AMI_CONFIG["host"],
+                port=AMI_CONFIG["port"],
+                username=AMI_CONFIG["username"],
+                secret=AMI_CONFIG["secret"],
+                timeout=AMI_CONFIG["timeout"],
+            )
+            if await self.ami_client.connect():
+                logger.info("Conectado ao AMI (Asterisk Manager Interface)")
+            else:
+                logger.warning("Falha ao conectar ao AMI - transfer de chamadas indisponivel")
+                self.ami_client = None
+        else:
+            logger.info("AMI desabilitado via config")
+
         # Inicializa Media Fork Manager (isolamento do path de IA)
         if MEDIA_FORK_CONFIG.get("enabled", True):
             self.fork_manager = MediaForkManager(
@@ -104,6 +123,7 @@ class MediaServer:
                 self.audio_destination,
                 self.loop,
                 fork_manager=self.fork_manager,
+                ami_client=self.ami_client,
             )
             self.sip_endpoint.start()
 
@@ -124,6 +144,8 @@ class MediaServer:
         logger.info(f"   • SIP Endpoint -> {SIP_CONFIG['domain']}:{SIP_CONFIG['port']}")
         if self.fork_manager:
             logger.info(f"   • Media Fork Manager -> buffer={MEDIA_FORK_CONFIG['buffer_ms']}ms")
+        if self.ami_client:
+            logger.info(f"   • AMI Client -> {AMI_CONFIG['host']}:{AMI_CONFIG['port']}")
         if self.transcribe_adapter:
             logger.info(f"   • AI Transcribe -> {TRANSCRIBE_CONFIG['url']}")
         if METRICS_CONFIG.get("enabled", True):
@@ -176,6 +198,9 @@ class MediaServer:
         if self.transcribe_adapter:
             await self.transcribe_adapter.disconnect()
 
+        if self.ami_client:
+            await self.ami_client.close()
+
         self._shutdown_event.set()
         logger.info(" Media Server parado")
 
@@ -190,7 +215,7 @@ async def main():
     server = MediaServer()
 
     # Handler para shutdown graceful
-    def signal_handler(signum, frame):
+    def signal_handler(_signum, _frame):
         logger.info("Recebido sinal de shutdown...")
         server.trigger_shutdown()
 

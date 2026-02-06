@@ -31,10 +31,12 @@ class SIPEndpoint:
         audio_destination: "IAudioDestination",
         loop,
         fork_manager: Optional["MediaForkManager"] = None,
+        ami_client=None,
     ):
         self.audio_destination = audio_destination
         self.loop = loop
         self.fork_manager = fork_manager
+        self.ami_client = ami_client
         self.ep: Optional[pj.Endpoint] = None
         self.account: Optional[MyAccount] = None
         self.running = False
@@ -59,7 +61,7 @@ class SIPEndpoint:
         ep_cfg.logConfig.consoleLevel = LOG_CONFIG["pjsip_log_level"]
 
         if SBC_CONFIG["enabled"]:
-            ep_cfg.uaConfig.userAgent = "PABX-AI-Agent/1.0"
+            ep_cfg.uaConfig.userAgent = SIP_CONFIG["user_agent"]
             if SBC_CONFIG["keep_alive_interval"] > 0:
                 ep_cfg.uaConfig.natTypeInSdp = 1
 
@@ -107,68 +109,85 @@ class SIPEndpoint:
             self.ep.transportCreate(pj.PJSIP_TRANSPORT_UDP, tp_cfg)
             logger.info(" Transporte UDP local configurado")
 
-    def _register(self):
-        """Registra no servidor SIP"""
-        acc_cfg = pj.AccountConfig()
+    def _get_transport_param(self, transport: str) -> str:
+        """Retorna parâmetro de transporte para URI SIP."""
+        if transport == "tcp":
+            return ";transport=tcp"
+        elif transport == "tls":
+            return ";transport=tls"
+        return ""
 
-        if SBC_CONFIG["enabled"]:
-            sbc_host = SBC_CONFIG["host"]
-            sbc_port = SBC_CONFIG["port"]
-            transport = SBC_CONFIG["transport"].lower()
+    def _configure_sbc_account(self, acc_cfg: pj.AccountConfig) -> str:
+        """Configura conta para modo SBC. Retorna realm."""
+        sbc_host = SBC_CONFIG["host"]
+        sbc_port = SBC_CONFIG["port"]
+        transport = SBC_CONFIG["transport"].lower()
+        transport_param = self._get_transport_param(transport)
 
-            logger.info(f" Registrando via SBC: {SIP_CONFIG['username']}@{sbc_host}:{sbc_port}")
+        logger.info(f" Registrando via SBC: {SIP_CONFIG['username']}@{sbc_host}:{sbc_port}")
+        acc_cfg.idUri = f"sip:{SIP_CONFIG['username']}@{sbc_host}"
 
-            acc_cfg.idUri = f"sip:{SIP_CONFIG['username']}@{sbc_host}"
-
-            transport_param = ""
-            if transport == "tcp":
-                transport_param = ";transport=tcp"
-            elif transport == "tls":
-                transport_param = ";transport=tls"
-
-            if SBC_CONFIG["register"]:
-                acc_cfg.regConfig.registrarUri = f"sip:{sbc_host}:{sbc_port}{transport_param}"
-                acc_cfg.regConfig.timeoutSec = SBC_CONFIG["register_timeout"]
-                acc_cfg.regConfig.retryIntervalSec = 30
-            else:
-                acc_cfg.regConfig.registrarUri = ""
-                logger.info("   Modo sem registro")
-
-            outbound_proxy = SBC_CONFIG["outbound_proxy"]
-            if not outbound_proxy and sbc_host:
-                outbound_proxy = f"sip:{sbc_host}:{sbc_port}{transport_param}"
-
-            if outbound_proxy:
-                acc_cfg.sipConfig.proxies.append(outbound_proxy)
-                logger.info(f"   Outbound proxy: {outbound_proxy}")
-
-            acc_cfg.natConfig.iceEnabled = False
-            acc_cfg.natConfig.sipStunUse = pj.PJSUA_STUN_USE_DISABLED
-            acc_cfg.natConfig.mediaStunUse = pj.PJSUA_STUN_USE_DISABLED
-
-            if SBC_CONFIG["keep_alive_interval"] > 0:
-                acc_cfg.natConfig.udpKaIntervalSec = SBC_CONFIG["keep_alive_interval"]
-                acc_cfg.natConfig.contactRewriteUse = 1
-
-            realm = SBC_CONFIG["realm"] if SBC_CONFIG["realm"] else "*"
-
+        # Configuração de registro
+        if SBC_CONFIG["register"]:
+            acc_cfg.regConfig.registrarUri = f"sip:{sbc_host}:{sbc_port}{transport_param}"
+            acc_cfg.regConfig.timeoutSec = SBC_CONFIG["register_timeout"]
+            acc_cfg.regConfig.retryIntervalSec = 30
         else:
-            logger.info(f" Registrando: {SIP_CONFIG['username']}@{SIP_CONFIG['domain']}:{SIP_CONFIG['port']}")
-            acc_cfg.idUri = f"sip:{SIP_CONFIG['username']}@{SIP_CONFIG['domain']}"
-            acc_cfg.regConfig.registrarUri = f"sip:{SIP_CONFIG['domain']}:{SIP_CONFIG['port']}"
-            realm = "*"
+            acc_cfg.regConfig.registrarUri = ""
+            logger.info("   Modo sem registro")
 
-        # Credenciais
+        # Outbound proxy
+        outbound_proxy = SBC_CONFIG["outbound_proxy"]
+        if not outbound_proxy and sbc_host:
+            outbound_proxy = f"sip:{sbc_host}:{sbc_port}{transport_param}"
+        if outbound_proxy:
+            acc_cfg.sipConfig.proxies.append(outbound_proxy)
+            logger.info(f"   Outbound proxy: {outbound_proxy}")
+
+        # NAT config
+        acc_cfg.natConfig.iceEnabled = False
+        acc_cfg.natConfig.sipStunUse = pj.PJSUA_STUN_USE_DISABLED
+        acc_cfg.natConfig.mediaStunUse = pj.PJSUA_STUN_USE_DISABLED
+
+        if SBC_CONFIG["keep_alive_interval"] > 0:
+            acc_cfg.natConfig.udpKaIntervalSec = SBC_CONFIG["keep_alive_interval"]
+            acc_cfg.natConfig.contactRewriteUse = 1
+
+        return SBC_CONFIG["realm"] if SBC_CONFIG["realm"] else "*"
+
+    def _configure_local_account(self, acc_cfg: pj.AccountConfig) -> str:
+        """Configura conta para modo local/Asterisk. Retorna realm."""
+        logger.info(f" Registrando: {SIP_CONFIG['username']}@{SIP_CONFIG['domain']}:{SIP_CONFIG['port']}")
+        acc_cfg.idUri = f"sip:{SIP_CONFIG['username']}@{SIP_CONFIG['domain']}"
+        acc_cfg.regConfig.registrarUri = f"sip:{SIP_CONFIG['domain']}:{SIP_CONFIG['port']}"
+        return "*"
+
+    def _configure_auth(self, acc_cfg: pj.AccountConfig, realm: str):
+        """Configura autenticação SIP."""
         cred = pj.AuthCredInfo()
         cred.scheme = "digest"
-        cred.realm = realm if SBC_CONFIG["enabled"] else "*"
+        cred.realm = realm
         cred.username = SIP_CONFIG["username"]
         cred.dataType = 0
         cred.data = SIP_CONFIG["password"]
         acc_cfg.sipConfig.authCreds.append(cred)
 
+    def _register(self):
+        """Registra no servidor SIP"""
+        acc_cfg = pj.AccountConfig()
+
+        if SBC_CONFIG["enabled"]:
+            realm = self._configure_sbc_account(acc_cfg)
+        else:
+            realm = self._configure_local_account(acc_cfg)
+
+        self._configure_auth(acc_cfg, realm)
+
         # Cria conta
-        self.account = MyAccount(self.audio_destination, self.loop, self.fork_manager)
+        self.account = MyAccount(
+            self.audio_destination, self.loop, self.fork_manager,
+            ami_client=self.ami_client,
+        )
         self.account.create(acc_cfg)
 
     def stop(self):

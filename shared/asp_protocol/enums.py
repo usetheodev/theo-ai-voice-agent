@@ -39,6 +39,12 @@ class SessionState(str, Enum):
     CLOSED = "closed"
 
 
+class CallActionType(str, Enum):
+    """Tipos de acao de controle de chamada."""
+    TRANSFER = "transfer"
+    HANGUP = "hangup"
+
+
 class MessageType(str, Enum):
     """Tipos de mensagem do protocolo."""
     PROTOCOL_CAPABILITIES = "protocol.capabilities"
@@ -54,3 +60,5 @@ class MessageType(str, Enum):
     AUDIO_SPEECH_END = "audio.speech_end"
     RESPONSE_START = "response.start"
     RESPONSE_END = "response.end"
+    # Call control messages
+    CALL_ACTION = "call.action"

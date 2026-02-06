@@ -10,6 +10,8 @@ from metrics.prometheus_metrics import (
     track_transcription,
     track_es_index,
     track_es_connection_status,
+    track_embedding,
+    track_semantic_search,
     ACTIVE_SESSIONS,
 )
 
@@ -21,5 +23,7 @@ __all__ = [
     "track_transcription",
     "track_es_index",
     "track_es_connection_status",
+    "track_embedding",
+    "track_semantic_search",
     "ACTIVE_SESSIONS",
 ]

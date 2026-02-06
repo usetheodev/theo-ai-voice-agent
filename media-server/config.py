@@ -6,24 +6,14 @@ Veja .env.example para documentação detalhada de cada variável.
 """
 
 import os
-from typing import List
+import sys
 from dotenv import load_dotenv
 
+# Adiciona shared ao path para imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared'))
+from shared_config import parse_bool, parse_list
+
 load_dotenv(override=False)  # Não sobrescreve variáveis de ambiente do Docker
-
-
-def _parse_list(value: str, default: List[str]) -> List[str]:
-    """Parse lista separada por vírgula"""
-    if not value:
-        return default
-    return [item.strip() for item in value.split(",") if item.strip()]
-
-
-def _parse_bool(value: str, default: bool = False) -> bool:
-    """Parse boolean de string"""
-    if not value:
-        return default
-    return value.lower() in ("true", "1", "yes", "on")
 
 
 # =============================================================================
@@ -55,6 +45,19 @@ AI_AGENT_CONFIG = {
 
 
 # =============================================================================
+# CONFIGURAÇÕES DO AUDIO SESSION PROTOCOL (ASP)
+# =============================================================================
+
+ASP_CONFIG = {
+    # Timeout para receber capabilities do servidor (segundos)
+    "caps_timeout": float(os.getenv("ASP_CAPS_TIMEOUT", "5.0")),
+
+    # Timeout para aguardar session.started (segundos)
+    "session_start_timeout": float(os.getenv("ASP_SESSION_START_TIMEOUT", "10.0")),
+}
+
+
+# =============================================================================
 # CONFIGURAÇÕES DO ASTERISK/SIP
 # =============================================================================
 
@@ -79,11 +82,14 @@ SIP_CONFIG = {
 
     # Codecs de áudio permitidos (separados por vírgula)
     # Ordem define preferência. Opções: PCMU (G.711 µ-law), PCMA (G.711 A-law), G729, opus
-    "codecs": _parse_list(os.getenv("SIP_CODECS", ""), ["PCMU", "PCMA"]),
+    "codecs": parse_list(os.getenv("SIP_CODECS", ""), ["PCMU", "PCMA"]),
 
     # Range de portas RTP para mídia
     "rtp_port_start": int(os.getenv("RTP_PORT_START", "40000")),
     "rtp_port_end": int(os.getenv("RTP_PORT_END", "40100")),
+
+    # User-Agent string para identificação SIP
+    "user_agent": os.getenv("SIP_USER_AGENT", "PABX-AI-Agent/1.0"),
 }
 
 
@@ -142,7 +148,7 @@ AUDIO_CONFIG = {
 
 CALL_CONFIG = {
     # Habilitar barge-in (permitir usuário interromper resposta da IA)
-    "barge_in_enabled": _parse_bool(os.getenv("BARGE_IN_ENABLED", "true"), True),
+    "barge_in_enabled": parse_bool(os.getenv("BARGE_IN_ENABLED", "true"), True),
 
     # Timeout para aguardar greeting do AI Agent (segundos)
     "greeting_timeout": int(os.getenv("CALL_GREETING_TIMEOUT", "30")),
@@ -215,7 +221,7 @@ METRICS_CONFIG = {
     "port": int(os.getenv("METRICS_PORT", "9091")),
 
     # Habilitar servidor de métricas
-    "enabled": _parse_bool(os.getenv("METRICS_ENABLED", "true"), True),
+    "enabled": parse_bool(os.getenv("METRICS_ENABLED", "true"), True),
 }
 
 
@@ -225,7 +231,7 @@ METRICS_CONFIG = {
 
 SBC_CONFIG = {
     # Habilitar modo SBC (conexão via SBC externo em vez de Asterisk direto)
-    "enabled": _parse_bool(os.getenv("SBC_ENABLED", "false"), False),
+    "enabled": parse_bool(os.getenv("SBC_ENABLED", "false"), False),
 
     # Hostname/IP do SBC
     "host": os.getenv("SBC_HOST", ""),
@@ -243,7 +249,7 @@ SBC_CONFIG = {
     "realm": os.getenv("SBC_REALM", "*"),
 
     # Habilitar registro SIP no SBC
-    "register": _parse_bool(os.getenv("SBC_REGISTER", "true"), True),
+    "register": parse_bool(os.getenv("SBC_REGISTER", "true"), True),
 
     # IP público para NAT traversal (opcional)
     "public_ip": os.getenv("SBC_PUBLIC_IP", ""),
@@ -262,7 +268,7 @@ SBC_CONFIG = {
 
 TRANSCRIBE_CONFIG = {
     # Habilitar envio de audio para transcricao
-    "enabled": _parse_bool(os.getenv("TRANSCRIBE_ENABLED", "false"), False),
+    "enabled": parse_bool(os.getenv("TRANSCRIBE_ENABLED", "false"), False),
 
     # URL do servidor WebSocket do AI Transcribe
     "url": os.getenv("TRANSCRIBE_URL", "ws://ai-transcribe:8766"),
@@ -278,6 +284,33 @@ TRANSCRIBE_CONFIG = {
 
     # Timeout do ping WebSocket (segundos)
     "ping_timeout": int(os.getenv("TRANSCRIBE_PING_TIMEOUT", "10")),
+
+    # Timeout para receber capabilities (segundos)
+    "caps_timeout": float(os.getenv("TRANSCRIBE_CAPS_TIMEOUT", "5.0")),
+}
+
+
+# =============================================================================
+# CONFIGURAÇÕES DO AMI (Asterisk Manager Interface)
+# Usado para controle de chamadas (transfer assistida)
+# =============================================================================
+
+AMI_CONFIG = {
+    # Host do Asterisk (nome do container Docker)
+    "host": os.getenv("AMI_HOST", "asterisk-pabx"),
+
+    # Porta do AMI
+    "port": int(os.getenv("AMI_PORT", "5038")),
+
+    # Credenciais (definidas em manager.conf do Asterisk)
+    "username": os.getenv("AMI_USERNAME", "media-server"),
+    "secret": os.getenv("AMI_SECRET", ""),
+
+    # Timeout para operacoes AMI (segundos)
+    "timeout": float(os.getenv("AMI_TIMEOUT", "5.0")),
+
+    # Habilitar AMI (pode desabilitar se nao precisar de transfer)
+    "enabled": parse_bool(os.getenv("AMI_ENABLED", "true"), True),
 }
 
 
@@ -288,7 +321,7 @@ TRANSCRIBE_CONFIG = {
 MEDIA_FORK_CONFIG = {
     # Habilitar media forking (isolamento do path de IA)
     # Quando habilitado, o RTP callback nunca bloqueia aguardando IA
-    "enabled": _parse_bool(os.getenv("MEDIA_FORK_ENABLED", "true"), True),
+    "enabled": parse_bool(os.getenv("MEDIA_FORK_ENABLED", "true"), True),
 
     # Capacidade do ring buffer em milissegundos de áudio
     # Valores maiores = mais tolerância a latência, mais memória
@@ -317,7 +350,7 @@ MEDIA_FORK_CONFIG = {
     "lag_warning_threshold_ms": int(os.getenv("MEDIA_FORK_LAG_WARNING_MS", "100")),
 
     # Habilitar fallback mode quando AI Agent indisponível
-    "fallback_enabled": _parse_bool(os.getenv("MEDIA_FORK_FALLBACK_ENABLED", "true"), True),
+    "fallback_enabled": parse_bool(os.getenv("MEDIA_FORK_FALLBACK_ENABLED", "true"), True),
 
     # Mensagem de fallback (arquivo de áudio ou texto para TTS local)
     "fallback_message": os.getenv(

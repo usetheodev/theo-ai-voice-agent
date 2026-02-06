@@ -19,10 +19,10 @@ scrape_configs:
       - targets: ['ai-transcribe:9093']
     scrape_interval: 10s
 
-  # Media Server - roda em host mode, acessível via host.docker.internal
+  # Media Server - roda em bridge network, acessível pelo nome do serviço
   - job_name: 'media-server'
     static_configs:
-      - targets: ['host.docker.internal:9091']
+      - targets: ['media-server:9091']
     scrape_interval: 10s
 
   # Prometheus self-monitoring

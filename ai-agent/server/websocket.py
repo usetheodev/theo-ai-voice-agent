@@ -13,7 +13,7 @@ from typing import Set, Optional, Dict
 import websockets
 from websockets.server import WebSocketServerProtocol
 
-from config import WS_CONFIG, SESSION_CONFIG
+from config import WS_CONFIG, SESSION_CONFIG, AUDIO_CONFIG
 from ws.protocol import (
     MessageType,
     AudioConfig,
@@ -35,9 +35,15 @@ from server.session import SessionManager, Session
 from server.asp_handler import (
     ASPHandler,
     ASPSession,
-    create_default_vad_config,
-    create_default_audio_config,
 )
+from providers.pool import ProviderPool
+from config import ESCALATION_CONFIG
+from asp_protocol.messages import CallActionMessage
+from asp_protocol.enums import CallActionType
+try:
+    from tools.call_actions import resolve_target
+except ImportError:
+    resolve_target = lambda x: x
 from metrics import (
     track_websocket_connect,
     track_websocket_disconnect,
@@ -58,18 +64,24 @@ class AIAgentServer:
     """
 
     def __init__(self):
-        self.session_manager = SessionManager()
+        self._pool = ProviderPool.get_instance()
+        self.session_manager = SessionManager(pool=self._pool)
         self.connections: Set[WebSocketServerProtocol] = set()
         self._server: Optional[websockets.WebSocketServer] = None
         self._running = False
         self._asp_handler = ASPHandler()
         # Mapeia websocket -> ASPSession para sessões ASP
         self._asp_sessions: Dict[WebSocketServerProtocol, ASPSession] = {}
+        # Contador throttled para frames sem sessão
+        self._no_session_warn_count = 0
 
     async def start(self, host: str = None, port: int = None):
         """Inicia o servidor WebSocket"""
         host = host or WS_CONFIG["host"]
         port = port or WS_CONFIG["port"]
+
+        # Inicializa pool de providers (STT + TTS carregados uma unica vez)
+        await self._pool.initialize()
 
         self._running = True
 
@@ -79,7 +91,7 @@ class AIAgentServer:
             port,
             ping_interval=WS_CONFIG["ping_interval"],
             ping_timeout=WS_CONFIG["ping_timeout"],
-            max_size=10 * 1024 * 1024,  # 10MB max message
+            max_size=WS_CONFIG["max_message_size"],
         )
 
         logger.info(f" AI Agent Server iniciado em ws://{host}:{port}")
@@ -98,6 +110,9 @@ class AIAgentServer:
         # Fecha todas as conexões
         for ws in self.connections.copy():
             await ws.close()
+
+        # Libera providers compartilhados
+        await self._pool.shutdown()
 
         logger.info(" AI Agent Server parado")
 
@@ -146,9 +161,7 @@ class AIAgentServer:
                 await self._handle_control_message(websocket, message)
 
         except Exception as e:
-            logger.error(f"Erro ao processar mensagem: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"Erro ao processar mensagem: {e}")
 
     async def _handle_control_message(self, websocket: WebSocketServerProtocol, data: str):
         """Processa mensagem de controle JSON
@@ -179,9 +192,7 @@ class AIAgentServer:
     async def _handle_asp_message(self, websocket: WebSocketServerProtocol, data: str):
         """Processa mensagem do protocolo ASP"""
         from asp_protocol import (
-            SessionStartMessage as ASPSessionStart,
             SessionUpdateMessage,
-            SessionEndMessage as ASPSessionEnd,
             MessageType,
         )
 
@@ -202,14 +213,10 @@ class AIAgentServer:
                 logger.warning(f"Mensagem ASP inesperada: {msg_type}")
 
         except Exception as e:
-            logger.error(f"Erro ao processar mensagem ASP: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"Erro ao processar mensagem ASP: {e}")
 
     async def _handle_asp_session_start(self, websocket: WebSocketServerProtocol, msg):
         """Handler para session.start ASP"""
-        from asp_protocol import SessionStartMessage as ASPSessionStart
-
         success, asp_session = await self._asp_handler.handle_session_start(websocket, msg)
 
         if not success:
@@ -234,17 +241,20 @@ class AIAgentServer:
         )
 
         # Aplica config VAD negociada ao pipeline
-        if hasattr(session, 'audio_buffer') and session.audio_buffer:
+        if session.audio_buffer:
             vad = negotiated.vad
             session.audio_buffer.silence_threshold = vad.silence_threshold_ms
             session.audio_buffer.min_speech_ms = vad.min_speech_ms
             logger.info(f"[{msg.session_id[:8]}] VAD config aplicada: "
                        f"silence={vad.silence_threshold_ms}ms, min_speech={vad.min_speech_ms}ms")
 
-        websocket.session_id = msg.session_id
-
-        # Envia saudação
-        await self._send_greeting(websocket, session)
+        # Pula saudacao em transfer retry (chamada retornando de transfer falha)
+        is_retry = msg.metadata and msg.metadata.get("transfer_retry")
+        if is_retry:
+            logger.info(f"[{msg.session_id[:8]}] Transfer retry - pulando saudacao")
+            await session.set_state('listening')
+        else:
+            await self._send_greeting(websocket, session)
 
     async def _handle_asp_session_update(self, websocket: WebSocketServerProtocol, msg):
         """Handler para session.update ASP"""
@@ -265,7 +275,7 @@ class AIAgentServer:
 
             # Atualiza config na sessão interna
             session = await self.session_manager.get_session(msg.session_id)
-            if session and hasattr(session, 'audio_buffer') and session.audio_buffer:
+            if session and session.audio_buffer:
                 vad = new_config.vad
                 session.audio_buffer.silence_threshold = vad.silence_threshold_ms
                 session.audio_buffer.min_speech_ms = vad.min_speech_ms
@@ -280,7 +290,9 @@ class AIAgentServer:
         statistics = None
 
         if session:
-            duration = time.time() - session.created_at if hasattr(session, 'created_at') else 0.0
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            duration = (now - session.created_at).total_seconds()
             statistics = {
                 "audio_frames_received": getattr(session, 'frames_received', 0),
                 "audio_frames_sent": getattr(session, 'frames_sent', 0),
@@ -312,9 +324,6 @@ class AIAgentServer:
             call_id=msg.call_id,
             audio_config=msg.audio_config
         )
-
-        # Associa websocket à sessão
-        websocket.session_id = msg.session_id
 
         # Confirma sessão iniciada
         response = SessionStartedMessage(session_id=msg.session_id)
@@ -374,8 +383,6 @@ class AIAgentServer:
 
             if not session:
                 # Log throttled: comum durante race condition no início da sessão
-                if not hasattr(self, '_no_session_warn_count'):
-                    self._no_session_warn_count = 0
                 self._no_session_warn_count += 1
                 if self._no_session_warn_count <= 5 or self._no_session_warn_count % 100 == 0:
                     logger.debug(f"Frame de áudio ignorado: sessão não encontrada (count: {self._no_session_warn_count})")
@@ -384,7 +391,7 @@ class AIAgentServer:
             # Só processa se estiver ouvindo
             if session.state != 'listening':
                 # Log apenas ocasionalmente para não poluir
-                session._ignored_frames = getattr(session, '_ignored_frames', 0) + 1
+                session._ignored_frames += 1
                 if session._ignored_frames <= 3 or session._ignored_frames % 50 == 0:
                     logger.debug(f"[{frame.session_id[:8]}] ️ Ignorando frames (state={session.state}, count={session._ignored_frames})")
                 return
@@ -463,14 +470,15 @@ class AIAgentServer:
                 if audio_response:
                     await self._send_audio(websocket, session.session_id, audio_response)
 
+                # Despacha tool calls do batch (mesmo fluxo do streaming)
+                await self._dispatch_tool_calls(websocket, session)
+
                 # Notifica fim da resposta
                 end_msg = ResponseEndMessage(session_id=session.session_id)
                 await websocket.send(end_msg.to_json())
 
         except Exception as e:
-            logger.error(f"Erro no pipeline: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"Erro no pipeline: {e}")
 
             # Registra erro
             track_pipeline_error("pipeline")
@@ -501,6 +509,7 @@ class AIAgentServer:
 
         # Flag para controlar se já enviamos response.start
         response_started = False
+        streaming_ok = False
         chunks_sent = 0
 
         try:
@@ -526,6 +535,7 @@ class AIAgentServer:
                 logger.debug(f"[{session.session_id[:8]}] Nenhum chunk gerado")
                 return
 
+            streaming_ok = True
             logger.info(f"[{session.session_id[:8]}]  Streaming completo: {chunks_sent} chunks enviados")
 
         except Exception as e:
@@ -533,9 +543,110 @@ class AIAgentServer:
             if not response_started:
                 return
 
-        # Notifica fim da resposta
+        # Envia call actions ANTES de response.end para evitar race condition:
+        # o media-server executa ações no callback de playback_complete,
+        # que dispara quando recebe response.end e o buffer esvazia.
+        # Se call.action chegasse depois, a ação seria perdida.
+        # Só despacha tool calls se streaming completou sem erro (AP-3)
+        has_tool_calls = False
+        if streaming_ok:
+            has_tool_calls = await self._dispatch_tool_calls(websocket, session)
+
+        # Notifica fim da resposta (APOS call actions)
         end_msg = ResponseEndMessage(session_id=session.session_id)
         await websocket.send(end_msg.to_json())
+
+        # Escalacao automatica: transfere apos N interacoes sem resolucao
+        if not has_tool_calls:
+            await self._check_escalation(websocket, session)
+
+    async def _check_escalation(
+        self, websocket: WebSocketServerProtocol, session: Session
+    ):
+        """Verifica e executa escalação automática após interação sem tool calls."""
+        session.interaction_count += 1
+        max_interactions = ESCALATION_CONFIG["max_unresolved_interactions"]
+
+        if max_interactions > 0 and session.interaction_count >= max_interactions:
+            target = ESCALATION_CONFIG["default_transfer_target"]
+            transfer_msg = ESCALATION_CONFIG["transfer_message"]
+
+            logger.info(
+                f"[{session.session_id[:8]}] Escalacao automatica: "
+                f"{session.interaction_count} interacoes sem resolucao, "
+                f"transferindo para {target}"
+            )
+
+            # Envia mensagem de aviso via TTS antes de transferir
+            await self._send_escalation_message(websocket, session, transfer_msg)
+
+            # Envia call action de transfer
+            action_msg = CallActionMessage(
+                session_id=session.session_id,
+                action=CallActionType.TRANSFER.value,
+                target=target,
+                reason=f"Escalacao automatica apos {session.interaction_count} interacoes",
+            )
+            await websocket.send(action_msg.to_json())
+        else:
+            logger.debug(
+                f"[{session.session_id[:8]}] Interacao {session.interaction_count}"
+                f"/{max_interactions if max_interactions > 0 else 'off'}"
+            )
+
+    async def _send_escalation_message(self, websocket: WebSocketServerProtocol, session: Session, text: str):
+        """Envia mensagem TTS de escalacao antes de transferir."""
+        try:
+            audio = await session.pipeline.synthesize_text_async(text)
+            if audio:
+                start_msg = ResponseStartMessage(
+                    session_id=session.session_id,
+                    text=text
+                )
+                await websocket.send(start_msg.to_json())
+                await self._send_audio(websocket, session.session_id, audio)
+                end_msg = ResponseEndMessage(session_id=session.session_id)
+                await websocket.send(end_msg.to_json())
+                logger.info(f"[{session.session_id[:8]}] Mensagem de escalacao enviada ({len(audio)} bytes)")
+        except Exception as e:
+            logger.error(f"[{session.session_id[:8]}] Erro ao enviar mensagem de escalacao: {e}")
+
+    async def _dispatch_tool_calls(
+        self, websocket: WebSocketServerProtocol, session: Session
+    ) -> bool:
+        """Despacha tool calls pendentes do pipeline como mensagens call.action.
+
+        Returns:
+            True se havia tool calls para despachar.
+        """
+        if not session.pipeline.pending_tool_calls:
+            return False
+
+        for tool_call in session.pipeline.pending_tool_calls:
+            tool_name = tool_call.get("name", "")
+            tool_input = tool_call.get("input", {})
+
+            if tool_name == "transfer_call":
+                target = resolve_target(tool_input.get("target", ""))
+                action_msg = CallActionMessage(
+                    session_id=session.session_id,
+                    action=CallActionType.TRANSFER.value,
+                    target=target,
+                    reason=tool_input.get("reason"),
+                )
+                await websocket.send(action_msg.to_json())
+                logger.info(f"[{session.session_id[:8]}] Call action: transfer to {target}")
+            elif tool_name == "end_call":
+                action_msg = CallActionMessage(
+                    session_id=session.session_id,
+                    action=CallActionType.HANGUP.value,
+                    reason=tool_input.get("reason"),
+                )
+                await websocket.send(action_msg.to_json())
+                logger.info(f"[{session.session_id[:8]}] Call action: hangup")
+
+        session.pipeline.pending_tool_calls = []
+        return True
 
     async def _send_audio_chunk(self, websocket: WebSocketServerProtocol, session_id: str, audio_chunk: bytes):
         """Envia um chunk de áudio diretamente"""
@@ -558,10 +669,10 @@ class AIAgentServer:
     async def _send_audio(self, websocket: WebSocketServerProtocol, session_id: str, audio_data: bytes):
         """Envia áudio em chunks otimizados para baixa latência
 
-        Chunk size reduzido para ~125ms (2000 bytes a 8kHz)
+        Chunk size configurável via AUDIO_CHUNK_SIZE_BYTES
         Sem delay entre chunks - WebSocket já tem flow control
         """
-        CHUNK_SIZE = 2000  # ~125ms de áudio a 8kHz (era 4000 = 250ms)
+        CHUNK_SIZE = AUDIO_CONFIG["chunk_size_bytes"]
 
         for i in range(0, len(audio_data), CHUNK_SIZE):
             chunk = audio_data[i:i + CHUNK_SIZE]

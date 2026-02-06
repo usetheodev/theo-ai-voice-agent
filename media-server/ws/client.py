@@ -70,6 +70,7 @@ class WebSocketClient:
         self.on_response_audio: Optional[Callable[[str, bytes], None]] = None  # session_id, audio
         self.on_response_end: Optional[Callable[[str], None]] = None  # session_id
         self.on_error: Optional[Callable[[str, str, str], None]] = None  # session_id, code, message
+        self.on_call_action: Optional[Callable[[str, str, Optional[str]], None]] = None  # session_id, action, target
 
         # Session state
         self._pending_sessions: Dict[str, asyncio.Future] = {}
@@ -171,7 +172,7 @@ class WebSocketClient:
         """Verifica se está conectado"""
         return self._connected.is_set() and self.ws is not None
 
-    async def start_session(self, session_id: str, call_id: str) -> bool:
+    async def start_session(self, session_id: str, call_id: str, metadata: dict = None) -> bool:
         """Inicia nova sessão de conversação
 
         Se em modo ASP, usa o protocolo ASP com negociação de configuração.
@@ -183,17 +184,15 @@ class WebSocketClient:
 
         try:
             if self._asp_mode:
-                # Modo ASP: usa handler com negociação
-                return await self._start_session_asp(session_id, call_id)
+                return await self._start_session_asp(session_id, call_id, metadata)
             else:
-                # Modo legado
                 return await self._start_session_legacy(session_id, call_id)
 
         except Exception as e:
             logger.error(f"Erro ao iniciar sessão: {e}")
             return False
 
-    async def _start_session_asp(self, session_id: str, call_id: str) -> bool:
+    async def _start_session_asp(self, session_id: str, call_id: str, metadata: dict = None) -> bool:
         """Inicia sessão usando protocolo ASP."""
         # Cria configs a partir das configurações locais
         audio_config = create_audio_config_from_local(AUDIO_CONFIG)
@@ -204,6 +203,11 @@ class WebSocketClient:
         future = loop.create_future()
         self._pending_asp_sessions[session_id] = (future, call_id)
 
+        # Merge metadata do caller com source
+        session_metadata = {"source": "media-server"}
+        if metadata:
+            session_metadata.update(metadata)
+
         # Envia session.start (sem aguardar resposta aqui)
         sent = await self._asp_handler.send_session_start(
             websocket=self.ws,
@@ -211,7 +215,7 @@ class WebSocketClient:
             call_id=call_id,
             audio_config=audio_config,
             vad_config=vad_config,
-            metadata={"source": "media-server"}
+            metadata=session_metadata,
         )
 
         if not sent:
@@ -427,31 +431,49 @@ class WebSocketClient:
             # Processa mensagens de controle padrão (legado)
             msg = parse_control_message(data)
 
-            if isinstance(msg, SessionStartedMessage):
-                # Resolve future pendente (modo legado)
-                future = self._pending_sessions.get(msg.session_id)
-                if future and not future.done():
-                    future.set_result(True)
-                if self.on_session_started:
-                    self.on_session_started(msg.session_id)
-
-            elif isinstance(msg, ResponseStartMessage):
-                logger.info(f"[{msg.session_id[:8]}]  Resposta: {msg.text[:50]}...")
-                if self.on_response_start:
-                    self.on_response_start(msg.session_id, msg.text)
-
-            elif isinstance(msg, ResponseEndMessage):
-                logger.debug(f"[{msg.session_id[:8]}] Resposta concluída")
-                if self.on_response_end:
-                    self.on_response_end(msg.session_id)
-
-            elif isinstance(msg, ErrorMessage):
-                logger.error(f"[{msg.session_id[:8]}] Erro: {msg.code} - {msg.message}")
-                if self.on_error:
-                    self.on_error(msg.session_id, msg.code, msg.message)
+            # Dispatch para handlers específicos
+            handler = self._get_message_handler(msg)
+            if handler:
+                handler(msg)
 
         except Exception as e:
             logger.error(f"Erro ao processar mensagem de controle: {e}")
+
+    def _get_message_handler(self, msg) -> Optional[Callable]:
+        """Retorna handler apropriado para o tipo de mensagem."""
+        handlers = {
+            SessionStartedMessage: self._handle_session_started,
+            ResponseStartMessage: self._handle_response_start,
+            ResponseEndMessage: self._handle_response_end,
+            ErrorMessage: self._handle_error,
+        }
+        return handlers.get(type(msg))
+
+    def _handle_session_started(self, msg: SessionStartedMessage):
+        """Handler para session.started (modo legado)."""
+        future = self._pending_sessions.get(msg.session_id)
+        if future and not future.done():
+            future.set_result(True)
+        if self.on_session_started:
+            self.on_session_started(msg.session_id)
+
+    def _handle_response_start(self, msg: ResponseStartMessage):
+        """Handler para response.start."""
+        logger.info(f"[{msg.session_id[:8]}]  Resposta: {msg.text[:50]}...")
+        if self.on_response_start:
+            self.on_response_start(msg.session_id, msg.text)
+
+    def _handle_response_end(self, msg: ResponseEndMessage):
+        """Handler para response.end."""
+        logger.debug(f"[{msg.session_id[:8]}] Resposta concluída")
+        if self.on_response_end:
+            self.on_response_end(msg.session_id)
+
+    def _handle_error(self, msg: ErrorMessage):
+        """Handler para error."""
+        logger.error(f"[{msg.session_id[:8]}] Erro: {msg.code} - {msg.message}")
+        if self.on_error:
+            self.on_error(msg.session_id, msg.code, msg.message)
 
     async def _handle_asp_control_message(self, data: str):
         """Processa mensagens de controle ASP."""
@@ -462,6 +484,7 @@ class WebSocketClient:
             SessionUpdatedMessage,
             SessionEndedMessage,
             ProtocolErrorMessage,
+            CallActionMessage,
         )
 
         try:
@@ -488,6 +511,14 @@ class WebSocketClient:
 
             elif isinstance(msg, SessionEndedMessage):
                 logger.info(f"session.ended: {msg.session_id[:8]}")
+
+            elif isinstance(msg, CallActionMessage):
+                logger.info(
+                    f"[{msg.session_id[:8]}] Call action recebido: "
+                    f"action={msg.action}, target={msg.target}"
+                )
+                if self.on_call_action:
+                    self.on_call_action(msg.session_id, msg.action, msg.target)
 
             elif isinstance(msg, ProtocolErrorMessage):
                 logger.error(f"ASP protocol.error: {msg.code} - {msg.message}")

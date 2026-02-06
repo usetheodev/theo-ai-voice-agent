@@ -6,11 +6,12 @@ import logging
 import asyncio
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Literal
-from datetime import datetime
+from datetime import datetime, timezone
 
 from config import SESSION_CONFIG
 from pipeline.conversation import ConversationPipeline
 from pipeline.vad import AudioBuffer
+from providers.pool import ProviderPool
 from ws.protocol import AudioConfig, session_id_to_hash
 from metrics import track_session_start, track_session_end, ACTIVE_SESSIONS
 
@@ -29,11 +30,17 @@ class Session:
     pipeline: ConversationPipeline
     audio_buffer: AudioBuffer
     state: SessionState = 'idle'
-    created_at: datetime = field(default_factory=datetime.now)
-    last_activity: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_activity: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Lock para operações thread-safe
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    # Contador de interacoes sem resolucao (para escalacao automatica)
+    interaction_count: int = 0
+
+    # Contador de frames ignorados (quando state != listening)
+    _ignored_frames: int = 0
 
     # Timestamps para métricas TTFB
     audio_end_timestamp: float = 0.0  # Quando audio.end foi recebido
@@ -46,7 +53,7 @@ class Session:
 
     def update_activity(self):
         """Atualiza timestamp de última atividade"""
-        self.last_activity = datetime.now()
+        self.last_activity = datetime.now(timezone.utc)
 
     async def set_state(self, new_state: SessionState):
         """Define estado da sessão (thread-safe)"""
@@ -60,10 +67,11 @@ class Session:
 class SessionManager:
     """Gerenciador de sessões de conversação"""
 
-    def __init__(self):
+    def __init__(self, pool: Optional[ProviderPool] = None):
         self.sessions: Dict[str, Session] = {}
         self._hash_to_session: Dict[str, str] = {}  # hash_hex -> session_id
         self._lock = asyncio.Lock()
+        self._pool = pool
 
     async def create_session(
         self,
@@ -80,8 +88,12 @@ class SessionManager:
             # Cria pipeline SEM auto_init (evita asyncio.run() em contexto async)
             pipeline = ConversationPipeline(auto_init=False)
 
-            # Inicializa providers de forma assíncrona
-            await pipeline.init_providers_async()
+            # Usa providers compartilhados do pool (se disponivel)
+            if self._pool and self._pool.is_ready:
+                pipeline.init_with_shared_providers(self._pool.stt, self._pool.tts)
+            else:
+                # Fallback: inicializa providers por sessao
+                await pipeline.init_providers_async()
 
             # Cria audio buffer
             audio_buffer = AudioBuffer()
@@ -125,7 +137,7 @@ class SessionManager:
             session = self.sessions[session_id]
 
             # Calcula duração
-            duration = (datetime.now() - session.created_at).total_seconds()
+            duration = (datetime.now(timezone.utc) - session.created_at).total_seconds()
 
             # Registra métricas
             track_session_end(reason, duration)
@@ -156,7 +168,7 @@ class SessionManager:
             max_idle_seconds = SESSION_CONFIG.get("max_idle_seconds", 300)
 
         async with self._lock:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             stale = []
 
             for session_id, session in self.sessions.items():

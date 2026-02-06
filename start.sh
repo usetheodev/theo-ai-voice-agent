@@ -10,6 +10,7 @@ set -e
 # Parsing de argumentos
 #-----------------------------------------------
 DEBUG_MODE=false
+TRANSCRIBE_MODE=false
 PROFILE_ARGS=""
 
 while [[ $# -gt 0 ]]; do
@@ -19,12 +20,24 @@ while [[ $# -gt 0 ]]; do
             PROFILE_ARGS="--profile debug"
             shift
             ;;
+        --transcribe|--with-transcribe)
+            TRANSCRIBE_MODE=true
+            export TRANSCRIBE_ENABLED=true
+            shift
+            ;;
         --help|-h)
             echo "Uso: $0 [opcoes]"
             echo ""
             echo "Opcoes:"
-            echo "  --debug    Inicia com Kibana e ferramentas de debug"
-            echo "  --help     Mostra esta ajuda"
+            echo "  --debug       Inicia com Kibana e ferramentas de debug"
+            echo "  --transcribe  Habilita transcricao em tempo real (Elasticsearch)"
+            echo "  --help        Mostra esta ajuda"
+            echo ""
+            echo "Exemplos:"
+            echo "  $0                      # Inicia sistema basico"
+            echo "  $0 --transcribe         # Com transcricao habilitada"
+            echo "  $0 --debug              # Com Kibana e debug"
+            echo "  $0 --transcribe --debug # Transcricao + debug"
             exit 0
             ;;
         *)
@@ -237,6 +250,12 @@ log_info "       PABX Docker - Iniciando Sistema          "
 log_info "================================================"
 log_info "OS detectado: $OS_TYPE"
 log_info "Docker Compose: $DOCKER_COMPOSE"
+if [ "$DEBUG_MODE" = true ]; then
+    log_warn "Modo: DEBUG (com Kibana)"
+fi
+if [ "$TRANSCRIBE_MODE" = true ]; then
+    log_warn "Modo: TRANSCRIBE habilitado"
+fi
 echo ""
 
 # Verifica dependências
@@ -420,14 +439,13 @@ echo "   CLI Asterisk:   docker exec -it asterisk-pabx asterisk -rvvv"
 echo "   Parar tudo:     ./stop.sh"
 echo ""
 log_info "Transcricao (Elasticsearch):"
-echo "   Iniciar com transcricao:  ./start-with-transcribe.sh"
-echo "   Ou:  TRANSCRIBE_ENABLED=true ./start.sh"
+echo "   Iniciar com transcricao:  ./start.sh --transcribe"
 echo "   Testar:                   ./scripts/test-ai-transcribe.sh"
 echo "   Ver transcricoes:         curl 'http://localhost:9200/voice-transcriptions-*/_search?pretty'"
 echo ""
 log_info "LLM Local (Docker Model Runner):"
-echo "   Setup completo:           ./setup-local-llm.sh"
-echo "   Modelos disponiveis:      ./setup-local-llm.sh models"
-echo "   Testar modelo:            ./setup-local-llm.sh test smollm3"
+echo "   Setup completo:           ./local-llm.sh setup"
+echo "   Modelos disponiveis:      ./local-llm.sh models"
+echo "   Testar modelo:            ./local-llm.sh test smollm3"
 echo "   Vantagens: Zero latencia de rede, zero custo, 100% privacidade"
 echo ""

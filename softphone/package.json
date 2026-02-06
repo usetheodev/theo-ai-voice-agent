@@ -1,7 +1,7 @@
 {
   "name": "softphone-react",
-  "version": "1.0.0",
-  "description": "SoftPhone WebRTC para PABX Asterisk",
+  "version": "2.0.0",
+  "description": "Voice Agent Dashboard - SoftPhone e Busca Semantica",
   "private": true,
   "type": "module",
   "scripts": {
@@ -17,6 +17,8 @@
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-router-dom": "^6.22.0",
+    "lucide-react": "^0.344.0",
     "sip.js": "^0.21.2"
   },
   "devDependencies": {

@@ -14,10 +14,8 @@ Modos de operação:
 
 import asyncio
 import logging
-import queue
-import threading
 import time
-from typing import Optional, Tuple, Generator, AsyncGenerator
+from typing import Dict, List, Optional, Tuple, Generator, AsyncGenerator
 
 from config import AUDIO_CONFIG, AGENT_MESSAGES, PIPELINE_CONFIG
 from providers.stt import create_stt_provider_sync, STTProvider
@@ -54,9 +52,21 @@ class ConversationPipeline:
         self.llm: Optional[LLMProvider] = None
         self.tts: Optional[TTSProvider] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._shared_providers: bool = False
 
         if auto_init:
             self._init_providers_sync()
+
+    @property
+    def pending_tool_calls(self) -> List[Dict]:
+        """Delega ao LLM provider (single source of truth, sem cópias intermediárias)."""
+        return self.llm.pending_tool_calls if self.llm else []
+
+    @pending_tool_calls.setter
+    def pending_tool_calls(self, value: List[Dict]):
+        """Seta pending_tool_calls no LLM provider."""
+        if self.llm:
+            self.llm.pending_tool_calls = value
 
     def _init_providers_sync(self):
         """Inicializa provedores de forma síncrona (compatibilidade).
@@ -126,12 +136,29 @@ class ConversationPipeline:
         except Exception as e:
             logger.warning(f"TTS não disponível: {e}")
 
+    def init_with_shared_providers(self, stt: STTProvider, tts: TTSProvider):
+        """Inicializa pipeline com providers compartilhados do pool global.
+
+        STT e TTS sao referencias compartilhadas (lifecycle gerenciado pelo pool).
+        LLM e criado localmente (stateful, mantem historico por sessao).
+        """
+        self.stt = stt
+        self.tts = tts
+        self._shared_providers = True
+
+        try:
+            self.llm = create_llm_provider()
+            logger.info(" LLM inicializado (por sessao)")
+        except Exception as e:
+            logger.warning(f"LLM não disponível: {e}")
+
     async def disconnect(self):
-        """Desconecta todos os providers."""
-        if self.stt and hasattr(self.stt, 'disconnect'):
-            await self.stt.disconnect()
-        if self.tts and hasattr(self.tts, 'disconnect'):
-            await self.tts.disconnect()
+        """Desconecta providers locais. Providers compartilhados sao gerenciados pelo pool."""
+        if not self._shared_providers:
+            if self.stt and hasattr(self.stt, 'disconnect'):
+                await self.stt.disconnect()
+            if self.tts and hasattr(self.tts, 'disconnect'):
+                await self.tts.disconnect()
         logger.info(" Pipeline desconectado")
 
     # ==================== Health Check ====================
@@ -478,6 +505,10 @@ class ConversationPipeline:
             track_pipeline_error('tts')
             return None
 
+    async def synthesize_text_async(self, text: str) -> Optional[bytes]:
+        """Sintetiza texto em áudio (async) - API pública para uso externo."""
+        return await self._synthesize_async(text)
+
     async def _synthesize_async(self, text: str) -> Optional[bytes]:
         """Sintetiza texto em áudio (async)."""
         if not self.tts:
@@ -571,36 +602,6 @@ class ConversationPipeline:
         greeting = AGENT_MESSAGES["greeting"]
         audio = await self._synthesize_async(greeting)
         return greeting, audio
-
-    def generate_greeting_stream(self) -> Generator[Tuple[str, bytes], None, None]:
-        """Gera saudação inicial com streaming."""
-        greeting = AGENT_MESSAGES["greeting"]
-
-        if self.tts and self.tts.supports_streaming:
-            for audio_chunk in self._synthesize_stream_sync(greeting):
-                yield greeting, audio_chunk
-        else:
-            audio = self._synthesize(greeting)
-            if audio:
-                yield greeting, audio
-
-    async def generate_greeting_stream_async(self) -> AsyncGenerator[Tuple[str, bytes], None]:
-        """Gera saudação inicial com streaming (async)."""
-        greeting = AGENT_MESSAGES["greeting"]
-
-        if self.tts and self.tts.supports_streaming:
-            async for audio_chunk in self._synthesize_stream_async(greeting):
-                yield greeting, audio_chunk
-        else:
-            audio = await self._synthesize_async(greeting)
-            if audio:
-                yield greeting, audio
-
-    def generate_error_response(self) -> Tuple[str, Optional[bytes]]:
-        """Gera resposta de erro."""
-        error_msg = AGENT_MESSAGES["error"]
-        audio = self._synthesize(error_msg)
-        return error_msg, audio
 
     # ==================== Utils ====================
 

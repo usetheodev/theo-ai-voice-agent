@@ -215,6 +215,7 @@ class RingBuffer:
         if was_full:
             # Pega frame que será descartado para métricas
             old_frame = self._buffer[0]
+            self._current_size_bytes -= len(old_frame.data)
             with self._metrics_lock:
                 self._metrics.record_overflow(len(old_frame.data))
 
@@ -226,8 +227,8 @@ class RingBuffer:
         # Push - se cheio, descarta automaticamente o mais antigo
         self._buffer.append(frame)
 
-        # Atualiza tamanho e métricas
-        self._current_size_bytes = sum(len(f.data) for f in self._buffer)
+        # Atualiza tamanho incremental (O(1) em vez de O(n))
+        self._current_size_bytes += len(data)
 
         with self._metrics_lock:
             self._metrics.record_push(len(data), dropped=False)
@@ -245,8 +246,8 @@ class RingBuffer:
         try:
             frame = self._buffer.popleft()
 
-            # Atualiza métricas
-            self._current_size_bytes = sum(len(f.data) for f in self._buffer)
+            # Atualiza tamanho incremental (O(1) em vez de O(n))
+            self._current_size_bytes -= len(frame.data)
 
             with self._metrics_lock:
                 self._metrics.record_pop(len(frame.data))

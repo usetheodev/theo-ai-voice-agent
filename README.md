@@ -1,580 +1,691 @@
-# PABX Docker - Asterisk + AI Voice Agent
+# Theo - AI Voice Agent
 
-Sistema de PABX com Asterisk, SoftPhone WebRTC em React e Agente de Conversação com IA.
-
----
-
-## Visão Macro do Sistema
-
-### Arquitetura Geral
+Agente de voz conversacional com controle de chamadas em tempo real. Integra telefonia SIP/VoIP com pipeline de IA (STT, LLM, TTS) para atendimento automatizado com transferencia assistida.
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              INFRAESTRUTURA DE VOZ                              │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                 │
-│  ┌─────────────┐         ┌─────────────┐         ┌─────────────────────────┐   │
-│  │  SoftPhone  │  WebRTC │             │  SIP    │                         │   │
-│  │   (React)   │◄───────►│  Asterisk   │◄───────►│     Media Server        │   │
-│  │  :3000      │  WSS    │   (PABX)    │  RTP    │     (SIP Bridge)        │   │
-│  └─────────────┘  :8189  │   :5160     │ :40000  │                         │   │
-│                          └─────────────┘         │  ┌───────────────────┐  │   │
-│  ┌─────────────┐                │                │  │ PJSUA2 SIP Stack  │  │   │
-│  │  Zoiper /   │     SIP/RTP    │                │  │ VAD (WebRTC)      │  │   │
-│  │  Linphone   │◄───────────────┘                │  │ Audio Streaming   │  │   │
-│  └─────────────┘                                 │  └───────────────────┘  │   │
-│                                                  └───────────┬─────────────┘   │
-│                                                              │                 │
-│                              WebSocket + ASP Protocol        │                 │
-│                              (Audio Session Protocol)        │                 │
-│                                                              ▼                 │
-│                                                  ┌─────────────────────────┐   │
-│                                                  │       AI Agent          │   │
-│                                                  │   (Conversation Server) │   │
-│                                                  │                         │   │
-│                                                  │  ┌───────────────────┐  │   │
-│                                                  │  │ Pipeline:         │  │   │
-│                                                  │  │  STT → LLM → TTS  │  │   │
-│                                                  │  └───────────────────┘  │   │
-│                                                  │  ┌───────────────────┐  │   │
-│                                                  │  │ Providers:        │  │   │
-│                                                  │  │  • Whisper (STT)  │  │   │
-│                                                  │  │  • Claude (LLM)   │  │   │
-│                                                  │  │  • Kokoro (TTS)   │  │   │
-│                                                  │  └───────────────────┘  │   │
-│                                                  └─────────────────────────┘   │
-│                                                                                 │
-└─────────────────────────────────────────────────────────────────────────────────┘
+Usuário ──► Asterisk ──► Media Server ──► AI Agent ──► Resposta de voz
+           (PABX)    ▲  (SIP Bridge)    (STT→LLM→TTS)
+                     │                        │
+                     └── AMI Redirect ◄───────┘
+                     (Transfer assistida)  (Tool Calling)
 ```
 
----
-
-### Fluxo de uma Chamada Completa
+## Arquitetura
 
 ```
-┌────────────┐      ┌──────────┐      ┌──────────────┐      ┌────────────┐
-│  Usuário   │      │ Asterisk │      │ Media Server │      │  AI Agent  │
-│ (SoftPhone)│      │  (PABX)  │      │ (SIP Bridge) │      │(Conversação)│
-└─────┬──────┘      └────┬─────┘      └──────┬───────┘      └─────┬──────┘
-      │                  │                   │                    │
-      │  1. INVITE       │                   │                    │
-      │  (ligar 2000)    │                   │                    │
-      │─────────────────►│                   │                    │
-      │                  │                   │                    │
-      │                  │  2. INVITE        │                    │
-      │                  │─────────────────►│                    │
-      │                  │                   │                    │
-      │                  │  3. 200 OK        │                    │
-      │                  │◄─────────────────│                    │
-      │                  │                   │                    │
-      │  4. 200 OK       │                   │  3a. session.start │
-      │◄─────────────────│                   │────────────────────►
-      │                  │                   │                    │
-      │  5. ACK          │                   │  3b. session.started
-      │─────────────────►│                   │◄────────────────────
-      │                  │                   │                    │
-      │                  │                   │  4. greeting audio │
-      │                  │  4a. RTP Audio    │◄────────────────────
-      │  4b. RTP Audio   │◄─────────────────│                    │
-      │◄─────────────────│                   │                    │
-      │                  │                   │                    │
-      │ ══════════════ LOOP DE CONVERSAÇÃO ══════════════════════│
-      │                  │                   │                    │
-      │  5. Fala (RTP)   │                   │                    │
-      │─────────────────►│  5a. RTP Audio    │                    │
-      │                  │─────────────────►│                    │
-      │                  │                   │                    │
-      │                  │                   │  5b. audio frames  │
-      │                  │                   │  (streaming)       │
-      │                  │                   │────────────────────►
-      │                  │                   │                    │
-      │                  │                   │  5c. VAD detecta   │
-      │                  │                   │  fim de fala       │
-      │                  │                   │                    │
-      │                  │                   │  6. audio.end      │
-      │                  │                   │────────────────────►
-      │                  │                   │                    │
-      │                  │                   │        ┌───────────┤
-      │                  │                   │        │ Pipeline: │
-      │                  │                   │        │ STT→LLM→TTS
-      │                  │                   │        └───────────┤
-      │                  │                   │                    │
-      │                  │                   │  7. response.start │
-      │                  │                   │◄────────────────────
-      │                  │                   │                    │
-      │                  │                   │  8. audio chunks   │
-      │                  │  8a. RTP Audio    │◄────────────────────
-      │  8b. RTP Audio   │◄─────────────────│  (streaming)       │
-      │◄─────────────────│                   │                    │
-      │                  │                   │                    │
-      │                  │                   │  9. response.end   │
-      │                  │                   │◄────────────────────
-      │                  │                   │                    │
-      │ ═══════════════ FIM DO LOOP (repete até desligar) ═══════│
-      │                  │                   │                    │
-      │  10. BYE         │                   │                    │
-      │─────────────────►│  10a. BYE         │                    │
-      │                  │─────────────────►│  10b. session.end  │
-      │                  │                   │────────────────────►
-      │                  │                   │                    │
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│   ┌──────────┐        ┌──────────┐        ┌─────────────────────────────┐  │
+│   │SoftPhone │ WebRTC │          │  SIP   │       Media Server          │  │
+│   │ (React)  │◄──────►│ Asterisk │◄──────►│       (SIP Bridge)          │  │
+│   └──────────┘  WSS   │  (PABX)  │  RTP   │                             │  │
+│                       │          │        │  ┌─────────────────────┐    │  │
+│   ┌──────────┐  SIP   │          │◄──AMI──│  │ PJSUA2 + AMI Client│    │  │
+│   │ Zoiper / │◄──────►│          │Redirect│  └─────────────────────┘    │  │
+│   │ Linphone │  RTP   └──────────┘        └────────────┬────────────────┘  │
+│   └──────────┘                                         │                   │
+│                                          WebSocket + ASP Protocol          │
+│                                                        │                   │
+│                            ┌───────────────────────────┼───────────────┐   │
+│                            │                           ▼               │   │
+│                            │  ┌─────────────────────────────────────┐  │   │
+│                            │  │            AI Agent                 │  │   │
+│                            │  │                                     │  │   │
+│                            │  │   ┌─────┐   ┌─────┐   ┌─────┐      │  │   │
+│                            │  │   │ STT │──►│ LLM │──►│ TTS │      │  │   │
+│                            │  │   └─────┘   └─────┘   └─────┘      │  │   │
+│                            │  │                  │                   │  │   │
+│                            │  │  Providers:      │ Tool Calling      │  │   │
+│                            │  │  • FasterWhisper  │ • transfer_call   │  │   │
+│                            │  │  • Claude / GPT   │ • end_call        │  │   │
+│                            │  │  • Kokoro / gTTS  ▼                   │  │   │
+│                            │  │              CallActionMessage ──────►│  │   │
+│                            │  └─────────────────────────────────────┘  │   │
+│                            │                                           │   │
+│                            │  ┌─────────────────────────────────────┐  │   │
+│                            │  │         AI Transcribe               │  │   │
+│                            │  │   (Transcrição → Elasticsearch)     │  │   │
+│                            │  └─────────────────────────────────────┘  │   │
+│                            │                                           │   │
+│                            └───────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
----
+## Componentes
 
-### Protocolo ASP (Audio Session Protocol)
-
-Protocolo de negociação entre Media Server e AI Agent:
-
-```
-┌──────────────┐                              ┌──────────────┐
-│ Media Server │                              │   AI Agent   │
-│   (Cliente)  │                              │  (Servidor)  │
-└──────┬───────┘                              └──────┬───────┘
-       │                                             │
-       │  1. WebSocket Connect                       │
-       │ ───────────────────────────────────────────►│
-       │                                             │
-       │  2. protocol.capabilities                   │
-       │ ◄───────────────────────────────────────────│
-       │    {                                        │
-       │      version: "1.0.0",                      │
-       │      supported_sample_rates: [8000, 16000], │
-       │      supported_encodings: ["pcm_s16le"],    │
-       │      features: ["barge_in", "streaming_tts"]│
-       │    }                                        │
-       │                                             │
-       │  3. session.start                           │
-       │ ───────────────────────────────────────────►│
-       │    {                                        │
-       │      session_id: "uuid",                    │
-       │      audio: { sample_rate: 8000, ... },     │
-       │      vad: { silence_threshold_ms: 500, ... }│
-       │    }                                        │
-       │                                             │
-       │  4. session.started                         │
-       │ ◄───────────────────────────────────────────│
-       │    {                                        │
-       │      status: "accepted",                    │
-       │      negotiated: { audio: {...}, vad: {...}}│
-       │    }                                        │
-       │                                             │
-       │  ═══════════ SESSÃO ATIVA ══════════════   │
-       │                                             │
-       │  5. Audio Frames (binário)                  │
-       │ ───────────────────────────────────────────►│
-       │                                             │
-       │  6. audio.end (fim de fala)                 │
-       │ ───────────────────────────────────────────►│
-       │                                             │
-       │  7. response.start                          │
-       │ ◄───────────────────────────────────────────│
-       │                                             │
-       │  8. Audio Frames (resposta)                 │
-       │ ◄───────────────────────────────────────────│
-       │                                             │
-       │  9. response.end                            │
-       │ ◄───────────────────────────────────────────│
-       │                                             │
-       │  10. session.end                            │
-       │ ───────────────────────────────────────────►│
-       │                                             │
-       │  11. session.ended (com estatísticas)       │
-       │ ◄───────────────────────────────────────────│
-       │                                             │
-```
-
-> **Documentação completa:** [docs/ASP_SPECIFICATION.md](docs/ASP_SPECIFICATION.md)
-
----
-
-### Pipeline de Processamento de Áudio
-
-```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                           AI AGENT - PIPELINE DE VOZ                            │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                 │
-│  ENTRADA (do Media Server)                                                      │
-│  ════════════════════════                                                       │
-│                                                                                 │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                      │
-│  │ Audio Frame  │───►│ Audio Buffer │───►│     VAD      │                      │
-│  │  (PCM 8kHz)  │    │  (até 60s)   │    │  (WebRTC)    │                      │
-│  └──────────────┘    └──────────────┘    └──────┬───────┘                      │
-│                                                 │                               │
-│                            Detecta fim de fala  │                               │
-│                            (audio.end)          ▼                               │
-│  ┌─────────────────────────────────────────────────────────────────────────┐   │
-│  │                        PROCESSAMENTO (STT → LLM → TTS)                  │   │
-│  ├─────────────────────────────────────────────────────────────────────────┤   │
-│  │                                                                         │   │
-│  │  ┌────────────────┐     ┌────────────────┐     ┌────────────────┐      │   │
-│  │  │      STT       │     │      LLM       │     │      TTS       │      │   │
-│  │  │                │     │                │     │                │      │   │
-│  │  │ faster-whisper │────►│ Claude/GPT     │────►│ Kokoro/gTTS    │      │   │
-│  │  │                │     │                │     │                │      │   │
-│  │  │ Audio → Texto  │     │ Texto → Texto  │     │ Texto → Audio  │      │   │
-│  │  └────────────────┘     └────────────────┘     └────────┬───────┘      │   │
-│  │         │                      │                        │              │   │
-│  │         ▼                      ▼                        ▼              │   │
-│  │   "Olá, preciso         "Claro! Posso           PCM 8kHz mono        │   │
-│  │    de ajuda"             ajudar com..."          (streaming)          │   │
-│  │                                                                         │   │
-│  └─────────────────────────────────────────────────────────────────────────┘   │
-│                                                 │                               │
-│                                                 ▼                               │
-│  SAÍDA (para Media Server)                                                      │
-│  ═════════════════════════                                                      │
-│                                                                                 │
-│  ┌──────────────────────────────────────────────────────────────────────────┐  │
-│  │                       STREAMING DE RESPOSTA                              │  │
-│  ├──────────────────────────────────────────────────────────────────────────┤  │
-│  │                                                                          │  │
-│  │  response.start ──► audio_chunk ──► audio_chunk ──► ... ──► response.end │  │
-│  │       │                  │               │                      │        │  │
-│  │       ▼                  ▼               ▼                      ▼        │  │
-│  │   "Iniciando"      [bytes PCM]     [bytes PCM]            "Completo"     │  │
-│  │                                                                          │  │
-│  └──────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                 │
-│  ┌───────────────────────────────────────────────────────────────────────────┐ │
-│  │ MÉTRICAS                                                                  │ │
-│  │ • TTFB (Time to First Byte): ~300-500ms                                   │ │
-│  │ • STT Latency: ~100-300ms (modelo tiny)                                   │ │
-│  │ • LLM Latency: ~200-500ms (streaming)                                     │ │
-│  │ • TTS Latency: ~100-200ms (primeiro chunk)                                │ │
-│  └───────────────────────────────────────────────────────────────────────────┘ │
-│                                                                                 │
-└─────────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-### Barge-In (Interrupção)
-
-O sistema suporta barge-in, permitindo que o usuário interrompa a resposta do agente:
-
-```
-┌──────────┐     ┌──────────────┐     ┌────────────┐
-│ Usuário  │     │ Media Server │     │  AI Agent  │
-└────┬─────┘     └──────┬───────┘     └─────┬──────┘
-     │                  │                   │
-     │                  │  response.start   │
-     │                  │◄──────────────────│
-     │                  │                   │
-     │  Ouvindo resposta│  audio chunks     │
-     │◄─────────────────│◄──────────────────│
-     │                  │                   │
-     │  INTERROMPE!     │                   │
-     │  (começa falar)  │                   │
-     │─────────────────►│                   │
-     │                  │                   │
-     │                  │  VAD detecta fala │
-     │                  │  durante playback │
-     │                  │                   │
-     │                  │  PARA playback    │
-     │                  │  imediatamente    │
-     │                  │                   │
-     │                  │  audio.end        │
-     │                  │  (nova fala)      │
-     │                  │──────────────────►│
-     │                  │                   │
-     │                  │  response.start   │
-     │                  │  (nova resposta)  │
-     │                  │◄──────────────────│
-     │                  │                   │
-```
-
----
-
-## Arquitetura Detalhada
-
-```
-┌──────────────────────┐    WebSocket     ┌──────────────────────┐
-│    Media Server      │◄────────────────►│      AI Agent        │
-│    (SIP Bridge)      │  Audio + Control │  (Conversation)      │
-├──────────────────────┤                  ├──────────────────────┤
-│ • PJSUA2 SIP/RTP     │                  │ • STT (Whisper)      │
-│ • Call control       │                  │ • LLM (Claude)       │
-│ • Audio capture      │                  │ • TTS (Kokoro)       │
-│ • Audio playback     │                  │ • VAD                │
-│ • WS Client          │                  │ • Session Manager    │
-└──────────────────────┘                  └──────────────────────┘
-         ▲
-         │ SIP/RTP
-         ▼
-   ┌───────────┐         ┌───────────────┐
-   │ Asterisk  │◄───────►│  SoftPhone    │
-   │  (PABX)   │         │  (WebRTC)     │
-   └───────────┘         └───────────────┘
-```
-
-## Estrutura de Diretórios
-
-```
-pabx-docker/
-├── docker-compose.yml
-├── asterisk/
-│   ├── config/
-│   │   ├── pjsip.conf      # Configuração SIP/WebRTC
-│   │   ├── extensions.conf # Dialplan com URA
-│   │   ├── http.conf       # WebSocket para WebRTC
-│   │   ├── rtp.conf        # Configuração RTP
-│   │   └── modules.conf    # Módulos do Asterisk
-│   └── sounds/             # Áudios customizados da URA
-├── media-server/           # Bridge SIP ↔ WebSocket
-│   ├── sip/                # PJSUA2 SIP handling
-│   └── ws/                 # WebSocket client
-├── ai-agent/               # Servidor de Conversação IA
-│   ├── server/             # WebSocket server
-│   ├── pipeline/           # STT → LLM → TTS
-│   └── providers/          # Whisper, Claude, gTTS
-└── softphone/              # SoftPhone React WebRTC
-```
-
-## Ramais Configurados
-
-| Ramal | Senha                | Transporte        | Descrição           |
-|-------|----------------------|-------------------|---------------------|
-| 1001  | FRGQib50A3gZQSl1NSen | UDP :5160         | Ramal SIP padrão    |
-| 1002  | jaFViIPZkzejvgHczIFE | UDP :5160         | Ramal SIP padrão    |
-| 1003  | axkCUAmMk2FyI1NJpLSF | UDP :5160         | Ramal SIP padrão    |
-| 1004  | xe9JDXRiUeK2848Uvoz1 | WSS :8189 (WebRTC)| SoftPhone React     |
-| 1005  | d9nHiKsFcKXmj9tS0NXd | WSS :8189 (WebRTC)| SoftPhone React     |
-| 2000  | 7Wslll0Hlc6BCOv4jF51 | UDP :5160         | Agente IA           |
-
-### Configuração por Tipo de Cliente
-
-**WebRTC (Browser/SoftPhone React):**
-- URL WebSocket: `wss://SEU_IP:8189/ws`
-- Use ramal **1004** ou **1005**
-
-**SIP Tradicional (Zoiper, Linphone, etc.):**
-- Servidor: `SEU_IP:5160`
-- Use ramal **1001**, **1002** ou **1003**
-
-**Agente IA:**
-- Ramal **2000** - atendimento automático com IA
-
-## Códigos de Acesso
-
-| Código | Função                    |
-|--------|---------------------------|
-| 9      | Acessar URA               |
-| *43    | Teste de eco              |
-| *60    | Hora certa                |
-| 8000   | Sala de conferência       |
-
-## URA - Menu
-
-- **1** - Falar com Operador (ramal 1001)
-- **2** - Falar com Suporte (ramal 1002)
-- **3** - Discar ramal diretamente
-- **0** - Repetir menu
+| Componente | Descrição | Porta |
+|------------|-----------|-------|
+| **Asterisk** | PABX SIP com WebRTC e AMI | 5160 (SIP), 8189 (WSS), 5038 (AMI) |
+| **Media Server** | Bridge SIP↔WebSocket + AMI Client | 40000-40100 (RTP) |
+| **AI Agent** | Pipeline STT→LLM→TTS + Tool Calling | 8765 (WS), 9090 (metrics) |
+| **AI Transcribe** | Transcrição em tempo real para Elasticsearch | 8766 (WS), 9093 (metrics) |
+| **SoftPhone** | Cliente WebRTC em React | 3000 |
+| **Elasticsearch** | Armazenamento de transcrições | 9200 |
+| **Kibana** | Visualização de transcrições | 5601 |
+| **Prometheus** | Coleta de métricas | 9092 |
+| **Grafana** | Dashboards de métricas | 3000 |
 
 ## Início Rápido
 
-### 1. Configurar variáveis de ambiente
+### 1. Configurar ambiente
 
 ```bash
-# Copiar arquivo de exemplo
+# Copiar configuração do AI Agent
 cp ai-agent/.env.example ai-agent/.env
 
-# Editar com sua chave da Anthropic
+# Editar com sua API key (Anthropic ou OpenAI)
 nano ai-agent/.env
 ```
 
-Variáveis necessárias no `ai-agent/.env`:
+**Configuração mínima** (`ai-agent/.env`):
 ```bash
-ANTHROPIC_API_KEY=sk-ant-...  # Obrigatório
-STT_PROVIDER=whisper_local
-STT_MODEL=base
-TTS_PROVIDER=gtts
-TTS_LANG=pt
+# LLM - escolha um:
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Ou use LLM local (sem API key):
+# LLM_PROVIDER=local
+# LOCAL_LLM_MODEL=ai/smollm3
 ```
 
-### 2. Iniciar todos os serviços
-
-```bash
-docker compose up -d
-```
-
-Isso inicia:
-- **asterisk** - PABX SIP
-- **coturn** - TURN server para WebRTC
-- **ai-agent** - Servidor de conversação IA
-- **media-server** - Bridge SIP ↔ WebSocket
-
-### 3. Verificar se está rodando
+### 2. Iniciar sistema
 
 ```bash
-# Ver logs de todos os serviços
-docker compose logs -f
-
-# Ver logs específicos
-docker logs -f ai-conversation-agent
-docker logs -f sip-media-server
-
-# Acessar CLI do Asterisk
-docker exec -it asterisk-pabx asterisk -rvvv
-
-# Verificar ramais registrados
-docker exec -it asterisk-pabx asterisk -rx "pjsip show endpoints"
+./start.sh                    # Sistema básico
+./start.sh --transcribe       # Com transcrição (Elasticsearch)
+./start.sh --debug            # Com Kibana e debug tools
+./start.sh --transcribe --debug  # Tudo habilitado
 ```
 
-### 4. Iniciar o SoftPhone React (opcional)
+### 3. Testar
+
+1. **SoftPhone WebRTC**: `cd softphone && npm install && npm run dev`
+2. Acesse https://localhost:3000
+3. Conecte com ramal **1004** (senha: `xe9JDXRiUeK2848Uvoz1`)
+4. Ligue para **2000** (Agente IA)
+
+## Scripts
+
+### Resumo
+
+| Script | Descrição |
+|--------|-----------|
+| `./start.sh` | Iniciar sistema |
+| `./stop.sh` | Parar todos os containers |
+| `./restart.sh` | Reiniciar serviços |
+| `./status.sh` | Ver status dos serviços |
+| `./logs.sh` | Ver logs dos serviços |
+| `./local-llm.sh` | Configurar LLM local |
+
+---
+
+### start.sh
+
+Inicia o sistema completo.
 
 ```bash
-cd softphone
-npm install
-npm run dev
+# Uso
+./start.sh [opções]
+
+# Opções
+--transcribe    Habilita transcrição em tempo real (Elasticsearch)
+--debug         Inicia com Kibana e ferramentas de debug
+--help          Mostra ajuda
 ```
 
-Acesse: https://localhost:3000
-
-**Nota:** Use HTTPS para WebRTC funcionar. O navegador pode alertar sobre certificado autoassinado.
-
-### 5. Testar o Agente IA
-
-1. Registre um softphone (ramal 1001-1003) ou use o SoftPhone React (1004-1005)
-2. Ligue para o ramal **2000**
-3. O agente IA irá atender e você pode conversar com ele
-
-## Testar com SoftPhone Tradicional
-
-Use qualquer softphone SIP (Zoiper, Linphone, MicroSIP):
-
-- **Servidor:** IP da sua máquina
-- **Porta:** 5160 (UDP)
-- **Usuário:** 1001
-- **Senha:** FRGQib50A3gZQSl1NSen
-
-Para testar o Agente IA, ligue para o ramal **2000**.
-
-## Portas Utilizadas
-
-| Porta       | Protocolo | Serviço                     |
-|-------------|-----------|------------------------------|
-| 5160        | UDP       | SIP (Asterisk)               |
-| 8189        | TCP       | WSS (WebRTC via Odin/SRTP)   |
-| 8765        | TCP       | WebSocket (AI Agent interno) |
-| 9090        | TCP       | Prometheus Metrics           |
-| 9091        | TCP       | Media Server Metrics         |
-| 10000-10100 | UDP       | RTP (áudio)                  |
-| 40000-40100 | UDP       | RTP (Media Server)           |
-
-## Adicionar Novos Ramais
-
-Edite `asterisk/config/pjsip.conf` e adicione:
-
-```ini
-;-- Ramal 1006 --
-[1006](endpoint-base)  ; Use webrtc-base para WebRTC
-auth=1006-auth
-aors=1006-aor
-callerid="Ramal 1006" <1006>
-
-[1006-auth](auth-base)
-username=1006
-password=suasenha123
-
-[1006-aor](aor-base)
-```
-
-Depois recarregue:
+**Exemplos:**
 
 ```bash
-docker exec -it asterisk-pabx asterisk -rx "pjsip reload"
-```
+# Iniciar sistema básico (Asterisk + Media Server + AI Agent)
+./start.sh
 
-## Adicionar Áudios da URA
+# Iniciar com transcrição habilitada
+./start.sh --transcribe
 
-1. Coloque os arquivos `.wav` ou `.gsm` em `asterisk/sounds/`
-2. Os áudios devem estar no formato:
-   - WAV: 8kHz, 16-bit, mono
-   - GSM: 8kHz, mono
+# Iniciar com ferramentas de debug (Kibana)
+./start.sh --debug
 
-Converter com ffmpeg:
-```bash
-ffmpeg -i audio.mp3 -ar 8000 -ac 1 -acodec pcm_s16le asterisk/sounds/audio.wav
-```
-
-3. Reinicie o Asterisk:
-```bash
-docker-compose restart asterisk
-```
-
-## Integração com SBC (Session Border Controller)
-
-O sistema suporta receber chamadas de um SBC externo via NLB.
-
-**Fluxo:**
-```
-PSTN → SBC (externo) → NLB → Asterisk → Media Server → AI Agent
-```
-
-### Documentação
-
-Consulte [docs/SBC-INTEGRATION.md](docs/SBC-INTEGRATION.md) para:
-- Configuração completa do trunk SBC
-- Ajustes no dialplan
-- Configuração do NLB
-- Troubleshooting
-
-### Arquivos de Exemplo
-
-| Arquivo | Descrição |
-|---------|-----------|
-| `asterisk/config/pjsip-sbc.conf.example` | Configuração do trunk SBC |
-| `asterisk/config/extensions-sbc.conf.example` | Dialplan para chamadas do SBC |
-| `asterisk/config/rtp-sbc.conf.example` | RTP otimizado para SBC |
-
-### Validação
-
-```bash
-# Verificar se o sistema está pronto para SBC
-./scripts/validate-sbc.sh [IP_DO_SBC]
+# Iniciar com tudo habilitado
+./start.sh --transcribe --debug
 ```
 
 ---
+
+### stop.sh
+
+Para todos os containers.
+
+```bash
+# Uso
+./stop.sh
+```
+
+**Exemplo:**
+
+```bash
+# Parar todo o sistema
+./stop.sh
+```
+
+---
+
+### restart.sh
+
+Reinicia serviços com opções de rebuild.
+
+```bash
+# Uso
+./restart.sh [serviço] [opções]
+
+# Serviços disponíveis
+ai-agent        Reinicia apenas o AI Agent
+media-server    Reinicia apenas o Media Server
+ai-transcribe   Reinicia apenas o AI Transcribe
+asterisk        Reinicia apenas o Asterisk
+elasticsearch   Reinicia apenas o Elasticsearch
+prometheus      Reinicia apenas o Prometheus
+grafana         Reinicia apenas o Grafana
+
+# Opções
+--build         Rebuild da imagem antes de reiniciar
+--transcribe    Habilita transcrição (TRANSCRIBE_ENABLED=true)
+--help          Mostra ajuda
+```
+
+**Exemplos:**
+
+```bash
+# Restart completo (todos os serviços)
+./restart.sh
+
+# Restart apenas do AI Agent
+./restart.sh ai-agent
+
+# Restart do AI Agent com rebuild da imagem
+./restart.sh ai-agent --build
+
+# Restart completo com rebuild de todas as imagens
+./restart.sh --build
+
+# Restart com transcrição habilitada
+./restart.sh --transcribe
+
+# Restart do Media Server com rebuild
+./restart.sh media-server --build
+```
+
+---
+
+### status.sh
+
+Mostra o status de todos os serviços.
+
+```bash
+# Uso
+./status.sh
+```
+
+**Exemplo:**
+
+```bash
+# Ver status de todos os containers
+./status.sh
+```
+
+**Saída esperada:**
+```
+CONTAINER              STATUS          PORTS
+asterisk-pabx          Up 2 hours      5160/udp, 8189/tcp
+ai-conversation-agent  Up 2 hours      8765/tcp, 9090/tcp
+sip-media-server       Up 2 hours      40000-40100/udp
+elasticsearch          Up 2 hours      9200/tcp
+```
+
+---
+
+### logs.sh
+
+Visualiza logs dos serviços.
+
+```bash
+# Uso
+./logs.sh [serviço] [opções]
+
+# Serviços disponíveis
+ai-agent        Logs do AI Agent
+media-server    Logs do Media Server
+ai-transcribe   Logs do AI Transcribe
+asterisk        Logs do Asterisk
+elasticsearch   Logs do Elasticsearch
+all             Todos os serviços (padrão)
+```
+
+**Exemplos:**
+
+```bash
+# Ver logs de todos os serviços (follow mode)
+./logs.sh
+
+# Ver logs apenas do AI Agent
+./logs.sh ai-agent
+
+# Ver logs do Media Server
+./logs.sh media-server
+
+# Ver logs do Asterisk
+./logs.sh asterisk
+
+# Ver logs do AI Transcribe
+./logs.sh ai-transcribe
+```
+
+---
+
+### local-llm.sh
+
+Configura LLM local usando Docker Model Runner.
+
+```bash
+# Uso
+./local-llm.sh [comando] [modelo]
+
+# Comandos
+setup [modelo]      Setup completo (download + configuração)
+check               Verifica se Model Runner está disponível
+enable              Habilita Model Runner
+download [modelo]   Baixa um modelo
+list                Lista modelos instalados
+models              Lista modelos disponíveis para download
+test [modelo]       Testa um modelo
+configure [modelo]  Configura .env para usar modelo local
+--help              Mostra ajuda
+```
+
+**Exemplos:**
+
+```bash
+# Setup completo com modelo padrão (smollm3)
+./local-llm.sh setup
+
+# Setup com modelo específico
+./local-llm.sh setup phi4
+
+# Ver modelos disponíveis para download
+./local-llm.sh models
+
+# Ver modelos já instalados
+./local-llm.sh list
+
+# Baixar modelo específico
+./local-llm.sh download qwen3
+
+# Testar modelo instalado
+./local-llm.sh test ai/smollm3
+
+# Apenas configurar .env (sem baixar)
+./local-llm.sh configure ai/phi4
+
+# Verificar se Model Runner está disponível
+./local-llm.sh check
+
+# Habilitar Model Runner
+./local-llm.sh enable
+```
+
+---
+
+### Fluxos Comuns
+
+**Primeira execução:**
+```bash
+# 1. Configurar ambiente
+cp ai-agent/.env.example ai-agent/.env
+nano ai-agent/.env  # Adicionar ANTHROPIC_API_KEY
+
+# 2. Iniciar sistema
+./start.sh
+
+# 3. Verificar status
+./status.sh
+```
+
+**Desenvolvimento (com rebuild):**
+```bash
+# Alterar código e reiniciar com rebuild
+./restart.sh ai-agent --build
+```
+
+**Debug de problemas:**
+```bash
+# Ver logs em tempo real
+./logs.sh ai-agent
+
+# Iniciar com ferramentas de debug
+./stop.sh
+./start.sh --debug
+```
+
+**Usar LLM local (sem API key):**
+```bash
+# 1. Setup do LLM local
+./local-llm.sh setup
+
+# 2. Reiniciar AI Agent
+./restart.sh ai-agent
+```
+
+**Habilitar transcrição:**
+```bash
+# Reiniciar com transcrição
+./restart.sh --transcribe
+
+# Ou iniciar do zero
+./stop.sh
+./start.sh --transcribe
+```
+
+---
+
+## Providers Disponíveis
+
+### STT (Speech-to-Text)
+
+| Provider | Descrição | Configuração |
+|----------|-----------|--------------|
+| **faster-whisper** | Whisper otimizado, roda local (Recomendado) | `ASR_PROVIDER=faster-whisper` |
+| whisper | Whisper original | `ASR_PROVIDER=whisper` |
+| openai | API OpenAI Whisper | `ASR_PROVIDER=openai` + `OPENAI_API_KEY` |
+
+### LLM (Large Language Model)
+
+| Provider | Descrição | Configuração |
+|----------|-----------|--------------|
+| **anthropic** | Claude (Recomendado para qualidade) | `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY` |
+| openai | GPT | `LLM_PROVIDER=openai` + `OPENAI_API_KEY` |
+| **local** | Docker Model Runner / vLLM / Ollama (Recomendado para latência) | `LLM_PROVIDER=local` |
+
+### TTS (Text-to-Speech)
+
+| Provider | Descrição | Configuração |
+|----------|-----------|--------------|
+| **kokoro** | Neural local, alta qualidade (Recomendado) | `TTS_PROVIDER=kokoro` |
+| gtts | Google TTS gratuito | `TTS_PROVIDER=gtts` |
+| openai | OpenAI TTS | `TTS_PROVIDER=openai` + `OPENAI_API_KEY` |
+
+## LLM Local (Zero Latência de Rede)
+
+Configure um LLM local para eliminar latência de rede e custo de API:
+
+```bash
+# Setup completo com modelo recomendado (smollm3)
+./local-llm.sh setup
+
+# Ou escolha outro modelo
+./local-llm.sh setup phi4
+
+# Ver modelos disponíveis
+./local-llm.sh models
+```
+
+**Modelos disponíveis:**
+
+| Modelo | Params | Descrição |
+|--------|--------|-----------|
+| smollm3 | 3.1B | Chat eficiente (Recomendado) |
+| functiongemma | 270M | Mais rápido, function-calling |
+| phi4 | ~3B | Raciocínio compacto |
+| qwen3 | 4-72B | Alta qualidade |
+
+## Ramais
+
+| Ramal | Tipo | Descrição |
+|-------|------|-----------|
+| 1001-1003 | SIP UDP | Softphones tradicionais (Zoiper, Linphone) |
+| 1004-1005 | WebRTC WSS | SoftPhone React |
+| **2000** | SIP UDP | **Agente IA** |
+
+## Protocolo ASP (Audio Session Protocol)
+
+Protocolo de comunicação entre Media Server e AI Agent:
+
+```
+Media Server                              AI Agent
+     │                                        │
+     │──────── WebSocket Connect ────────────►│
+     │                                        │
+     │◄─────── protocol.capabilities ─────────│
+     │                                        │
+     │──────── session.start ────────────────►│
+     │◄─────── session.started ──────────────│
+     │                                        │
+     │══════════ SESSÃO ATIVA ═══════════════│
+     │                                        │
+     │──────── audio frames (binary) ────────►│
+     │──────── audio.end ────────────────────►│
+     │                                        │
+     │◄─────── response.start ───────────────│
+     │◄─────── audio chunks ─────────────────│
+     │◄─────── response.end ─────────────────│
+     │◄─────── call.action (transfer/hangup)─│  ← NEW
+     │                                        │
+     │──────── session.end ──────────────────►│
+     │◄─────── session.ended ────────────────│
+```
+
+**Documentação completa:** [docs/ASP_SPECIFICATION.md](docs/ASP_SPECIFICATION.md)
+
+## Transferencia Assistida de Chamadas
+
+O agente de voz pode controlar chamadas em tempo real durante a conversa. Quando o LLM decide que o cliente precisa ser transferido, o sistema executa automaticamente via AMI (Asterisk Manager Interface).
+
+### Fluxo
+
+```
+1. Caller liga para 2000 (AI Agent)
+2. Agente conversa normalmente (pipeline STT → LLM → TTS intacto)
+3. LLM decide transferir: diz "Vou transferir para o suporte"
+   + tool_call: transfer_call("suporte")
+4. AI Agent envia CallActionMessage via ASP Protocol
+5. Media Server aguarda playback terminar (caller ouve frase completa)
+6. Media Server executa AMI Redirect para contexto [transfer-assistida]
+7. Asterisk move caller: MOH → Dial destino → Conecta
+8. Se destino nao atende → fallback automatico para AI Agent
+```
+
+### Tools disponiveis para o LLM
+
+| Tool | Descricao | Exemplo |
+|------|-----------|---------|
+| `transfer_call` | Transfere para departamento ou ramal | `transfer_call("suporte")` ou `transfer_call("1001")` |
+| `end_call` | Encerra a chamada | `end_call("conversa finalizada")` |
+
+### Departamentos
+
+Configuraveis via variavel de ambiente `DEPARTMENT_MAP` no AI Agent:
+
+```bash
+# Formato: "nome:ramal,nome:ramal"
+DEPARTMENT_MAP="suporte:1001,vendas:1002,financeiro:1003"
+```
+
+O LLM pode usar nomes de departamento (`suporte`) ou ramais diretos (`1001`).
+
+### Separacao de Concerns
+
+```
+Camada          | Sabe                         | NAO sabe
+----------------|------------------------------|---------------------------
+LLM             | transfer_call("suporte")     | channel names, AMI, SIP
+AI Agent        | tool call → ASP call.action  | como executar transfer
+Media Server    | AMI Redirect + caller_channel| por que a IA decidiu isso
+Asterisk        | dialplan + bridge + MOH      | que existe IA no sistema
+```
+
+### Fallback automatico
+
+Se o destino da transferencia nao atender (timeout de 30s), o Asterisk redireciona o caller de volta para o AI Agent (ramal 2000), iniciando nova sessao de conversa.
+
+### Decisao Arquitetural
+
+A transferencia usa **AMI** ao inves de ARI para preservar o pipeline existente (Media Fork Manager, streaming ports, barge-in, VAD). Documentacao: [ADR-001](docs/adr/ADR-001-call-control-ami-over-ari.md)
+
+## Estrutura do Projeto
+
+```
+theo-ai-voice-agent/
+├── ai-agent/                  # Servidor de conversação IA
+│   ├── providers/             # STT, LLM, TTS providers
+│   │   ├── stt.py            # FasterWhisper, Whisper, OpenAI
+│   │   ├── llm.py            # Claude, GPT, Local (+Tool Calling)
+│   │   └── tts.py            # Kokoro, gTTS, OpenAI
+│   ├── pipeline/              # Pipeline STT→LLM→TTS
+│   ├── server/                # WebSocket server
+│   ├── tools/                 # LLM tools (transfer_call, end_call)
+│   └── config.py              # Configurações
+│
+├── media-server/              # Bridge SIP ↔ WebSocket
+│   ├── sip/                   # PJSUA2 SIP handling
+│   ├── ami/                   # AMI client (transfer, hangup)
+│   ├── ws/                    # WebSocket client + ASP
+│   ├── core/                  # Media fork manager
+│   └── adapters/              # AI Agent + Transcribe adapters
+│
+├── ai-transcribe/             # Transcrição em tempo real
+│   ├── transcriber/           # FasterWhisper STT
+│   ├── indexer/               # Elasticsearch client
+│   └── server/                # WebSocket server
+│
+├── shared/                    # Código compartilhado
+│   ├── asp_protocol/          # Protocolo ASP
+│   ├── ws/                    # Protocolo WebSocket
+│   └── shared_config/         # Utilitários de config
+│
+├── asterisk/                  # Configurações Asterisk
+│   ├── config/                # pjsip.conf, extensions.conf, manager.conf
+│   └── sounds/                # Áudios customizados
+│
+├── softphone/                 # SoftPhone React WebRTC
+│
+├── observability/             # Monitoramento
+│   ├── prometheus/            # Métricas
+│   ├── grafana/               # Dashboards
+│   └── kibana/                # Transcrições
+│
+├── docker-compose.yml         # Orquestração de containers
+├── start.sh                   # Script de inicialização
+└── local-llm.sh              # Setup de LLM local
+```
+
+## Observabilidade
+
+### Métricas (Prometheus + Grafana)
+
+- **Grafana**: http://localhost:3000 (admin/admin)
+- **Prometheus**: http://localhost:9092
+
+Métricas disponíveis:
+- Latência STT/LLM/TTS
+- Sessões ativas
+- Erros por tipo
+- Uso de recursos
+
+### Transcrições (Elasticsearch + Kibana)
+
+- **Kibana**: http://localhost:5601
+- **Elasticsearch**: http://localhost:9200
+
+```bash
+# Ver transcrições recentes
+curl 'http://localhost:9200/voice-transcriptions-*/_search?pretty'
+```
+
+## Configuração Avançada
+
+### Variáveis de Ambiente
+
+Cada componente tem seu `.env.example` documentado:
+
+- `ai-agent/.env.example` - STT, LLM, TTS, VAD, Pipeline, Tool Calling
+- `media-server/.env.example` - SIP, Audio, VAD, ASP, AMI
+- `ai-transcribe/.env.example` - STT, Elasticsearch
+
+#### Variaveis AMI (Media Server)
+
+| Variavel | Default | Descricao |
+|----------|---------|-----------|
+| `AMI_HOST` | `asterisk-pabx` | Host do Asterisk (AMI) |
+| `AMI_PORT` | `5038` | Porta AMI |
+| `AMI_USERNAME` | `media-server` | Usuario AMI |
+| `AMI_SECRET` | *(requerido)* | Senha AMI (definida em manager.conf) |
+| `AMI_ENABLED` | `true` | Habilitar AMI (false desabilita transfer) |
+| `AMI_TIMEOUT` | `5.0` | Timeout para operacoes AMI (segundos) |
+
+#### Variaveis de Tool Calling (AI Agent)
+
+| Variavel | Default | Descricao |
+|----------|---------|-----------|
+| `DEPARTMENT_MAP` | `suporte:1001,vendas:1002,financeiro:1003` | Mapeamento departamento:ramal |
+
+### Integração SBC
+
+Para receber chamadas de um Session Border Controller externo:
+
+```bash
+./scripts/validate-sbc.sh [IP_DO_SBC]
+```
+
+Documentação: [docs/SBC-INTEGRATION.md](docs/SBC-INTEGRATION.md)
+
+## Troubleshooting
+
+### Logs
+
+```bash
+./logs.sh              # Todos os serviços
+./logs.sh ai-agent     # Apenas AI Agent
+./logs.sh media-server # Apenas Media Server
+```
+
+### CLI Asterisk
+
+```bash
+docker exec -it asterisk-pabx asterisk -rvvv
+
+# Comandos úteis
+pjsip show endpoints      # Ver ramais registrados
+pjsip show registrations  # Ver registros ativos
+core show channels        # Ver chamadas em andamento
+```
+
+### Problemas Comuns
+
+| Problema | Solução |
+|----------|---------|
+| WebRTC não conecta | Verificar HTTPS e aceitar certificado |
+| Sem áudio | Verificar portas RTP (40000-40100) no firewall |
+| Ramal não registra | `docker exec asterisk-pabx asterisk -rx "pjsip set logger on"` |
+| LLM lento | Usar `LLM_PROVIDER=local` com `./local-llm.sh setup` |
 
 ## Documentação
 
 | Documento | Descrição |
 |-----------|-----------|
-| [ASP_SPECIFICATION.md](docs/ASP_SPECIFICATION.md) | Especificação completa do Audio Session Protocol |
-| [ASP_PROTOCOL.md](docs/ASP_PROTOCOL.md) | Visão geral e exemplos do protocolo |
-| [ASP_INTEGRATION.md](docs/ASP_INTEGRATION.md) | Guia de integração com o ASP |
-| [ASP_TROUBLESHOOTING.md](docs/ASP_TROUBLESHOOTING.md) | Diagnóstico de problemas do ASP |
-| [SBC-INTEGRATION.md](docs/SBC-INTEGRATION.md) | Integração com Session Border Controller |
+| [ADR-001: AMI over ARI](docs/adr/ADR-001-call-control-ami-over-ari.md) | Decisao arquitetural: controle de chamadas via AMI |
+| [PLAN-001: Call Transfer](docs/adr/PLAN-001-call-transfer-implementation.md) | Plano de implementacao da transferencia assistida |
+| [ASP_SPECIFICATION.md](docs/ASP_SPECIFICATION.md) | Especificação do protocolo ASP |
+| [ASP_PROTOCOL.md](docs/ASP_PROTOCOL.md) | Visão geral e exemplos |
+| [ASP_INTEGRATION.md](docs/ASP_INTEGRATION.md) | Guia de integração |
+| [ASP_TROUBLESHOOTING.md](docs/ASP_TROUBLESHOOTING.md) | Diagnóstico de problemas |
+| [SBC-INTEGRATION.md](docs/SBC-INTEGRATION.md) | Integração com SBC |
+| [ASTERISK_CONFIG.md](docs/ASTERISK_CONFIG.md) | Configuração do Asterisk |
 
-### Configuração por Ambiente
+## Requisitos
 
-| Arquivo | Descrição |
-|---------|-----------|
-| `ai-agent/.env.example` | Todas as variáveis do AI Agent documentadas |
-| `media-server/.env.example` | Todas as variáveis do Media Server documentadas |
+- Docker e Docker Compose
+- 4GB+ RAM (8GB recomendado para LLM local)
+- Portas: 5160 (SIP), 8765 (WS), 40000-40100 (RTP)
 
----
+## Licença
 
-## Troubleshooting
-
-### WebRTC não conecta
-
-1. Verifique se está usando HTTPS
-2. Aceite o certificado autoassinado no navegador
-3. Verifique se as portas estão abertas no firewall
-
-### Sem áudio
-
-1. Verifique se as portas RTP (10000-10100) estão abertas
-2. Verifique permissões do microfone no navegador
-3. Use `network_mode: host` no docker-compose (já configurado)
-
-### Ramal não registra
-
-```bash
-# Ver logs de registro
-docker exec -it asterisk-pabx asterisk -rx "pjsip set logger on"
-docker exec -it asterisk-pabx asterisk -rx "pjsip show registrations"
-```
+MIT

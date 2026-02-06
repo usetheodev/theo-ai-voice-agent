@@ -6,24 +6,14 @@ Veja .env.example para documentação detalhada de cada variável.
 """
 
 import os
-from typing import List, Optional
+import sys
 from dotenv import load_dotenv
 
+# Adiciona shared ao path para imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared'))
+from shared_config import parse_bool, parse_list
+
 load_dotenv()
-
-
-def _parse_bool(value: str, default: bool = False) -> bool:
-    """Parse boolean de string"""
-    if not value:
-        return default
-    return value.lower() in ("true", "1", "yes", "on")
-
-
-def _parse_list(value: str, default: List[str]) -> List[str]:
-    """Parse lista separada por vírgula"""
-    if not value:
-        return default
-    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 # =============================================================================
@@ -48,6 +38,9 @@ WS_CONFIG = {
 
     # Timeout para fechar conexão WebSocket (segundos)
     "close_timeout": int(os.getenv("WS_CLOSE_TIMEOUT", "5")),
+
+    # Tamanho máximo de mensagem WebSocket (bytes)
+    "max_message_size": int(os.getenv("WS_MAX_MESSAGE_SIZE", str(10 * 1024 * 1024))),
 }
 
 
@@ -88,6 +81,10 @@ AUDIO_CONFIG = {
 
     # Taxa mínima de frames com fala para considerar que há fala (0.0 - 1.0)
     "vad_speech_ratio_threshold": float(os.getenv("VAD_SPEECH_RATIO_THRESHOLD", "0.4")),
+
+    # Tamanho do chunk para envio de áudio (bytes)
+    # 2000 bytes = ~125ms de áudio a 8kHz, 16-bit mono
+    "chunk_size_bytes": int(os.getenv("AUDIO_CHUNK_SIZE_BYTES", "2000")),
 }
 
 
@@ -110,7 +107,7 @@ METRICS_CONFIG = {
     "port": int(os.getenv("METRICS_PORT", "9090")),
 
     # Habilitar servidor de métricas
-    "enabled": _parse_bool(os.getenv("METRICS_ENABLED", "true"), True),
+    "enabled": parse_bool(os.getenv("METRICS_ENABLED", "true"), True),
 }
 
 
@@ -138,10 +135,10 @@ STT_CONFIG = {
     "beam_size": int(os.getenv("ASR_BEAM_SIZE", "1")),
 
     # Habilitar filtro VAD no Whisper
-    "vad_filter": _parse_bool(os.getenv("ASR_VAD_FILTER", "false"), False),
+    "vad_filter": parse_bool(os.getenv("ASR_VAD_FILTER", "false"), False),
 
     # Gerar timestamps de palavras
-    "word_timestamps": _parse_bool(os.getenv("ASR_WORD_TIMESTAMPS", "false"), False),
+    "word_timestamps": parse_bool(os.getenv("ASR_WORD_TIMESTAMPS", "false"), False),
 
     # Número de threads CPU (0 = auto)
     "cpu_threads": int(os.getenv("ASR_CPU_THREADS", "0")),
@@ -149,12 +146,8 @@ STT_CONFIG = {
     # Número de workers paralelos
     "num_workers": int(os.getenv("ASR_NUM_WORKERS", "1")),
 
-    # Número de workers no ThreadPoolExecutor
-    "executor_workers": int(os.getenv("ASR_EXECUTOR_WORKERS", "2")),
-
-    # Para compatibilidade com código antigo
-    "whisper_model": os.getenv("STT_MODEL", "base"),
-    "openai_api_key": os.getenv("OPENAI_API_KEY", ""),
+    # Número de workers no ThreadPoolExecutor (4+ para pool compartilhado)
+    "executor_workers": int(os.getenv("ASR_EXECUTOR_WORKERS", "4")),
 }
 
 
@@ -162,38 +155,10 @@ STT_CONFIG = {
 # LLM (Large Language Model)
 # =============================================================================
 
+# Config comum a todos os providers LLM
 LLM_CONFIG = {
     # Provider: anthropic, openai, local, mock
-    # - anthropic: Claude API (requer ANTHROPIC_API_KEY)
-    # - openai: OpenAI API (requer OPENAI_API_KEY)
-    # - local: Docker Model Runner ou qualquer servidor OpenAI-compatible
-    # - mock: Respostas simuladas para testes
     "provider": os.getenv("LLM_PROVIDER", "anthropic"),
-
-    # API Keys
-    "anthropic_api_key": os.getenv("ANTHROPIC_API_KEY", ""),
-    "openai_api_key": os.getenv("OPENAI_API_KEY", ""),
-
-    # Modelo Anthropic
-    "model": os.getenv("LLM_MODEL", "claude-3-haiku-20240307"),
-
-    # Modelo OpenAI
-    "openai_model": os.getenv("OPENAI_LLM_MODEL", "gpt-3.5-turbo"),
-
-    # =========================================================================
-    # LLM LOCAL (Docker Model Runner / vLLM / Ollama)
-    # =========================================================================
-    # URL base do servidor local (OpenAI-compatible API)
-    # Docker Model Runner: http://localhost:12434/engines/llama.cpp/v1
-    # vLLM: http://localhost:8000/v1
-    # Ollama: http://localhost:11434/v1
-    "local_base_url": os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:12434/engines/llama.cpp/v1"),
-
-    # Modelo local a usar
-    # Docker Model Runner: ai/smollm3, ai/phi4, ai/qwen3, ai/functiongemma
-    # vLLM: depende do modelo carregado
-    # Ollama: llama3, mistral, phi3, etc.
-    "local_model": os.getenv("LOCAL_LLM_MODEL", "ai/smollm3"),
 
     # Número máximo de tokens na resposta
     "max_tokens": int(os.getenv("LLM_MAX_TOKENS", "256")),
@@ -204,11 +169,39 @@ LLM_CONFIG = {
     # Timeout da requisição (segundos)
     "timeout": float(os.getenv("LLM_TIMEOUT", "15.0")),
 
+    # Numero maximo de turnos (pares user/assistant) mantidos no historico
+    "max_history_turns": int(os.getenv("LLM_MAX_HISTORY_TURNS", "20")),
+
     # System prompt customizado
     "system_prompt": os.getenv("LLM_SYSTEM_PROMPT", """Você é um assistente virtual de atendimento telefônico.
 Seja conciso e direto nas respostas, pois está em uma ligação telefônica.
 Responda sempre em português brasileiro.
 Limite suas respostas a 2-3 frases curtas."""),
+}
+
+# Config específica: Anthropic Claude
+ANTHROPIC_LLM_CONFIG = {
+    "api_key": os.getenv("ANTHROPIC_API_KEY", ""),
+    "model": os.getenv("LLM_MODEL", "claude-3-haiku-20240307"),
+}
+
+# Config específica: OpenAI GPT
+OPENAI_LLM_CONFIG = {
+    "api_key": os.getenv("OPENAI_API_KEY", ""),
+    "model": os.getenv("OPENAI_LLM_MODEL", "gpt-3.5-turbo"),
+}
+
+# Config específica: LLM Local (Docker Model Runner / vLLM / Ollama)
+# URL base do servidor local (OpenAI-compatible API)
+# Em Docker, use host.docker.internal para acessar servicos no host:
+#   Docker Model Runner: http://host.docker.internal:12434/engines/llama.cpp/v1
+#   vLLM: http://host.docker.internal:8000/v1
+#   Ollama: http://host.docker.internal:11434/v1
+# Fora do Docker (desenvolvimento local), use localhost
+LOCAL_LLM_CONFIG = {
+    "base_url": os.getenv("LOCAL_LLM_BASE_URL", "http://host.docker.internal:12434/engines/llama.cpp/v1"),
+    # Modelos recomendados: ai/smollm3, ai/phi4, ai/qwen3, ai/functiongemma
+    "model": os.getenv("LOCAL_LLM_MODEL", "ai/smollm3"),
 }
 
 
@@ -235,8 +228,8 @@ TTS_CONFIG = {
     # Velocidade da fala (0.5 - 2.0)
     "speed": float(os.getenv("TTS_SPEED", "1.0")),
 
-    # Número de workers no ThreadPoolExecutor
-    "executor_workers": int(os.getenv("TTS_EXECUTOR_WORKERS", "2")),
+    # Número de workers no ThreadPoolExecutor (4+ para pool compartilhado)
+    "executor_workers": int(os.getenv("TTS_EXECUTOR_WORKERS", "4")),
 
     # OpenAI TTS config
     "openai_api_key": os.getenv("OPENAI_API_KEY", ""),
@@ -258,6 +251,9 @@ PIPELINE_CONFIG = {
 
     # Timeout para síntese TTS (segundos)
     "tts_timeout": float(os.getenv("PIPELINE_TTS_TIMEOUT", "60.0")),
+
+    # Timeout para aguardar sentença do LLM (segundos)
+    "sentence_timeout": float(os.getenv("PIPELINE_SENTENCE_TIMEOUT", "30.0")),
 }
 
 
@@ -271,6 +267,24 @@ SESSION_CONFIG = {
 
     # Intervalo de limpeza de sessões inativas (segundos)
     "cleanup_interval": int(os.getenv("SESSION_CLEANUP_INTERVAL", "60")),
+}
+
+
+# =============================================================================
+# ESCALAÇÃO AUTOMÁTICA
+# =============================================================================
+
+ESCALATION_CONFIG = {
+    # Numero maximo de interacoes sem resolucao antes de transferir
+    # 0 = desabilitado (nunca escala automaticamente)
+    "max_unresolved_interactions": int(os.getenv("MAX_UNRESOLVED_INTERACTIONS", "3")),
+
+    # Ramal destino para transferencia automatica
+    "default_transfer_target": os.getenv("DEFAULT_TRANSFER_TARGET", "1001"),
+
+    # Mensagem falada antes de transferir (enviada ao TTS)
+    "transfer_message": os.getenv("DEFAULT_TRANSFER_MESSAGE",
+        "Estou te transferindo para outro atendente para que esclareca seus problemas ou duvidas. Aguarde um momento."),
 }
 
 

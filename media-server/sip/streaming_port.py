@@ -14,6 +14,8 @@ import threading
 from typing import Optional, Callable, TYPE_CHECKING
 from collections import deque
 
+import numpy as np
+
 try:
     import pjsua2 as pj
 except ImportError:
@@ -277,6 +279,57 @@ class StreamingAudioPort(pj.AudioMediaPort):
         # Não usado para captura - apenas para playback
         pass
 
+    def _extract_audio_data(self, frame: pj.MediaFrame) -> Optional[bytes]:
+        """Extrai e prepara dados de áudio do frame."""
+        audio_data = bytes(frame.buf)
+        if len(audio_data) == 0:
+            return None
+
+        # Track RTP quality (antes do downsampling)
+        self.rtp_tracker.track_frame(len(audio_data))
+
+        # Downsampling: 16kHz -> 8kHz
+        if self.input_sample_rate != self.output_sample_rate:
+            audio_data = self._downsample(audio_data)
+
+        return audio_data
+
+    def _invoke_callback_safe(self, callback: Optional[Callable], name: str):
+        """Invoca callback de forma segura."""
+        if callback:
+            try:
+                callback()
+            except Exception as e:
+                logger.error(f"Erro em {name}: {e}")
+
+    def _dispatch_audio(self, audio_data: bytes):
+        """Envia áudio para o destino apropriado."""
+        if self.use_fork and self.fork_manager:
+            self.fork_manager.fork_audio(self.session_id, audio_data)
+            self.bytes_sent += len(audio_data)
+        else:
+            self._send_audio_async(audio_data)
+
+    def _handle_speech_end(self):
+        """Processa fim de fala."""
+        self._send_audio_end_async()
+        self._invoke_callback_safe(self.on_speech_end, "on_speech_end")
+
+    def _process_normal_mode(self, audio_data: bytes, speech_ended: bool):
+        """Processa audio no modo normal (acumula e envia)."""
+        self.send_buffer.extend(audio_data)
+
+        # Envia quando buffer estiver cheio ou fim de fala
+        should_send = len(self.send_buffer) >= self.send_buffer_max or speech_ended
+
+        if should_send and len(self.send_buffer) > 0:
+            audio_to_send = bytes(self.send_buffer)
+            self.send_buffer = bytearray()
+            self._dispatch_audio(audio_to_send)
+
+        if speech_ended:
+            self._handle_speech_end()
+
     def onFrameReceived(self, frame: pj.MediaFrame):
         """
         Chamado quando um frame de áudio é recebido do RTP.
@@ -294,83 +347,32 @@ class StreamingAudioPort(pj.AudioMediaPort):
             return
 
         try:
-            with self._lock:
-                # Obtém dados do frame
-                audio_data = bytes(frame.buf)
+            # Extrai dados FORA do lock (read-only do frame)
+            audio_data = self._extract_audio_data(frame)
+            if audio_data is None:
+                return
 
-                if len(audio_data) == 0:
-                    return
+            # VAD nao precisa de lock (estado interno, single-producer)
+            speech_started, speech_ended = self.vad.process_frame(audio_data)
 
-                # Track RTP quality (antes do downsampling)
-                self.rtp_tracker.track_frame(len(audio_data))
+            if speech_started:
+                self._invoke_callback_safe(self.on_speech_start, "on_speech_start")
 
-                # Downsampling: 16kHz -> 8kHz
-                if self.input_sample_rate != self.output_sample_rate:
-                    audio_data = self._downsample(audio_data)
+            # Lock APENAS para o buffer de envio
+            if not self.monitor_mode:
+                with self._lock:
+                    self._process_normal_mode(audio_data, speech_ended)
 
-                # VAD em tempo real (sempre executa para barge-in)
-                speech_started, speech_ended = self.vad.process_frame(audio_data)
-
-                # Callback de início de fala (importante para barge-in!)
-                if speech_started and self.on_speech_start:
-                    try:
-                        self.on_speech_start()
-                    except Exception as e:
-                        logger.error(f"Erro em on_speech_start: {e}")
-
-                # Em monitor_mode, só detecta fala - não envia áudio
-                if self.monitor_mode:
-                    self.frames_processed += 1
-                    return
-
-                # Modo normal: acumula e envia áudio
-                self.send_buffer.extend(audio_data)
-
-                # Envia quando buffer estiver cheio ou fim de fala
-                should_send = len(self.send_buffer) >= self.send_buffer_max or speech_ended
-
-                if should_send and len(self.send_buffer) > 0:
-                    audio_to_send = bytes(self.send_buffer)
-                    self.send_buffer = bytearray()
-
-                    # Usa fork manager se disponível (NUNCA bloqueia)
-                    if self.use_fork and self.fork_manager:
-                        self.fork_manager.fork_audio(self.session_id, audio_to_send)
-                        self.bytes_sent += len(audio_to_send)
-                    else:
-                        # Fallback: envio direto (pode bloquear se AI Agent lento)
-                        self._send_audio_async(audio_to_send)
-
-                # Notifica fim de fala
-                if speech_ended:
-                    self._send_audio_end_async()
-
-                    if self.on_speech_end:
-                        try:
-                            self.on_speech_end()
-                        except Exception as e:
-                            logger.error(f"Erro em on_speech_end: {e}")
-
-                self.frames_processed += 1
+            self.frames_processed += 1
 
         except Exception as e:
             logger.error(f"[{self.session_id[:8]}] Erro em onFrameReceived: {e}")
 
     def _downsample(self, audio_data: bytes) -> bytes:
-        """
-        Converte áudio de 16kHz para 8kHz.
-        Decimação simples: pega cada 2º sample.
-        """
+        """16kHz -> 8kHz via decimacao numpy."""
         try:
-            # Converte bytes para samples (16-bit signed)
-            num_samples = len(audio_data) // 2
-            samples = struct.unpack(f'<{num_samples}h', audio_data)
-
-            # Decimação por fator 2
-            downsampled = samples[::2]
-
-            # Converte de volta para bytes
-            return struct.pack(f'<{len(downsampled)}h', *downsampled)
+            samples = np.frombuffer(audio_data, dtype=np.int16)
+            return samples[::2].tobytes()
         except Exception as e:
             logger.error(f"Erro no downsampling: {e}")
             return audio_data
@@ -434,8 +436,9 @@ class StreamingPlaybackPort(pj.AudioMediaPort):
         self.sample_rate = sample_rate
         self.frame_size = int(sample_rate * 0.02) * 2  # 20ms em bytes (16-bit)
 
-        # Buffer circular de áudio para playback
+        # Buffer circular de áudio para playback (cap: 5 segundos)
         self.audio_buffer = bytearray()
+        self.max_buffer_bytes = int(sample_rate * 2 * 5)  # 5s max
         self._lock = threading.Lock()
 
         # Controle
@@ -461,26 +464,20 @@ class StreamingPlaybackPort(pj.AudioMediaPort):
         logger.info(f"[{self.session_id[:8]}] PlaybackPort criado: {clock_rate}Hz, {channel_count}ch")
 
     def add_audio(self, audio_data: bytes):
-        """Adiciona áudio ao buffer de playback"""
+        """Adiciona áudio ao buffer de playback (com limite de 5s)"""
         with self._lock:
-            # Se input é 8kHz, fazer upsampling para 16kHz
             if len(audio_data) > 0:
-                # Upsampling simples: duplica cada sample
                 upsampled = self._upsample(audio_data)
-                self.audio_buffer.extend(upsampled)
+                if len(self.audio_buffer) + len(upsampled) <= self.max_buffer_bytes:
+                    self.audio_buffer.extend(upsampled)
+                else:
+                    logger.warning(f"[{self.session_id[:8]}] Playback buffer cheio, descartando")
 
     def _upsample(self, audio_data: bytes) -> bytes:
-        """Converte áudio de 8kHz para 16kHz (duplica samples)"""
+        """8kHz -> 16kHz via duplicacao numpy."""
         try:
-            num_samples = len(audio_data) // 2
-            samples = struct.unpack(f'<{num_samples}h', audio_data)
-
-            # Duplica cada sample
-            upsampled = []
-            for s in samples:
-                upsampled.extend([s, s])
-
-            return struct.pack(f'<{len(upsampled)}h', *upsampled)
+            samples = np.frombuffer(audio_data, dtype=np.int16)
+            return np.repeat(samples, 2).tobytes()
         except Exception:
             return audio_data
 

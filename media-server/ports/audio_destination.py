@@ -5,7 +5,7 @@ Define o contrato que qualquer destino de áudio deve implementar,
 permitindo conectar em AI Agent, Softphone, WebRTC, etc.
 """
 
-from typing import Protocol, Callable, Optional, runtime_checkable
+from typing import Protocol, Callable, Optional, Dict, Any, runtime_checkable
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -32,6 +32,7 @@ class SessionInfo:
     session_id: str
     call_id: str
     audio_config: AudioConfig = field(default_factory=AudioConfig)
+    metadata: Optional[Dict[str, Any]] = None
 
 
 @runtime_checkable
@@ -123,3 +124,4 @@ class IAudioDestination(Protocol):
     on_response_audio: Optional[Callable[[str, bytes], None]]  # session_id, audio
     on_response_end: Optional[Callable[[str], None]]  # session_id
     on_error: Optional[Callable[[str, str, str], None]]  # session_id, code, message
+    on_call_action: Optional[Callable[[str, str, Optional[str]], None]]  # session_id, action, target

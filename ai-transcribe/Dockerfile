@@ -13,6 +13,7 @@ WORKDIR /app
 
 # Copia modulos compartilhados PRIMEIRO
 COPY shared/asp_protocol/ ./shared/asp_protocol/
+COPY shared/shared_config/ ./shared/shared_config/
 
 # Copia codigo do ai-transcribe por ULTIMO (muda frequentemente)
 COPY ai-transcribe/config.py .
@@ -21,6 +22,7 @@ COPY ai-transcribe/metrics/ ./metrics/
 COPY ai-transcribe/server/ ./server/
 COPY ai-transcribe/transcriber/ ./transcriber/
 COPY ai-transcribe/indexer/ ./indexer/
+COPY ai-transcribe/embeddings/ ./embeddings/
 
 # =============================================================================
 # Variaveis de ambiente padrao
@@ -46,6 +48,9 @@ ENV ES_INDEX_PREFIX=voice-transcriptions
 
 # Metricas
 ENV METRICS_PORT=9093
+
+# Python path para modulos compartilhados
+ENV PYTHONPATH=/app:/app/shared
 
 # Expoe portas
 EXPOSE 8766 9093

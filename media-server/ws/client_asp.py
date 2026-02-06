@@ -33,13 +33,14 @@ from asp_protocol import (
     SessionStatus,
     MessageType,
 )
+from config import ASP_CONFIG
 
 logger = logging.getLogger("media-server.asp")
 
 
-# Timeouts
-CAPS_TIMEOUT = 5.0  # seconds to wait for capabilities
-SESSION_START_TIMEOUT = 10.0  # seconds to wait for session.started
+# Timeouts do ASP (configuráveis via ambiente)
+CAPS_TIMEOUT = ASP_CONFIG["caps_timeout"]
+SESSION_START_TIMEOUT = ASP_CONFIG["session_start_timeout"]
 
 
 @dataclass

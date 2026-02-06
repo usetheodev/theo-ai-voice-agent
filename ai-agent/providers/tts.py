@@ -423,44 +423,62 @@ class KokoroTTS(TTSProvider):
             return b""
 
     async def synthesize_stream(self, text: str) -> Generator[bytes, None, None]:
-        """Converte texto em áudio com streaming."""
+        """Converte texto em audio com streaming REAL chunk-a-chunk.
+
+        Usa bridge queue para enviar cada chunk assim que Kokoro o gera,
+        sem acumular todos os chunks em lista.
+        """
         if not self._pipeline:
             return
 
         try:
             import numpy as np
+            import queue as thread_queue
 
             processed_text = self._preprocess_text(text)
-
+            bridge: thread_queue.Queue = thread_queue.Queue()
             loop = asyncio.get_event_loop()
 
-            def _get_chunks():
-                chunks = []
-                for _, _, audio_chunk in self._pipeline(
-                    processed_text,
-                    voice=self._tts_config.voice,
-                    speed=self._tts_config.speed,
-                ):
-                    if audio_chunk is not None and len(audio_chunk) > 0:
-                        # Convert PyTorch Tensor to NumPy array
-                        if hasattr(audio_chunk, 'numpy'):
-                            audio_chunk = audio_chunk.numpy()
-                        elif hasattr(audio_chunk, 'cpu'):
-                            audio_chunk = audio_chunk.cpu().numpy()
+            def _generate_to_bridge():
+                """Roda no executor: gera chunks e envia via bridge."""
+                try:
+                    for _, _, audio_chunk in self._pipeline(
+                        processed_text,
+                        voice=self._tts_config.voice,
+                        speed=self._tts_config.speed,
+                    ):
+                        if audio_chunk is not None and len(audio_chunk) > 0:
+                            if hasattr(audio_chunk, 'numpy'):
+                                audio_chunk = audio_chunk.numpy()
+                            elif hasattr(audio_chunk, 'cpu'):
+                                audio_chunk = audio_chunk.cpu().numpy()
 
-                        audio_8k = self._resample(
-                            audio_chunk,
-                            self._tts_config.sample_rate,
-                            self._tts_config.output_sample_rate,
-                        )
-                        audio_int16 = (audio_8k * 32767).astype(np.int16)
-                        chunks.append(audio_int16.tobytes())
-                return chunks
+                            audio_8k = self._resample(
+                                audio_chunk,
+                                self._tts_config.sample_rate,
+                                self._tts_config.output_sample_rate,
+                            )
+                            pcm_bytes = (audio_8k * 32767).astype(np.int16).tobytes()
+                            bridge.put(pcm_bytes)
+                except Exception as e:
+                    bridge.put(e)
+                finally:
+                    bridge.put(None)
 
-            chunks = await loop.run_in_executor(self._executor, _get_chunks)
+            executor_future = loop.run_in_executor(self._executor, _generate_to_bridge)
 
-            for chunk in chunks:
-                yield chunk
+            try:
+                while True:
+                    item = await loop.run_in_executor(None, bridge.get)
+                    if item is None:
+                        break
+                    if isinstance(item, Exception):
+                        logger.error(f"Erro no TTS streaming: {item}")
+                        self._metrics.record_failure(str(item))
+                        break
+                    yield item
+            finally:
+                await asyncio.wrap_future(executor_future)
 
         except Exception as e:
             logger.error(f"Erro no Kokoro TTS streaming: {e}")
@@ -686,43 +704,59 @@ class OpenAITTS(TTSProvider):
             return b""
 
     async def synthesize_stream(self, text: str) -> Generator[bytes, None, None]:
-        """Converte texto em áudio com streaming."""
+        """Converte texto em audio com streaming REAL chunk-a-chunk."""
         if not self.client:
             return
 
         try:
+            import queue as thread_queue
+
+            bridge: thread_queue.Queue = thread_queue.Queue()
             loop = asyncio.get_event_loop()
 
-            def _get_chunks():
-                chunks = []
-                with self.client.audio.speech.with_streaming_response.create(
-                    model=self._openai_config.model,
-                    voice=self._openai_config.voice,
-                    input=text,
-                    response_format="pcm",
-                ) as response:
-                    buffer = bytearray()
-                    chunk_bytes = 4800  # 100ms at 24kHz
+            def _generate_to_bridge():
+                """Roda em thread: gera chunks e envia via bridge."""
+                try:
+                    with self.client.audio.speech.with_streaming_response.create(
+                        model=self._openai_config.model,
+                        voice=self._openai_config.voice,
+                        input=text,
+                        response_format="pcm",
+                    ) as response:
+                        buffer = bytearray()
+                        chunk_bytes = 4800  # 100ms at 24kHz
 
-                    for chunk in response.iter_bytes(chunk_size=chunk_bytes):
-                        buffer.extend(chunk)
+                        for chunk in response.iter_bytes(chunk_size=chunk_bytes):
+                            buffer.extend(chunk)
 
-                        while len(buffer) >= chunk_bytes:
-                            pcm_24k = bytes(buffer[:chunk_bytes])
-                            buffer = buffer[chunk_bytes:]
-                            pcm_8k = self._downsample_24k_to_8k(pcm_24k)
-                            chunks.append(pcm_8k)
+                            while len(buffer) >= chunk_bytes:
+                                pcm_24k = bytes(buffer[:chunk_bytes])
+                                buffer = buffer[chunk_bytes:]
+                                pcm_8k = self._downsample_24k_to_8k(pcm_24k)
+                                bridge.put(pcm_8k)
 
-                    if len(buffer) > 0:
-                        pcm_8k = self._downsample_24k_to_8k(bytes(buffer))
-                        chunks.append(pcm_8k)
+                        if len(buffer) > 0:
+                            pcm_8k = self._downsample_24k_to_8k(bytes(buffer))
+                            bridge.put(pcm_8k)
+                except Exception as e:
+                    bridge.put(e)
+                finally:
+                    bridge.put(None)
 
-                return chunks
+            executor_future = loop.run_in_executor(None, _generate_to_bridge)
 
-            chunks = await loop.run_in_executor(None, _get_chunks)
-
-            for chunk in chunks:
-                yield chunk
+            try:
+                while True:
+                    item = await loop.run_in_executor(None, bridge.get)
+                    if item is None:
+                        break
+                    if isinstance(item, Exception):
+                        logger.error(f"Erro no OpenAI TTS streaming: {item}")
+                        self._metrics.record_failure(str(item))
+                        break
+                    yield item
+            finally:
+                await asyncio.wrap_future(executor_future)
 
         except Exception as e:
             logger.error(f"Erro no OpenAI TTS streaming: {e}")

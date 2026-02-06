@@ -12,7 +12,6 @@ from prometheus_client import (
     Gauge,
     Histogram,
     start_http_server,
-    REGISTRY,
 )
 
 logger = logging.getLogger("ai-agent.metrics")
