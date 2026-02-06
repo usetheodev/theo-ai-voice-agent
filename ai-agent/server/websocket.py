@@ -9,6 +9,7 @@ import logging
 import asyncio
 import time
 import json
+import struct
 from typing import Set, Optional, Dict
 import websockets
 from websockets.server import WebSocketServerProtocol
@@ -414,6 +415,15 @@ class AIAgentServer:
             logger.warning(f"Sessão não encontrada: {msg.session_id[:8]}")
             return
 
+        # Ignora audio.end durante processing/responding (eco do TTS ou ruído)
+        if session.state != 'listening':
+            logger.info(
+                f"[{msg.session_id[:8]}] audio.end ignorado: state={session.state} "
+                f"(buffer={len(session.audio_buffer.buffer)} bytes)"
+            )
+            session.audio_buffer._reset()
+            return
+
         # Guarda timestamp para cálculo de TTFB e latency budget
         session.audio_end_timestamp = time.perf_counter()
         session.ttfb_recorded = False
@@ -426,13 +436,45 @@ class AIAgentServer:
         audio_data = session.audio_buffer.flush()
 
         if not audio_data or len(audio_data) < 1000:  # Menos de ~60ms
-            logger.debug(f"[{msg.session_id[:8]}] Áudio muito curto, ignorando")
+            logger.info(f"[{msg.session_id[:8]}] audio.end com buffer vazio/curto ({len(audio_data) if audio_data else 0} bytes), ignorando")
             return
 
-        logger.info(f"[{msg.session_id[:8]}] Processando {len(audio_data)} bytes de áudio")
+        # Cap buffer em 3 segundos. Usa sample_rate da sessão ASP.
+        sr = session.audio_config.sample_rate
+        bytes_per_sec = sr * 2  # 16-bit mono
+        max_audio_bytes = bytes_per_sec * 3
+        if len(audio_data) > max_audio_bytes:
+            logger.warning(
+                f"[{msg.session_id[:8]}] Buffer STT truncado: "
+                f"{len(audio_data)} → {max_audio_bytes} bytes "
+                f"({len(audio_data) / bytes_per_sec:.1f}s → 3.0s)"
+            )
+            audio_data = audio_data[-max_audio_bytes:]
+
+        # Pre-filtro de energia: evita enviar ruído/silêncio ao STT
+        rms = self._calculate_audio_rms(audio_data)
+        energy_threshold = AUDIO_CONFIG.get("energy_threshold", 500)
+        if rms < energy_threshold:
+            logger.info(
+                f"[{msg.session_id[:8]}] Audio abaixo do threshold de energia "
+                f"(RMS={rms:.0f} < {energy_threshold}), ignorando STT"
+            )
+            return
+
+        logger.info(f"[{msg.session_id[:8]}] Processando {len(audio_data)} bytes de áudio (RMS={rms:.0f})")
 
         # Processa pelo pipeline
         await self._process_and_respond(websocket, session, audio_data)
+
+    @staticmethod
+    def _calculate_audio_rms(audio_data: bytes) -> float:
+        """Calcula energia RMS do áudio PCM 16-bit signed."""
+        n_samples = len(audio_data) // 2
+        if n_samples == 0:
+            return 0.0
+        samples = struct.unpack(f'<{n_samples}h', audio_data)
+        sum_sq = sum(s * s for s in samples)
+        return (sum_sq / len(samples)) ** 0.5
 
     async def _process_and_respond(
         self,
@@ -453,6 +495,7 @@ class AIAgentServer:
                     audio_data,
                     latency_budget=session.latency_budget,
                     session_id=session.session_id,
+                    input_sample_rate=session.audio_config.sample_rate,
                 )
 
                 if not text_response:
@@ -523,6 +566,7 @@ class AIAgentServer:
                 audio_data,
                 latency_budget=session.latency_budget,
                 session_id=session.session_id,
+                input_sample_rate=session.audio_config.sample_rate,
             ):
                 # Envia response.start no primeiro chunk
                 if not response_started:

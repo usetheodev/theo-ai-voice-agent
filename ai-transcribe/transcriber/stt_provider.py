@@ -174,12 +174,13 @@ class STTProvider:
         logger.info(f"STT warmup concluido: {elapsed_ms:.1f}ms")
         return elapsed_ms
 
-    async def transcribe(self, audio_data: bytes) -> TranscriptionResult:
+    async def transcribe(self, audio_data: bytes, input_sample_rate: int = 0) -> TranscriptionResult:
         """
         Transcreve audio para texto.
 
         Args:
             audio_data: Dados de audio PCM (16-bit, mono)
+            input_sample_rate: Sample rate do audio (da sessao ASP). 0 = usa config global.
 
         Returns:
             TranscriptionResult com texto e metadados
@@ -193,17 +194,20 @@ class STTProvider:
                 audio_duration_ms=0.0,
             )
 
+        # Prioridade: input_sample_rate (ASP session) > config estatica
+        sr = input_sample_rate or self._sample_rate
+
         temp_path = None
         start_time = time.perf_counter()
 
         try:
-            # Calcula duracao do audio
-            audio_duration_ms = self._calculate_audio_duration(audio_data)
+            # Calcula duracao do audio usando sample rate da sessao
+            audio_duration_ms = self._calculate_audio_duration(audio_data, sample_rate=sr)
 
-            # Salva como WAV temporario
+            # Salva como WAV temporario com sample rate correto da sessao ASP
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 temp_path = f.name
-                self._save_wav(f, audio_data)
+                self._save_wav(f, audio_data, sample_rate=sr)
 
             # Transcreve
             text, language, language_prob = await self._transcribe_file(temp_path)
@@ -272,27 +276,30 @@ class STTProvider:
 
         return text, info.language, info.language_probability
 
-    def _save_wav(self, file, audio_data: bytes) -> None:
-        """Salva audio como WAV."""
+    def _save_wav(self, file, audio_data: bytes, sample_rate: int = 0) -> None:
+        """Salva audio como WAV com sample rate da sessao ASP."""
+        sr = sample_rate or self._sample_rate
         with wave.open(file, 'wb') as wav:
             wav.setnchannels(self._channels)
             wav.setsampwidth(self._sample_width)
-            wav.setframerate(self._sample_rate)
+            wav.setframerate(sr)
             wav.writeframes(audio_data)
 
-    def _calculate_audio_duration(self, audio_data: bytes) -> float:
+    def _calculate_audio_duration(self, audio_data: bytes, sample_rate: int = 0) -> float:
         """
         Calcula duracao do audio em ms.
 
         Args:
             audio_data: Dados de audio PCM
+            sample_rate: Sample rate do audio (0 = usa config global)
 
         Returns:
             Duracao em ms
         """
+        sr = sample_rate or self._sample_rate
         bytes_per_sample = self._sample_width * self._channels
         num_samples = len(audio_data) / bytes_per_sample
-        duration_seconds = num_samples / self._sample_rate
+        duration_seconds = num_samples / sr
         return duration_seconds * 1000
 
 

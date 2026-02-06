@@ -107,11 +107,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G
-          cpus: '2.0'
+          memory: 4G
+          cpus: '4.0'
         reservations:
-          memory: 1G
-          cpus: '0.5'
+          memory: 2G
+          cpus: '1.0'
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:9090/metrics || exit 1"]
       interval: 30s
@@ -206,10 +206,10 @@ services:
       elasticsearch:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9093/metrics || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      test: ["CMD-SHELL", "curl -sf http://localhost:8767/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
       start_period: 60s
 
   # Elasticsearch - Armazenamento de transcricoes
@@ -254,15 +254,28 @@ services:
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
       - TZ=America/Sao_Paulo
+      # Desabilita plugins pesados nao utilizados (reduz startup de ~90s para ~30s)
+      - xpack.fleet.enabled=false
+      - xpack.security.enabled=false
+      - xpack.encryptedSavedObjects.encryptionKey=min-32-char-key-for-kibana-saved-objects!!
+      - monitoring.ui.enabled=false
+      - telemetry.enabled=false
     depends_on:
       elasticsearch:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+          cpus: '1.0'
+        reservations:
+          memory: 768M
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 60s
+      retries: 5
+      start_period: 120s
 
   # Kibana Setup - Importa dashboards automaticamente
   kibana-setup:

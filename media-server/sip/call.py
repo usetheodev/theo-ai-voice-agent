@@ -493,6 +493,12 @@ class MyCall(pj.Call):
 
         self._wait_playback_finished()
 
+        # Cooldown pós-playback: aguarda eco do alto-falante morrer
+        # Sem isso, o microfone capta eco do TTS e o VAD dispara falso positivo
+        cooldown = CALL_CONFIG.get("post_playback_cooldown", 0.5)
+        if cooldown > 0:
+            time.sleep(cooldown)
+
         # Sinaliza que greeting terminou de tocar (habilita barge-in)
         if not self.greeting_playback_done.is_set():
             self.greeting_playback_done.set()

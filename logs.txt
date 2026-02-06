@@ -1,0 +1,176 @@
+sip-media-server       | 10:13:00 [INFO] media-server.account: ==================================================
+sip-media-server       | 10:13:00 [INFO] media-server.account: [7234a7b8]  CHAMADA RECEBIDA!
+sip-media-server       | 10:13:00 [INFO] media-server.account: [7234a7b8]    De: "Ramal WebRTC 1004" <sip:1004@10.0.1.6>
+sip-media-server       | 10:13:00 [INFO] media-server.account: [7234a7b8]    Caller channel: PJSIP/1004-00000000
+sip-media-server       | 10:13:00 [INFO] media-server.account: ==================================================
+sip-media-server       | 10:13:00 [INFO] media-server.account: [7234a7b8]  Atendendo...
+sip-media-server       | 10:13:00 [INFO] media-server.call: [7234a7b8]  Estado: INCOMING
+sip-media-server       | 10:13:00 [INFO] media-server.call: [7234a7b8]  Mídia de áudio ativa
+sip-media-server       | 10:13:00 [INFO] media-server.call: [7234a7b8]  Estado: CONNECTING
+sip-media-server       | 10:13:00 [INFO] media-server.call: [7234a7b8]  Estado: CONFIRMED
+sip-media-server       | 10:13:00 [INFO] media-server.call: [7234a7b8]  Chamada conectada: "Ramal WebRTC 1004" <sip:1004@10.0.1.6>
+sip-media-server       | 10:13:00 [INFO] media-server.call: [7234a7b8] ️ Iniciando loop de conversação streaming...
+sip-media-server       | 10:13:01 [INFO] media-server.ring_buffer: RingBuffer criado: capacity=500ms, max_frames=25, capacity_bytes=8000
+sip-media-server       | 10:13:01 [INFO] media-server.fork_consumer: [06c6e1ae] ForkConsumer iniciado
+sip-media-server       | 10:13:01 [INFO] media-server.fork_manager: [06c6e1ae] Fork session iniciada
+sip-media-server       | 10:13:01 [INFO] media-server.fork_consumer: AI Agent disponível
+sip-media-server       | 10:13:01 [INFO] media-server.call: [7234a7b8] Fork session iniciada
+sip-media-server       | 10:13:01 [INFO] media-server.streaming: [06c6e1ae] StreamingPlaybackPort criado
+sip-media-server       | 10:13:01 [INFO] media-server.streaming: [06c6e1ae] PlaybackPort criado: 16000Hz, 1ch
+sip-media-server       | 10:13:01 [INFO] media-server.call: [7234a7b8]  Playback streaming configurado
+sip-media-server       | 10:13:01 [INFO] media-server.asp:  Enviado session.start: 06c6e1ae
+sip-media-server       | 10:13:01 [INFO] media-server.asp:  Sessão ASP aceita: 06c6e1ae (status=accepted)
+sip-media-server       | 10:13:01 [INFO] media-server.ws: [06c6e1ae] Config negociada: sample_rate=8000, vad.silence=1000ms
+sip-media-server       | 10:13:01 [INFO] media-server.call: [7234a7b8]  Aguardando greeting...
+sip-media-server       | 10:13:09 [INFO] media-server.ws: [06c6e1ae]  Resposta: Olá! Bem-vindo ao atendimento. Como posso ajudá-lo...
+sip-media-server       | 10:13:09 [INFO] media-server.call: [7234a7b8]  Resposta: Olá! Bem-vindo ao atendimento. Como posso ajudá-lo...
+sip-media-server       | 10:13:09 [INFO] media-server.call: [7234a7b8]  Resposta completa (47200 bytes)
+sip-media-server       | 10:13:09 [INFO] media-server.call: [7234a7b8]  Greeting concluído
+sip-media-server       | 10:13:09 [INFO] media-server.streaming: [06c6e1ae] StreamingAudioPort criado (fork_enabled)
+sip-media-server       | 10:13:09 [INFO] media-server.streaming: [06c6e1ae] Port criado: 16000Hz, 1ch, 320 samples
+sip-media-server       | 10:13:09 [INFO] media-server.call: [7234a7b8]  Streaming de áudio iniciado (fork_enabled)
+sip-media-server       | 10:13:09 [INFO] media-server.call: [7234a7b8]  Pronto para conversar
+sip-media-server       | 10:13:11 [INFO] media-server.streaming: [06c6e1ae]  audio.end enviado (frames: 123, bytes: 39680)
+sip-media-server       | 10:13:11 [INFO] media-server.call: [7234a7b8]  Fim de fala detectado - aguardando resposta
+sip-media-server       | 10:13:12 [INFO] media-server.call: [7234a7b8]  Greeting reproduzido - barge-in habilitado
+sip-media-server       | 10:13:12 [INFO] media-server.call: [7234a7b8] ▶️ Streaming resumido
+sip-media-server       | 10:13:13 [INFO] media-server: SIP state change: registered
+sip-media-server       | 10:13:19 [INFO] media-server.streaming: [06c6e1ae]  audio.end enviado (frames: 519, bytes: 166400)
+sip-media-server       | 10:13:19 [INFO] media-server.call: [7234a7b8]  Fim de fala detectado - aguardando resposta
+sip-media-server       | 10:13:27 [INFO] media-server.streaming: [06c6e1ae]  audio.end enviado (frames: 931, bytes: 298240)
+sip-media-server       | 10:13:27 [INFO] media-server.call: [7234a7b8]  Fim de fala detectado - aguardando resposta
+sip-media-server       | 10:13:28 [INFO] media-server: SIP state change: registered
+sip-media-server       | 10:13:33 [INFO] media-server.streaming: [06c6e1ae]  audio.end enviado (frames: 1221, bytes: 391040)
+sip-media-server       | 10:13:33 [INFO] media-server.call: [7234a7b8]  Fim de fala detectado - aguardando resposta
+sip-media-server       | 10:13:35 [INFO] media-server.streaming: [06c6e1ae]  audio.end enviado (frames: 1327, bytes: 424960)
+sip-media-server       | 10:13:35 [INFO] media-server.call: [7234a7b8]  Fim de fala detectado - aguardando resposta
+sip-media-server       | 10:13:39 [INFO] media-server.streaming: [06c6e1ae]  audio.end enviado (frames: 1508, bytes: 482880)
+sip-media-server       | 10:13:39 [INFO] media-server.call: [7234a7b8]  Fim de fala detectado - aguardando resposta
+sip-media-server       | 10:13:43 [INFO] media-server: SIP state change: registered
+sip-media-server       | 10:13:44 [INFO] media-server.streaming: [06c6e1ae]  audio.end enviado (frames: 1787, bytes: 572160)
+sip-media-server       | 10:13:44 [INFO] media-server.call: [7234a7b8]  Fim de fala detectado - aguardando resposta
+sip-media-server       | 10:13:50 [INFO] media-server.streaming: [06c6e1ae]  audio.end enviado (frames: 2091, bytes: 669440)
+sip-media-server       | 10:13:50 [INFO] media-server.call: [7234a7b8]  Fim de fala detectado - aguardando resposta
+sip-media-server       | 10:13:58 [INFO] media-server: SIP state change: registered
+sip-media-server       | 10:14:02 [INFO] media-server.streaming: [06c6e1ae]  audio.end enviado (frames: 2645, bytes: 846720)
+sip-media-server       | 10:14:02 [INFO] media-server.call: [7234a7b8]  Fim de fala detectado - aguardando resposta
+sip-media-server       | 10:14:06 [INFO] media-server.streaming: [06c6e1ae]  audio.end enviado (frames: 2879, bytes: 921600)
+sip-media-server       | 10:14:06 [INFO] media-server.call: [7234a7b8]  Fim de fala detectado - aguardando resposta
+sip-media-server       | 10:14:13 [INFO] media-server: SIP state change: registered
+sip-media-server       | 10:14:17 [INFO] media-server.streaming: [06c6e1ae]  audio.end enviado (frames: 3425, bytes: 1096320)
+sip-media-server       | 10:14:17 [INFO] media-server.call: [7234a7b8]  Fim de fala detectado - aguardando resposta
+sip-media-server       | 10:14:22 [INFO] media-server.streaming: [06c6e1ae]  audio.end enviado (frames: 3666, bytes: 1173440)
+sip-media-server       | 10:14:22 [INFO] media-server.call: [7234a7b8]  Fim de fala detectado - aguardando resposta
+sip-media-server       | 10:14:27 [INFO] media-server.streaming: [06c6e1ae]  audio.end enviado (frames: 3895, bytes: 1246720)
+sip-media-server       | 10:14:27 [INFO] media-server.call: [7234a7b8]  Fim de fala detectado - aguardando resposta
+sip-media-server       | 10:14:28 [INFO] media-server: SIP state change: registered
+sip-media-server       | 10:14:29 [INFO] media-server.streaming: [06c6e1ae]  audio.end enviado (frames: 4044, bytes: 1294400)
+sip-media-server       | 10:14:29 [INFO] media-server.call: [7234a7b8]  Fim de fala detectado - aguardando resposta
+sip-media-server       | 10:14:35 [INFO] media-server.streaming: [06c6e1ae]  audio.end enviado (frames: 4318, bytes: 1382080)
+sip-media-server       | 10:14:35 [INFO] media-server.call: [7234a7b8]  Fim de fala detectado - aguardando resposta
+sip-media-server       | 10:14:38 [WARNING] media-server.ws: Conexão fechada: 1006
+sip-media-server       | 10:14:38 [INFO] media-server.ws:  Tentando reconectar (1/10)...
+sip-media-server       | 10:14:38 [WARNING] media-server.fork_consumer: AI Agent indisponível
+sip-media-server       | 10:14:42 [INFO] media-server.streaming: [06c6e1ae]  audio.end enviado (frames: 4656, bytes: 1490240)
+sip-media-server       | 10:14:42 [INFO] media-server.call: [7234a7b8]  Fim de fala detectado - aguardando resposta
+sip-media-server       | 10:14:43 [INFO] media-server: SIP state change: registered
+sip-media-server       | 10:14:43 [INFO] media-server.ws:  Conectando ao AI Agent: ws://ai-agent:8765
+sip-media-server       | 10:14:43 [INFO] media-server.ws:  Conectado ao AI Agent
+sip-media-server       | 10:14:43 [INFO] media-server.asp:  Recebido capabilities v1.0.0
+sip-media-server       | 10:14:43 [INFO] media-server.ws:  Modo ASP ativado (server v1.0.0)
+sip-media-server       | 10:14:45 [INFO] media-server.fork_consumer: AI Agent disponível
+sip-media-server       | 10:14:45 [WARNING] media-server.fork_consumer: [06c6e1ae] Consumer lag alto: 559.4ms (threshold: 100ms)
+sip-media-server       | 10:14:45 [WARNING] media-server.fork_consumer: [06c6e1ae] Consumer lag alto: 461.5ms (threshold: 100ms)
+sip-media-server       | 10:14:45 [WARNING] media-server.fork_consumer: [06c6e1ae] Consumer lag alto: 363.2ms (threshold: 100ms)
+sip-media-server       | 10:14:45 [WARNING] media-server.fork_consumer: [06c6e1ae] Consumer lag alto: 263.4ms (threshold: 100ms)
+sip-media-server       | 10:14:45 [WARNING] media-server.fork_consumer: [06c6e1ae] Consumer lag alto: 163.5ms (threshold: 100ms)
+sip-media-server       | 10:14:58 [INFO] media-server.streaming: [06c6e1ae]  audio.end enviado (frames: 5481, bytes: 1754240)
+sip-media-server       | 10:14:58 [INFO] media-server.call: [7234a7b8]  Fim de fala detectado - aguardando resposta
+sip-media-server       | 10:14:58 [INFO] media-server: SIP state change: registered
+sip-media-server       | 10:15:01 [INFO] media-server.streaming: [06c6e1ae]  audio.end enviado (frames: 5633, bytes: 1802880)
+sip-media-server       | 10:15:01 [INFO] media-server.call: [7234a7b8]  Fim de fala detectado - aguardando resposta
+sip-media-server       | 10:15:09 [INFO] media-server.streaming: [06c6e1ae]  audio.end enviado (frames: 6022, bytes: 1927360)
+sip-media-server       | 10:15:09 [INFO] media-server.call: [7234a7b8]  Fim de fala detectado - aguardando resposta
+
+
+sip-media-server       | 10:11:58 [INFO] media-server.ws:  Conectando ao AI Agent: ws://ai-agent:8765
+ai-conversation-agent  | 10:11:26 [INFO] ai-agent:    Aguardando conexões do Media Server...
+ai-conversation-agent  | 10:11:26 [INFO] ai-agent: ============================================================
+sip-media-server       | 10:11:58 [INFO] media-server:    • WebSocket Client -> ws://ai-agent:8765
+ai-conversation-agent  | 10:11:58 [INFO] ai-agent.server:  Cliente conectado: ('10.0.1.10', 52662)
+ai-conversation-agent  | 10:13:01 [INFO] ai-agent.asp:  ASP session.start: 06c6e1ae
+ai-conversation-agent  | 10:13:01 [INFO] ai-agent.asp:  Sessão ASP aceita: 06c6e1ae (status=accepted)
+ai-conversation-agent  | 10:13:01 [INFO] ai-agent.llm: Cliente LLM Local inicializado
+ai-conversation-agent  | 10:13:01 [INFO] ai-agent.llm:   Base URL: http://host.docker.internal:12434/engines/llama.cpp/v1
+ai-conversation-agent  | 10:13:01 [INFO] ai-agent.llm:   Modelo: ai/smollm3
+ai-conversation-agent  | 10:13:01 [INFO] ai-agent.pipeline:  LLM inicializado (por sessao)
+ai-conversation-agent  | 10:13:01 [INFO] ai-agent.vad:  WebRTC VAD inicializado (agressividade=2)
+ai-conversation-agent  | 10:13:01 [INFO] ai-agent.session:  Sessão criada: 06c6e1ae (call: ZdCb5MRdmf-eqXfullf4sw91b5UTAT7X)
+ai-conversation-agent  | 10:13:01 [INFO] ai-agent.server: [06c6e1ae] VAD config aplicada: silence=1000ms, min_speech=250ms
+ai-conversation-agent  | 10:13:09 [INFO] ai-agent.tts:  TTS (Kokoro): 47200 bytes (latency: 7751ms)
+ai-conversation-agent  | 10:13:11 [INFO] ai-agent.server: [06c6e1ae]  Recebido audio.end
+ai-conversation-agent  | 10:13:11 [INFO] ai-agent.server: [06c6e1ae] Buffer atual: 38400 bytes, state=listening
+ai-conversation-agent  | 10:13:11 [INFO] ai-agent.server: [06c6e1ae] Processando 38400 bytes de áudio
+ai-conversation-agent  | 10:13:19 [INFO] ai-agent.server: [06c6e1ae]  Recebido audio.end
+ai-conversation-agent  | 10:13:19 [INFO] ai-agent.server: [06c6e1ae] Buffer atual: 127680 bytes, state=listening
+ai-conversation-agent  | 10:13:19 [INFO] ai-agent.server: [06c6e1ae] Processando 127680 bytes de áudio
+ai-conversation-agent  | 10:13:29 [INFO] ai-agent.server: [06c6e1ae]  Recebido audio.end
+ai-conversation-agent  | 10:13:29 [INFO] ai-agent.server: [06c6e1ae] Buffer atual: 131520 bytes, state=listening
+ai-conversation-agent  | 10:13:29 [INFO] ai-agent.server: [06c6e1ae] Processando 131520 bytes de áudio
+ai-conversation-agent  | 10:13:33 [INFO] ai-agent.server: [06c6e1ae]  Recebido audio.end
+ai-conversation-agent  | 10:13:33 [INFO] ai-agent.server: [06c6e1ae] Buffer atual: 91840 bytes, state=listening
+ai-conversation-agent  | 10:13:33 [INFO] ai-agent.server: [06c6e1ae] Processando 91840 bytes de áudio
+ai-conversation-agent  | 10:13:35 [INFO] ai-agent.server: [06c6e1ae]  Recebido audio.end
+ai-conversation-agent  | 10:13:35 [INFO] ai-agent.server: [06c6e1ae] Buffer atual: 35200 bytes, state=listening
+ai-conversation-agent  | 10:13:35 [INFO] ai-agent.server: [06c6e1ae] Processando 35200 bytes de áudio
+ai-conversation-agent  | 10:13:39 [INFO] ai-agent.server: [06c6e1ae]  Recebido audio.end
+ai-conversation-agent  | 10:13:39 [INFO] ai-agent.server: [06c6e1ae] Buffer atual: 57920 bytes, state=listening
+ai-conversation-agent  | 10:13:39 [INFO] ai-agent.server: [06c6e1ae] Processando 57920 bytes de áudio
+ai-conversation-agent  | 10:13:44 [INFO] ai-agent.server: [06c6e1ae]  Recebido audio.end
+ai-conversation-agent  | 10:13:44 [INFO] ai-agent.server: [06c6e1ae] Buffer atual: 88320 bytes, state=listening
+ai-conversation-agent  | 10:13:44 [INFO] ai-agent.server: [06c6e1ae] Processando 88320 bytes de áudio
+ai-conversation-agent  | 10:13:50 [INFO] ai-agent.server: [06c6e1ae]  Recebido audio.end
+ai-conversation-agent  | 10:13:50 [INFO] ai-agent.server: [06c6e1ae] Buffer atual: 97280 bytes, state=listening
+ai-conversation-agent  | 10:13:50 [INFO] ai-agent.server: [06c6e1ae] Processando 97280 bytes de áudio
+ai-conversation-agent  | 10:14:02 [INFO] ai-agent.server: [06c6e1ae]  Recebido audio.end
+ai-conversation-agent  | 10:14:02 [INFO] ai-agent.server: [06c6e1ae] Buffer atual: 177280 bytes, state=listening
+ai-conversation-agent  | 10:14:02 [INFO] ai-agent.server: [06c6e1ae] Processando 177280 bytes de áudio
+ai-conversation-agent  | 10:14:06 [INFO] ai-agent.server: [06c6e1ae]  Recebido audio.end
+ai-conversation-agent  | 10:14:06 [INFO] ai-agent.server: [06c6e1ae] Buffer atual: 74880 bytes, state=listening
+ai-conversation-agent  | 10:14:06 [INFO] ai-agent.server: [06c6e1ae] Processando 74880 bytes de áudio
+ai-conversation-agent  | 10:14:17 [INFO] ai-agent.server: [06c6e1ae]  Recebido audio.end
+ai-conversation-agent  | 10:14:17 [INFO] ai-agent.server: [06c6e1ae] Buffer atual: 175680 bytes, state=listening
+ai-conversation-agent  | 10:14:17 [INFO] ai-agent.server: [06c6e1ae] Processando 175680 bytes de áudio
+ai-conversation-agent  | 10:14:20 [INFO] ai-agent.stt:  STT: 'Não, não, não.' (lang: pt, prob: 1.00, latency: 3374ms)
+ai-conversation-agent  | 10:14:20 [INFO] ai-agent.pipeline: [session_id=06c6e1ae] [stage=stt] Transcribed: "Não, não, não." (3375ms)
+sip-media-server       | 10:14:43 [INFO] media-server.ws:  Conectando ao AI Agent: ws://ai-agent:8765
+ai-conversation-agent  | 10:14:43 [INFO] ai-agent.server:  Cliente conectado: ('10.0.1.10', 59556)
+ai-conversation-agent  | 10:14:50 [INFO] ai-agent.llm: LLM Local (stream completo): 'Entendido. Há algo mais que posso ajudar?'
+ai-conversation-agent  | 10:14:50 [INFO] ai-agent.llm:  Total sentenças geradas: 2
+ai-conversation-agent  | 10:14:52 [INFO] ai-agent.sentence-pipeline:  Primeiro áudio em 31908ms
+ai-conversation-agent  | 10:14:52 [ERROR] ai-agent.server: [06c6e1ae] Erro no streaming: sent 1011 (internal error) keepalive ping timeout; no close frame received
+ai-conversation-agent  | 10:14:52 [INFO] ai-agent.server:  Cliente desconectado: ('10.0.1.10', 52662) (1006)
+ai-conversation-agent  | 10:14:52 [INFO] ai-agent.sentence-pipeline:  Pipeline: 1 sentenças, 1 chunks, total 31911ms
+ai-conversation-agent  | 10:14:58 [INFO] ai-agent.server: [06c6e1ae]  Recebido audio.end
+ai-conversation-agent  | 10:14:58 [INFO] ai-agent.server: [06c6e1ae] Buffer atual: 118720 bytes, state=listening
+ai-conversation-agent  | 10:14:58 [INFO] ai-agent.server: [06c6e1ae] Processando 118720 bytes de áudio
+ai-conversation-agent  | 10:15:01 [INFO] ai-agent.server: [06c6e1ae]  Recebido audio.end
+ai-conversation-agent  | 10:15:01 [INFO] ai-agent.server: [06c6e1ae] Buffer atual: 49600 bytes, state=listening
+ai-conversation-agent  | 10:15:01 [INFO] ai-agent.server: [06c6e1ae] Processando 49600 bytes de áudio
+ai-conversation-agent  | 10:15:15 [INFO] ai-agent.stt:  STT: 'E aí!' (lang: pt, prob: 1.00, latency: 13512ms)
+ai-conversation-agent  | 10:15:15 [INFO] ai-agent.pipeline: [session_id=06c6e1ae] [stage=stt] Transcribed: "E aí!" (13512ms)
+ai-conversation-agent  | 10:15:17 [INFO] ai-agent.llm: LLM Local (stream completo): 'Olá! Como posso ajudar você hoje?'
+ai-conversation-agent  | 10:15:17 [INFO] ai-agent.llm:  Total sentenças geradas: 2
+ai-conversation-agent  | 10:15:19 [INFO] ai-agent.sentence-pipeline:  Primeiro áudio em 3771ms
+ai-conversation-agent  | 10:15:19 [INFO] ai-agent.server: [06c6e1ae] ️ Streaming iniciado: Olá!...
+ai-conversation-agent  | 10:15:19 [WARNING] ai-agent.latency-budget: Latency budget exceeded: 17284ms (budget: 1500ms) - stt: 13512ms, llm+tts_first: 3771ms
+sip-media-server       | 10:15:28 [INFO] media-server.ws:  Conectando ao AI Agent: ws://ai-agent:8765
+ai-conversation-agent  | 10:15:28 [INFO] ai-agent.server:  Cliente conectado: ('10.0.1.10', 60892)
+ai-conversation-agent  | 10:15:33 [ERROR] ai-agent.server: [06c6e1ae] Erro no streaming: sent 1011 (internal error) keepalive ping timeout; no close frame received
+ai-conversation-agent  | 10:15:33 [ERROR] ai-agent.server: Erro no pipeline: sent 1011 (internal error) keepalive ping timeout; no close frame received
+ai-conversation-agent  | 10:15:34 [ERROR] ai-agent.server: Erro ao processar mensagem de controle: sent 1011 (internal error) keepalive ping timeout; no close frame received
+ai-conversation-agent  | 10:15:34 [INFO] ai-agent.server:  Cliente desconectado: ('10.0.1.10', 59556) (1006)
+ai-conversation-agent  | 10:15:34 [INFO] ai-agent.sentence-pipeline:  Pipeline: 2 sentenças, 2 chunks, total 18985ms
+ai-conversation-agent  | 10:15:42 [INFO] ai-agent.server: [06c6e1ae]  Recebido audio.end
+ai-conversation-agent  | 10:15:42 [INFO] ai-agent.server: [06c6e1ae] Buffer atual: 168640 bytes, state=listening
+ai-conversation-agent  | 10:15:42 [INFO] ai-agent.server: [06c6e1ae] Processando 168640 bytes de áudio

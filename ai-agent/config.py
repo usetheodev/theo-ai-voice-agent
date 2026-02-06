@@ -74,7 +74,7 @@ AUDIO_CONFIG = {
     "energy_threshold": int(os.getenv("VAD_ENERGY_THRESHOLD", "500")),
 
     # Tamanho máximo do buffer de áudio em segundos
-    "max_buffer_seconds": int(os.getenv("AUDIO_MAX_BUFFER_SECONDS", "60")),
+    "max_buffer_seconds": int(os.getenv("AUDIO_MAX_BUFFER_SECONDS", "10")),
 
     # Tamanho do ring buffer do VAD em frames
     "vad_ring_buffer_size": int(os.getenv("VAD_RING_BUFFER_SIZE", "5")),

@@ -116,8 +116,14 @@ class STTProvider(BaseProvider):
     """Interface base para provedores de STT."""
 
     @abstractmethod
-    async def transcribe(self, audio_data: bytes) -> str:
-        """Transcreve áudio para texto."""
+    async def transcribe(self, audio_data: bytes, input_sample_rate: int = 0) -> str:
+        """Transcreve áudio para texto.
+
+        Args:
+            audio_data: Áudio PCM 16-bit signed
+            input_sample_rate: Sample rate do áudio de entrada (da sessão ASP).
+                              Se 0, usa o valor da config do provider.
+        """
         pass
 
     @abstractmethod
@@ -309,7 +315,7 @@ class FasterWhisperSTT(STTProvider):
         logger.info(f" faster-whisper warmup: {elapsed_ms:.1f}ms")
         return elapsed_ms
 
-    async def transcribe(self, audio_data: bytes) -> str:
+    async def transcribe(self, audio_data: bytes, input_sample_rate: int = 0) -> str:
         """Transcreve audio usando faster-whisper (in-memory, sem arquivo)."""
         if self._model is None:
             return ""
@@ -329,6 +335,17 @@ class FasterWhisperSTT(STTProvider):
 
             # PCM 16-bit signed -> float32 normalizado [-1.0, 1.0]
             audio_np = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+
+            # Whisper espera áudio a 16kHz. Resamplea se necessário.
+            # Prioridade: input_sample_rate (ASP session) > config estática
+            input_sr = input_sample_rate or self._stt_config.sample_rate
+            whisper_sr = 16000
+            if input_sr != whisper_sr:
+                n_target = int(len(audio_np) * whisper_sr / input_sr)
+                x_orig = np.arange(len(audio_np))
+                x_target = np.linspace(0, len(audio_np) - 1, n_target)
+                audio_np = np.interp(x_target, x_orig, audio_np)
+                logger.debug(f"Resampled {input_sr}Hz → {whisper_sr}Hz ({len(audio_data)//2} → {n_target} samples)")
 
             language = self._stt_config.language
 
@@ -357,6 +374,12 @@ class FasterWhisperSTT(STTProvider):
                     f" STT: '{text}' "
                     f"(lang: {info.language}, prob: {info.language_probability:.2f}, "
                     f"latency: {latency_ms:.0f}ms)"
+                )
+            else:
+                audio_duration_ms = len(audio_data) / 2 / self.sample_rate * 1000
+                logger.info(
+                    f" STT: <vazio> "
+                    f"(audio: {audio_duration_ms:.0f}ms, latency: {latency_ms:.0f}ms)"
                 )
 
             return text
@@ -478,7 +501,7 @@ class WhisperLocalSTT(STTProvider):
             message=f"Whisper pronto. Modelo: {self._whisper_config.model}",
         )
 
-    async def transcribe(self, audio_data: bytes) -> str:
+    async def transcribe(self, audio_data: bytes, input_sample_rate: int = 0) -> str:
         """Transcreve áudio usando Whisper local."""
         if not self._model:
             return ""
@@ -592,7 +615,7 @@ class OpenAIWhisperSTT(STTProvider):
             message="OpenAI Whisper API pronta.",
         )
 
-    async def transcribe(self, audio_data: bytes) -> str:
+    async def transcribe(self, audio_data: bytes, input_sample_rate: int = 0) -> str:
         """Transcreve áudio usando API OpenAI."""
         if not self.client:
             return ""
@@ -600,11 +623,13 @@ class OpenAIWhisperSTT(STTProvider):
         start_time = time.perf_counter()
 
         try:
+            # Usa sample rate da sessão ASP ou fallback para config
+            sr = input_sample_rate or AUDIO_CONFIG["sample_rate"]
             audio_file = io.BytesIO()
             with wave.open(audio_file, 'wb') as wav:
                 wav.setnchannels(AUDIO_CONFIG["channels"])
                 wav.setsampwidth(AUDIO_CONFIG["sample_width"])
-                wav.setframerate(AUDIO_CONFIG["sample_rate"])
+                wav.setframerate(sr)
                 wav.writeframes(audio_data)
             audio_file.seek(0)
             audio_file.name = "audio.wav"

@@ -114,7 +114,7 @@ class TTSProvider(BaseProvider):
         """
         audio = await self.synthesize(text)
         if audio:
-            chunk_size = int(AUDIO_CONFIG["sample_rate"] * 0.1 * 2)  # 100ms
+            chunk_size = int(self._tts_config.output_sample_rate * 0.1 * 2)  # 100ms
             for i in range(0, len(audio), chunk_size):
                 yield audio[i:i + chunk_size]
 
@@ -133,14 +133,14 @@ KOKORO_VOICES = {
     "p": ["pf_dora", "pm_alex", "pm_santa"],
 }
 
-# Textos de warmup por idioma
+# Textos de warmup por idioma (frases longas para aquecer phoneme tables completas)
 WARMUP_TEXTS = {
-    "a": "Hello.",
-    "b": "Hello.",
-    "j": "こんにちは。",
-    "k": "안녕하세요.",
-    "z": "你好。",
-    "p": "Olá.",
+    "a": "Hello, welcome to our service. How can I help you today?",
+    "b": "Hello, welcome to our service. How can I help you today?",
+    "j": "こんにちは、サービスへようこそ。本日はどのようにお手伝いしましょうか？",
+    "k": "안녕하세요, 서비스에 오신 것을 환영합니다. 오늘 어떻게 도와드릴까요?",
+    "z": "你好，欢迎使用我们的服务。今天有什么可以帮助您的？",
+    "p": "Olá! Bem-vindo ao atendimento. Como posso ajudá-lo hoje?",
 }
 
 

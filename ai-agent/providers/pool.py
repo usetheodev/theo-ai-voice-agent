@@ -11,9 +11,10 @@ breaker OPEN, retorna o provider de fallback (se configurado).
 """
 
 import logging
+import time
 from typing import Optional
 
-from config import STT_CONFIG, TTS_CONFIG
+from config import STT_CONFIG, TTS_CONFIG, LLM_CONFIG
 from providers.stt import STTProvider, create_stt_provider
 from providers.tts import TTSProvider, create_tts_provider
 from providers.base import CircuitState
@@ -52,6 +53,9 @@ class ProviderPool:
         self.tts = await create_tts_provider()
         logger.info("Pool: TTS carregado e aquecido")
 
+        # Warmup LLM: força Docker Model Runner a carregar modelo na memória
+        await self._warmup_llm()
+
         # Carrega fallbacks se configurados (lazy - não faz warmup)
         stt_fallback_name = STT_CONFIG.get("fallback_provider", "")
         if stt_fallback_name and stt_fallback_name != STT_CONFIG["provider"]:
@@ -71,6 +75,35 @@ class ProviderPool:
 
         self._initialized = True
         logger.info("Pool de providers inicializado (STT + TTS compartilhados)")
+
+    async def _warmup_llm(self):
+        """Envia request mínimo ao LLM para forçar carregamento do modelo.
+
+        O Docker Model Runner (e similares) só carrega o modelo na primeira
+        inferência. Sem warmup, a primeira chamada real leva 27-30s.
+        Este warmup descartável força o carregamento no startup do servidor.
+        """
+        provider = LLM_CONFIG.get("provider", "mock")
+        if provider == "mock":
+            logger.info("Pool: LLM mock, warmup desnecessário")
+            return
+
+        try:
+            from providers.llm import create_llm_provider
+            import asyncio
+
+            start = time.perf_counter()
+            llm = create_llm_provider()
+
+            # Envia request mínimo (1 token) para forçar carregamento do modelo
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(
+                None, llm.generate, "Oi"
+            )
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            logger.info(f"Pool: LLM aquecido em {elapsed_ms:.0f}ms (provider={provider})")
+        except Exception as e:
+            logger.warning(f"Pool: LLM warmup falhou (não crítico): {e}")
 
     def get_stt(self, allow_fallback: bool = True) -> Optional[STTProvider]:
         """Retorna provider STT saudável.

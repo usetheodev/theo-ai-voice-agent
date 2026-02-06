@@ -24,6 +24,9 @@ class TranscribeSession:
     """
     session_id: str
     call_id: str
+    # Audio config da sessao ASP (prioridade sobre AUDIO_CONFIG global)
+    sample_rate: int = 0  # 0 = usa AUDIO_CONFIG fallback
+    sample_width: int = 0  # 0 = usa AUDIO_CONFIG fallback
     created_at: float = field(default_factory=time.time)
     last_activity: float = field(default_factory=time.time)
     # Buffer para audio do usuario (inbound)
@@ -35,6 +38,13 @@ class TranscribeSession:
     caller_id: Optional[str] = None
     metadata: Dict = field(default_factory=dict)
 
+    def __post_init__(self):
+        """Aplica fallback do AUDIO_CONFIG para campos não-setados via ASP."""
+        if self.sample_rate == 0:
+            self.sample_rate = AUDIO_CONFIG["sample_rate"]
+        if self.sample_width == 0:
+            self.sample_width = AUDIO_CONFIG["sample_width"]
+
     def add_audio(self, audio_data: bytes, is_outbound: bool = False) -> None:
         """
         Adiciona audio ao buffer.
@@ -44,7 +54,7 @@ class TranscribeSession:
             is_outbound: True se audio do agente, False se do usuario
         """
         buffer = self.audio_buffer_outbound if is_outbound else self.audio_buffer
-        max_buffer_size = AUDIO_CONFIG["sample_rate"] * AUDIO_CONFIG["sample_width"] * AUDIO_CONFIG["max_buffer_seconds"]
+        max_buffer_size = self.sample_rate * self.sample_width * AUDIO_CONFIG["max_buffer_seconds"]
 
         if len(buffer) + len(audio_data) > max_buffer_size:
             # Remove audio antigo para caber novo
@@ -96,7 +106,7 @@ class TranscribeSession:
     @property
     def buffer_duration_ms(self) -> float:
         """Duracao do buffer em ms."""
-        bytes_per_second = AUDIO_CONFIG["sample_rate"] * AUDIO_CONFIG["sample_width"]
+        bytes_per_second = self.sample_rate * self.sample_width
         return (len(self.audio_buffer) / bytes_per_second) * 1000
 
 
@@ -117,6 +127,8 @@ class SessionManager:
         call_id: str,
         caller_id: Optional[str] = None,
         metadata: Optional[Dict] = None,
+        sample_rate: int = 0,
+        sample_width: int = 0,
     ) -> TranscribeSession:
         """
         Cria nova sessao.
@@ -126,6 +138,8 @@ class SessionManager:
             call_id: ID da chamada
             caller_id: Numero do chamador (opcional)
             metadata: Metadados adicionais
+            sample_rate: Sample rate negociado via ASP (0 = fallback AUDIO_CONFIG)
+            sample_width: Sample width negociado via ASP (0 = fallback AUDIO_CONFIG)
 
         Returns:
             Sessao criada
@@ -138,6 +152,8 @@ class SessionManager:
             session = TranscribeSession(
                 session_id=session_id,
                 call_id=call_id,
+                sample_rate=sample_rate,
+                sample_width=sample_width,
                 caller_id=caller_id,
                 metadata=metadata or {},
             )

@@ -263,11 +263,27 @@ class TranscribeServer:
             logger.warning(f"[{msg.session_id[:8]}] Sessao rejeitada: {result.errors}")
             return
 
-        # Cria sessao
+        # Extrai config negociado via ASP para passar à sessao
+        negotiated_sample_rate = 0
+        negotiated_sample_width = 0
+        if result.negotiated and result.negotiated.audio:
+            negotiated_sample_rate = getattr(result.negotiated.audio, 'sample_rate', 0) or 0
+            # ASP negocia encoding (pcm_s16le = 2 bytes), converte para sample_width
+            encoding = getattr(result.negotiated.audio, 'encoding', 'pcm_s16le')
+            negotiated_sample_width = 2 if encoding == 'pcm_s16le' else 2
+
+        # Cria sessao com config ASP negociado
         session = await self.session_manager.create_session(
             session_id=msg.session_id,
             call_id=msg.call_id,
             caller_id=getattr(msg, 'caller_id', None),
+            sample_rate=negotiated_sample_rate,
+            sample_width=negotiated_sample_width,
+        )
+
+        logger.info(
+            f"[{msg.session_id[:8]}] ASP config: "
+            f"sample_rate={session.sample_rate}, sample_width={session.sample_width}"
         )
 
         # Mapeia hash -> session_id (usa mesmo hash do protocolo compartilhado)
@@ -366,8 +382,8 @@ class TranscribeServer:
         start_time = time.perf_counter()
 
         try:
-            # Transcreve
-            result = await self.stt.transcribe(audio_data)
+            # Transcreve (passa sample_rate da sessao ASP para WAV header correto)
+            result = await self.stt.transcribe(audio_data, input_sample_rate=session.sample_rate)
 
             if result.is_empty:
                 track_transcription(

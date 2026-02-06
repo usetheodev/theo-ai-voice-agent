@@ -148,7 +148,17 @@ class StreamingVAD:
         return speech_started, speech_ended
 
     def _is_speech(self, frame: bytes) -> bool:
-        """Detecta se frame contém fala"""
+        """Detecta se frame contém fala.
+
+        Usa energy_threshold como pré-gate: frames com energia abaixo do
+        threshold são classificados como silêncio, independente do WebRTC VAD.
+        Isso evita que ruído de fundo/eco do codec sejam detectados como fala.
+        """
+        # Pré-gate de energia: rejeita frames muito quietos
+        energy = self._calculate_energy(frame)
+        if energy <= self.energy_threshold:
+            return False
+
         if self.use_webrtc_vad and self.vad:
             try:
                 return self.vad.is_speech(frame, self.sample_rate)
@@ -158,7 +168,8 @@ class StreamingVAD:
                     logger.warning(f"WebRTC VAD falhou, usando fallback de energia: {e}")
                     self._webrtc_error_logged = True
 
-        return self._calculate_energy(frame) > self.energy_threshold
+        # Fallback: se energia > threshold e VAD indisponível, considera fala
+        return True
 
     def _calculate_energy(self, frame: bytes) -> float:
         """Calcula energia RMS do frame"""

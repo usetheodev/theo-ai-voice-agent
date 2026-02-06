@@ -243,7 +243,7 @@ class SentencePipeline:
                 # Fallback: sintetiza tudo e divide em chunks
                 audio = await self._tts.synthesize(sentence)
                 if audio:
-                    chunk_size = 1600  # ~100ms a 8kHz
+                    chunk_size = int(self._tts.sample_rate * 0.1 * 2)  # ~100ms
                     for i in range(0, len(audio), chunk_size):
                         yield audio[i:i + chunk_size]
 

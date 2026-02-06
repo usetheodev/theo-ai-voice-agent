@@ -100,8 +100,13 @@ class SessionManager:
                 # Fallback: inicializa providers por sessao
                 await pipeline.init_providers_async()
 
-            # Cria audio buffer
-            audio_buffer = AudioBuffer()
+            # Cria audio buffer SEM VAD local (media-server faz VAD e envia audio.end)
+            # Usa sample_rate e frame_duration da sessão ASP
+            audio_buffer = AudioBuffer(
+                vad_enabled=False,
+                sample_rate=audio_config.sample_rate,
+                frame_duration_ms=audio_config.frame_duration_ms,
+            )
 
             session = Session(
                 session_id=session_id,

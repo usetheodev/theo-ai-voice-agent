@@ -180,14 +180,16 @@ class ConversationPipeline:
         audio_data: bytes,
         latency_budget=None,
         session_id: str = "",
+        input_sample_rate: int = 0,
     ) -> Tuple[Optional[str], Optional[bytes]]:
         """
         Processa áudio de forma assíncrona: STT → LLM → TTS
 
         Args:
-            audio_data: Áudio PCM 8kHz mono 16-bit
+            audio_data: Áudio PCM mono 16-bit
             latency_budget: LatencyBudget opcional para rastrear E2E
             session_id: ID da sessão para structured logging
+            input_sample_rate: Sample rate do áudio (da sessão ASP). 0 = usa config do provider.
 
         Returns:
             Tuple[text_response, audio_response]
@@ -197,13 +199,18 @@ class ConversationPipeline:
 
         # 1. Speech-to-Text (async)
         stt_start = time.perf_counter()
-        text = await self._transcribe_async(audio_data)
+        text = await self._transcribe_async(audio_data, input_sample_rate=input_sample_rate)
         stt_ms = (time.perf_counter() - stt_start) * 1000
         if latency_budget:
             latency_budget.record_stage('stt', stt_ms)
 
         if not text:
-            slog.debug("STT não detectou fala", extra={"stage": "stt"})
+            sr = input_sample_rate or AUDIO_CONFIG.get("sample_rate", 8000)
+            audio_duration_ms = len(audio_data) / 2 / sr * 1000
+            slog.info(
+                f"STT vazio (audio: {audio_duration_ms:.0f}ms, stt_latency: {stt_ms:.0f}ms)",
+                extra={"stage": "stt"}
+            )
             return None, None
 
         slog.info(f"Transcribed: \"{text}\"", extra={"stage": "stt", "duration_ms": stt_ms})
@@ -237,6 +244,7 @@ class ConversationPipeline:
         audio_data: bytes,
         latency_budget=None,
         session_id: str = "",
+        input_sample_rate: int = 0,
     ) -> AsyncGenerator[Tuple[str, bytes], None]:
         """
         Processa áudio com streaming REAL assíncrono usando SentencePipeline.
@@ -245,9 +253,10 @@ class ConversationPipeline:
         Isso reduz significativamente a latência percebida.
 
         Args:
-            audio_data: Áudio PCM 8kHz mono 16-bit
+            audio_data: Áudio PCM mono 16-bit
             latency_budget: LatencyBudget opcional para rastrear E2E
             session_id: ID da sessão para structured logging
+            input_sample_rate: Sample rate do áudio (da sessão ASP). 0 = usa config do provider.
 
         Yields:
             Tuple[text_chunk, audio_chunk]: Fragmentos de texto e áudio
@@ -257,13 +266,18 @@ class ConversationPipeline:
 
         # 1. Speech-to-Text (async)
         stt_start = time.perf_counter()
-        text = await self._transcribe_async(audio_data)
+        text = await self._transcribe_async(audio_data, input_sample_rate=input_sample_rate)
         stt_ms = (time.perf_counter() - stt_start) * 1000
         if latency_budget:
             latency_budget.record_stage('stt', stt_ms)
 
         if not text:
-            slog.debug("STT não detectou fala", extra={"stage": "stt"})
+            sr = input_sample_rate or AUDIO_CONFIG.get("sample_rate", 8000)
+            audio_duration_ms = len(audio_data) / 2 / sr * 1000
+            slog.info(
+                f"STT vazio (audio: {audio_duration_ms:.0f}ms, stt_latency: {stt_ms:.0f}ms)",
+                extra={"stage": "stt"}
+            )
             return
 
         slog.info(f"Transcribed: \"{text}\"", extra={"stage": "stt", "duration_ms": stt_ms})
@@ -337,15 +351,20 @@ class ConversationPipeline:
 
     # ==================== Component Methods ====================
 
-    async def _transcribe_async(self, audio_data: bytes) -> Optional[str]:
-        """Transcreve áudio para texto (async)."""
+    async def _transcribe_async(self, audio_data: bytes, input_sample_rate: int = 0) -> Optional[str]:
+        """Transcreve áudio para texto (async).
+
+        Args:
+            audio_data: Áudio PCM 16-bit signed
+            input_sample_rate: Sample rate da sessão ASP (0 = usa config do provider)
+        """
         if not self.stt:
             logger.warning("STT não disponível")
             return None
 
         try:
             with track_component_latency('stt'):
-                text = await self.stt.transcribe(audio_data)
+                text = await self.stt.transcribe(audio_data, input_sample_rate=input_sample_rate)
 
             if text and len(text.strip()) >= 2:
                 return text.strip()

@@ -167,6 +167,10 @@ CALL_CONFIG = {
 
     # Intervalo do loop de conversação (segundos)
     "conversation_loop_interval": float(os.getenv("CALL_CONVERSATION_LOOP_INTERVAL", "0.05")),
+
+    # Cooldown pós-playback (segundos): tempo de espera após TTS antes de resumir captura
+    # Permite eco do alto-falante morrer. 0 = desabilitado.
+    "post_playback_cooldown": float(os.getenv("CALL_POST_PLAYBACK_COOLDOWN", "0.5")),
 }
 
 

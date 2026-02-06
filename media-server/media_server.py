@@ -66,11 +66,25 @@ class MediaServer:
         # Conecta ao AI Transcribe (se habilitado)
         if TRANSCRIBE_CONFIG.get("enabled", False):
             self.transcribe_adapter = TranscribeAdapter()
-            if await self.transcribe_adapter.connect():
-                logger.info("Conectado ao AI Transcribe")
-            else:
-                logger.warning("Falha ao conectar ao AI Transcribe - transcricao desabilitada")
-                self.transcribe_adapter = None
+            max_retries = 5
+            retry_interval = 3
+            for attempt in range(1, max_retries + 1):
+                if await self.transcribe_adapter.connect():
+                    logger.info("Conectado ao AI Transcribe")
+                    break
+                else:
+                    if attempt < max_retries:
+                        logger.warning(
+                            f"Falha ao conectar ao AI Transcribe ({attempt}/{max_retries}) "
+                            f"- retry em {retry_interval}s"
+                        )
+                        await asyncio.sleep(retry_interval)
+                    else:
+                        logger.error(
+                            f"Falha ao conectar ao AI Transcribe apos {max_retries} tentativas "
+                            f"- transcricao desabilitada"
+                        )
+                        self.transcribe_adapter = None
         else:
             logger.info("AI Transcribe desabilitado via config")
 

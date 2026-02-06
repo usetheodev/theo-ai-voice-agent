@@ -21,32 +21,37 @@ except ImportError:
 
 
 class AudioBuffer:
-    """Buffer de áudio com detecção de voz usando WebRTC VAD"""
+    """Buffer de áudio com detecção de voz usando WebRTC VAD.
+
+    Modos de operação:
+    - vad_enabled=True: VAD local (add_frame/add_audio processam VAD frame a frame)
+    - vad_enabled=False: VAD externo (add_audio_raw acumula sem processar, media-server faz VAD)
+    """
 
     # Tamanhos de frame suportados pelo WebRTC VAD (em ms)
     VALID_FRAME_DURATIONS = [10, 20, 30]
 
-    def __init__(self, silence_threshold_ms: int = None, vad_aggressiveness: int = None):
+    def __init__(self, silence_threshold_ms: int = None, vad_aggressiveness: int = None,
+                 vad_enabled: bool = True, sample_rate: int = 0, frame_duration_ms: int = 0):
         """
         Args:
             silence_threshold_ms: Tempo de silêncio para considerar fim de fala
             vad_aggressiveness: Agressividade do VAD (0-3, maior = mais agressivo)
+            vad_enabled: Se False, não inicializa VAD (usa add_audio_raw com VAD externo)
+            sample_rate: Sample rate do áudio (da sessão ASP). 0 = usa AUDIO_CONFIG.
+            frame_duration_ms: Duração do frame (da sessão ASP). 0 = usa AUDIO_CONFIG.
         """
         self.buffer = bytearray()
 
-        # Configurações de áudio
-        self.sample_rate = AUDIO_CONFIG["sample_rate"]
-        self.frame_duration_ms = AUDIO_CONFIG["frame_duration_ms"]
+        # Configurações de áudio: prioridade ASP session > AUDIO_CONFIG global
+        self.sample_rate = sample_rate or AUDIO_CONFIG["sample_rate"]
+        self.frame_duration_ms = frame_duration_ms or AUDIO_CONFIG["frame_duration_ms"]
         self.frame_size = int(self.sample_rate * self.frame_duration_ms / 1000) * 2  # 16-bit
 
-        # Limite máximo do buffer (configurável via AUDIO_MAX_BUFFER_SECONDS)
-        # 8kHz mono 16-bit = 16000 bytes/s
-        max_buffer_seconds = AUDIO_CONFIG.get("max_buffer_seconds", 60)
-        self.MAX_BUFFER_SIZE = max_buffer_seconds * 16000  # ~16KB por segundo
-
-        # Usa valor passado ou config (sincronizado com media-server)
-        config_threshold = AUDIO_CONFIG.get("silence_threshold_ms", 500)
-        self.silence_threshold = silence_threshold_ms or config_threshold
+        # Limite máximo do buffer
+        max_buffer_seconds = AUDIO_CONFIG.get("max_buffer_seconds", 10)
+        bytes_per_sec = self.sample_rate * 2  # 16-bit mono
+        self.MAX_BUFFER_SIZE = max_buffer_seconds * bytes_per_sec
 
         self.silence_frames = 0
         self.speech_detected = False
@@ -54,11 +59,23 @@ class AudioBuffer:
         # Duração mínima de fala para ser válida (permite "sim", "não", "ok")
         self.min_speech_ms = AUDIO_CONFIG.get("min_speech_ms", 250)
 
-        vad_level = vad_aggressiveness if vad_aggressiveness is not None else AUDIO_CONFIG["vad_aggressiveness"]
-
-        # Inicializa WebRTC VAD se disponível
+        # VAD desabilitado: media-server faz VAD e envia audio.end
+        self.vad_enabled = vad_enabled
         self.vad = None
         self.use_webrtc_vad = False
+        self.speech_ring_buffer = deque(maxlen=1)
+
+        if not vad_enabled:
+            logger.info("AudioBuffer: VAD desabilitado (VAD externo via media-server)")
+            return
+
+        # --- VAD local (só inicializa se vad_enabled=True) ---
+
+        # Usa valor passado ou config (sincronizado com media-server)
+        config_threshold = AUDIO_CONFIG.get("silence_threshold_ms", 500)
+        self.silence_threshold = silence_threshold_ms or config_threshold
+
+        vad_level = vad_aggressiveness if vad_aggressiveness is not None else AUDIO_CONFIG["vad_aggressiveness"]
 
         if WEBRTC_VAD_AVAILABLE:
             try:
