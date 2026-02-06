@@ -310,28 +310,52 @@ class FasterWhisperSTT(STTProvider):
         return elapsed_ms
 
     async def transcribe(self, audio_data: bytes) -> str:
-        """Transcreve áudio usando faster-whisper."""
+        """Transcreve audio usando faster-whisper (in-memory, sem arquivo)."""
         if self._model is None:
             return ""
 
-        temp_path = None
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                temp_path = f.name
-                self._save_wav(f, audio_data)
+        start_time = time.perf_counter()
 
-            return await self.transcribe_file(temp_path)
+        try:
+            import numpy as np
+
+            # PCM 16-bit signed -> float32 normalizado [-1.0, 1.0]
+            audio_np = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+
+            language = self._stt_config.language
+
+            def _transcribe_sync():
+                segments, info = self._model.transcribe(
+                    audio_np,
+                    language=language,
+                    beam_size=self._stt_config.beam_size,
+                    vad_filter=False,
+                )
+                return list(segments), info
+
+            loop = asyncio.get_event_loop()
+            all_segments, info = await loop.run_in_executor(
+                self._executor, _transcribe_sync
+            )
+
+            text = " ".join(segment.text.strip() for segment in all_segments)
+
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            self._metrics.record_success(latency_ms)
+
+            if text:
+                logger.info(
+                    f" STT: '{text}' "
+                    f"(lang: {info.language}, prob: {info.language_probability:.2f}, "
+                    f"latency: {latency_ms:.0f}ms)"
+                )
+
+            return text
 
         except Exception as e:
             logger.error(f"Erro na transcrição: {e}")
             self._metrics.record_failure(str(e))
             return ""
-        finally:
-            if temp_path:
-                try:
-                    os.unlink(temp_path)
-                except OSError:
-                    pass
 
     async def transcribe_file(self, audio_file: str) -> str:
         """Transcreve arquivo de áudio usando faster-whisper."""

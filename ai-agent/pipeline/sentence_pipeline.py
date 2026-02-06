@@ -182,33 +182,43 @@ class SentencePipeline:
         queue: asyncio.Queue,
     ) -> None:
         """
-        Produtor: gera sentenças do LLM e coloca na fila.
+        Produtor: gera sentenças do LLM e coloca na fila em TEMPO REAL.
 
-        Roda em paralelo com o consumidor (TTS).
+        Usa bridge queue (thread-safe) para enviar cada sentenca assim que
+        o LLM a gera, sem esperar todas as sentencas serem geradas.
         """
-        try:
-            loop = asyncio.get_event_loop()
+        import queue as thread_queue
 
-            # Executa gerador síncrono do LLM em thread
-            def _generate():
-                sentences = []
+        bridge: thread_queue.Queue = thread_queue.Queue()
+        loop = asyncio.get_event_loop()
+
+        def _generate_to_bridge():
+            """Roda em thread: yield -> bridge queue."""
+            try:
                 for sentence in self._llm.generate_sentences(user_text):
-                    sentences.append(sentence)
-                return sentences
+                    bridge.put(sentence)
+            except Exception as e:
+                bridge.put(e)
+            finally:
+                bridge.put(None)
 
-            sentences = await loop.run_in_executor(None, _generate)
+        executor_future = loop.run_in_executor(None, _generate_to_bridge)
 
-            # Coloca cada sentença na fila
-            for sentence in sentences:
-                await queue.put(sentence)
-                logger.debug(f" Sentença enfileirada: {sentence[:30]}...")
+        try:
+            while True:
+                item = await loop.run_in_executor(None, bridge.get)
 
-        except Exception as e:
-            logger.error(f"Erro no produtor LLM: {e}")
+                if item is None:
+                    break
+                if isinstance(item, Exception):
+                    logger.error(f"Erro no produtor LLM: {item}")
+                    break
 
+                await queue.put(item)
+                logger.debug(f" Sentença enfileirada: {item[:30]}...")
         finally:
-            # Sinaliza fim das sentenças
             await queue.put(None)
+            await asyncio.wrap_future(executor_future)
 
     async def _synthesize_sentence(
         self,

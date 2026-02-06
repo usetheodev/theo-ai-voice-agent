@@ -104,6 +104,14 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ai-agent-cache:/root/.cache
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:9090/metrics || exit 1"]
       interval: 30s
@@ -139,6 +147,14 @@ services:
       - AMI_PORT=5038
       - AMI_USERNAME=media-server
       - AMI_SECRET=${AMI_SECRET:-Th30V01c3AMI!2026}
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:9091/metrics || exit 1"]
       interval: 30s
@@ -179,6 +195,13 @@ services:
       - STT_LANGUAGE=pt
     volumes:
       - ai-transcribe-cache:/root/.cache
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -205,6 +228,13 @@ services:
       - TZ=America/Sao_Paulo
     volumes:
       - elasticsearch-data:/usr/share/elasticsearch/data
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 768M
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
       interval: 30s

@@ -52,6 +52,7 @@ class ConversationPipeline:
         self.llm: Optional[LLMProvider] = None
         self.tts: Optional[TTSProvider] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._shared_providers: bool = False
 
         if auto_init:
             self._init_providers_sync()
@@ -135,12 +136,29 @@ class ConversationPipeline:
         except Exception as e:
             logger.warning(f"TTS não disponível: {e}")
 
+    def init_with_shared_providers(self, stt: STTProvider, tts: TTSProvider):
+        """Inicializa pipeline com providers compartilhados do pool global.
+
+        STT e TTS sao referencias compartilhadas (lifecycle gerenciado pelo pool).
+        LLM e criado localmente (stateful, mantem historico por sessao).
+        """
+        self.stt = stt
+        self.tts = tts
+        self._shared_providers = True
+
+        try:
+            self.llm = create_llm_provider()
+            logger.info(" LLM inicializado (por sessao)")
+        except Exception as e:
+            logger.warning(f"LLM não disponível: {e}")
+
     async def disconnect(self):
-        """Desconecta todos os providers."""
-        if self.stt and hasattr(self.stt, 'disconnect'):
-            await self.stt.disconnect()
-        if self.tts and hasattr(self.tts, 'disconnect'):
-            await self.tts.disconnect()
+        """Desconecta providers locais. Providers compartilhados sao gerenciados pelo pool."""
+        if not self._shared_providers:
+            if self.stt and hasattr(self.stt, 'disconnect'):
+                await self.stt.disconnect()
+            if self.tts and hasattr(self.tts, 'disconnect'):
+                await self.tts.disconnect()
         logger.info(" Pipeline desconectado")
 
     # ==================== Health Check ====================

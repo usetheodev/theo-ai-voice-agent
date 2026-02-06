@@ -146,8 +146,8 @@ STT_CONFIG = {
     # Número de workers paralelos
     "num_workers": int(os.getenv("ASR_NUM_WORKERS", "1")),
 
-    # Número de workers no ThreadPoolExecutor
-    "executor_workers": int(os.getenv("ASR_EXECUTOR_WORKERS", "2")),
+    # Número de workers no ThreadPoolExecutor (4+ para pool compartilhado)
+    "executor_workers": int(os.getenv("ASR_EXECUTOR_WORKERS", "4")),
 }
 
 
@@ -168,6 +168,9 @@ LLM_CONFIG = {
 
     # Timeout da requisição (segundos)
     "timeout": float(os.getenv("LLM_TIMEOUT", "15.0")),
+
+    # Numero maximo de turnos (pares user/assistant) mantidos no historico
+    "max_history_turns": int(os.getenv("LLM_MAX_HISTORY_TURNS", "20")),
 
     # System prompt customizado
     "system_prompt": os.getenv("LLM_SYSTEM_PROMPT", """Você é um assistente virtual de atendimento telefônico.
@@ -225,8 +228,8 @@ TTS_CONFIG = {
     # Velocidade da fala (0.5 - 2.0)
     "speed": float(os.getenv("TTS_SPEED", "1.0")),
 
-    # Número de workers no ThreadPoolExecutor
-    "executor_workers": int(os.getenv("TTS_EXECUTOR_WORKERS", "2")),
+    # Número de workers no ThreadPoolExecutor (4+ para pool compartilhado)
+    "executor_workers": int(os.getenv("TTS_EXECUTOR_WORKERS", "4")),
 
     # OpenAI TTS config
     "openai_api_key": os.getenv("OPENAI_API_KEY", ""),

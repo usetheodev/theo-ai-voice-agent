@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from config import SESSION_CONFIG
 from pipeline.conversation import ConversationPipeline
 from pipeline.vad import AudioBuffer
+from providers.pool import ProviderPool
 from ws.protocol import AudioConfig, session_id_to_hash
 from metrics import track_session_start, track_session_end, ACTIVE_SESSIONS
 
@@ -66,10 +67,11 @@ class Session:
 class SessionManager:
     """Gerenciador de sessões de conversação"""
 
-    def __init__(self):
+    def __init__(self, pool: Optional[ProviderPool] = None):
         self.sessions: Dict[str, Session] = {}
         self._hash_to_session: Dict[str, str] = {}  # hash_hex -> session_id
         self._lock = asyncio.Lock()
+        self._pool = pool
 
     async def create_session(
         self,
@@ -86,8 +88,12 @@ class SessionManager:
             # Cria pipeline SEM auto_init (evita asyncio.run() em contexto async)
             pipeline = ConversationPipeline(auto_init=False)
 
-            # Inicializa providers de forma assíncrona
-            await pipeline.init_providers_async()
+            # Usa providers compartilhados do pool (se disponivel)
+            if self._pool and self._pool.is_ready:
+                pipeline.init_with_shared_providers(self._pool.stt, self._pool.tts)
+            else:
+                # Fallback: inicializa providers por sessao
+                await pipeline.init_providers_async()
 
             # Cria audio buffer
             audio_buffer = AudioBuffer()

@@ -95,6 +95,7 @@ class LLMProvider(ABC):
         self.conversation_history: List[Dict[str, str]] = []
         self.system_prompt = LLM_CONFIG["system_prompt"]
         self.pending_tool_calls: List[Dict] = []
+        self.max_history_turns: int = LLM_CONFIG.get("max_history_turns", 20)
         # Cache tools at init (avoids re-loading on every request)
         self._tools_openai: List[Dict] = _load_tools_openai()
 
@@ -179,6 +180,12 @@ class LLMProvider(ABC):
                 "role": "assistant",
                 "content": assistant_message,
             })
+
+    def _truncate_history(self):
+        """Trunca historico mantendo ultimas N interacoes."""
+        max_msgs = self.max_history_turns * 2
+        if len(self.conversation_history) > max_msgs:
+            self.conversation_history = self.conversation_history[-max_msgs:]
 
     def reset_conversation(self):
         """Limpa histórico da conversa"""
@@ -276,6 +283,7 @@ class AnthropicLLM(LLMProvider):
             return "Desculpe, nao consegui processar sua mensagem."
 
         self.pending_tool_calls = []
+        self._truncate_history()
 
         try:
             self.conversation_history.append({
@@ -321,6 +329,7 @@ class AnthropicLLM(LLMProvider):
             return
 
         self.pending_tool_calls = []
+        self._truncate_history()
 
         try:
             self.conversation_history.append({
@@ -388,6 +397,7 @@ class OpenAILLM(LLMProvider):
             return "Desculpe, não consegui processar sua mensagem."
 
         self.pending_tool_calls = []
+        self._truncate_history()
 
         try:
             self.conversation_history.append({
@@ -435,6 +445,7 @@ class OpenAILLM(LLMProvider):
             return
 
         self.pending_tool_calls = []
+        self._truncate_history()
 
         try:
             self.conversation_history.append({
@@ -572,6 +583,7 @@ class LocalLLM(LLMProvider):
             return "Desculpe, não consegui processar sua mensagem."
 
         self.pending_tool_calls = []
+        self._truncate_history()
 
         try:
             self.conversation_history.append({
@@ -635,6 +647,7 @@ class LocalLLM(LLMProvider):
             return
 
         self.pending_tool_calls = []
+        self._truncate_history()
 
         try:
             self.conversation_history.append({

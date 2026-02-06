@@ -36,6 +36,7 @@ from server.asp_handler import (
     ASPHandler,
     ASPSession,
 )
+from providers.pool import ProviderPool
 from config import ESCALATION_CONFIG
 from asp_protocol.messages import CallActionMessage
 from asp_protocol.enums import CallActionType
@@ -63,7 +64,8 @@ class AIAgentServer:
     """
 
     def __init__(self):
-        self.session_manager = SessionManager()
+        self._pool = ProviderPool.get_instance()
+        self.session_manager = SessionManager(pool=self._pool)
         self.connections: Set[WebSocketServerProtocol] = set()
         self._server: Optional[websockets.WebSocketServer] = None
         self._running = False
@@ -77,6 +79,9 @@ class AIAgentServer:
         """Inicia o servidor WebSocket"""
         host = host or WS_CONFIG["host"]
         port = port or WS_CONFIG["port"]
+
+        # Inicializa pool de providers (STT + TTS carregados uma unica vez)
+        await self._pool.initialize()
 
         self._running = True
 
@@ -105,6 +110,9 @@ class AIAgentServer:
         # Fecha todas as conexões
         for ws in self.connections.copy():
             await ws.close()
+
+        # Libera providers compartilhados
+        await self._pool.shutdown()
 
         logger.info(" AI Agent Server parado")
 

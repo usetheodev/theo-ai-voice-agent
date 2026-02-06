@@ -14,6 +14,8 @@ import threading
 from typing import Optional, Callable, TYPE_CHECKING
 from collections import deque
 
+import numpy as np
+
 try:
     import pjsua2 as pj
 except ImportError:
@@ -345,42 +347,32 @@ class StreamingAudioPort(pj.AudioMediaPort):
             return
 
         try:
-            with self._lock:
-                audio_data = self._extract_audio_data(frame)
-                if audio_data is None:
-                    return
+            # Extrai dados FORA do lock (read-only do frame)
+            audio_data = self._extract_audio_data(frame)
+            if audio_data is None:
+                return
 
-                # VAD em tempo real (sempre executa para barge-in)
-                speech_started, speech_ended = self.vad.process_frame(audio_data)
+            # VAD nao precisa de lock (estado interno, single-producer)
+            speech_started, speech_ended = self.vad.process_frame(audio_data)
 
-                # Callback de início de fala (importante para barge-in!)
-                if speech_started:
-                    self._invoke_callback_safe(self.on_speech_start, "on_speech_start")
+            if speech_started:
+                self._invoke_callback_safe(self.on_speech_start, "on_speech_start")
 
-                # Em monitor_mode, só detecta fala - não envia áudio
-                if not self.monitor_mode:
+            # Lock APENAS para o buffer de envio
+            if not self.monitor_mode:
+                with self._lock:
                     self._process_normal_mode(audio_data, speech_ended)
 
-                self.frames_processed += 1
+            self.frames_processed += 1
 
         except Exception as e:
             logger.error(f"[{self.session_id[:8]}] Erro em onFrameReceived: {e}")
 
     def _downsample(self, audio_data: bytes) -> bytes:
-        """
-        Converte áudio de 16kHz para 8kHz.
-        Decimação simples: pega cada 2º sample.
-        """
+        """16kHz -> 8kHz via decimacao numpy."""
         try:
-            # Converte bytes para samples (16-bit signed)
-            num_samples = len(audio_data) // 2
-            samples = struct.unpack(f'<{num_samples}h', audio_data)
-
-            # Decimação por fator 2
-            downsampled = samples[::2]
-
-            # Converte de volta para bytes
-            return struct.pack(f'<{len(downsampled)}h', *downsampled)
+            samples = np.frombuffer(audio_data, dtype=np.int16)
+            return samples[::2].tobytes()
         except Exception as e:
             logger.error(f"Erro no downsampling: {e}")
             return audio_data
@@ -444,8 +436,9 @@ class StreamingPlaybackPort(pj.AudioMediaPort):
         self.sample_rate = sample_rate
         self.frame_size = int(sample_rate * 0.02) * 2  # 20ms em bytes (16-bit)
 
-        # Buffer circular de áudio para playback
+        # Buffer circular de áudio para playback (cap: 5 segundos)
         self.audio_buffer = bytearray()
+        self.max_buffer_bytes = int(sample_rate * 2 * 5)  # 5s max
         self._lock = threading.Lock()
 
         # Controle
@@ -471,26 +464,20 @@ class StreamingPlaybackPort(pj.AudioMediaPort):
         logger.info(f"[{self.session_id[:8]}] PlaybackPort criado: {clock_rate}Hz, {channel_count}ch")
 
     def add_audio(self, audio_data: bytes):
-        """Adiciona áudio ao buffer de playback"""
+        """Adiciona áudio ao buffer de playback (com limite de 5s)"""
         with self._lock:
-            # Se input é 8kHz, fazer upsampling para 16kHz
             if len(audio_data) > 0:
-                # Upsampling simples: duplica cada sample
                 upsampled = self._upsample(audio_data)
-                self.audio_buffer.extend(upsampled)
+                if len(self.audio_buffer) + len(upsampled) <= self.max_buffer_bytes:
+                    self.audio_buffer.extend(upsampled)
+                else:
+                    logger.warning(f"[{self.session_id[:8]}] Playback buffer cheio, descartando")
 
     def _upsample(self, audio_data: bytes) -> bytes:
-        """Converte áudio de 8kHz para 16kHz (duplica samples)"""
+        """8kHz -> 16kHz via duplicacao numpy."""
         try:
-            num_samples = len(audio_data) // 2
-            samples = struct.unpack(f'<{num_samples}h', audio_data)
-
-            # Duplica cada sample
-            upsampled = []
-            for s in samples:
-                upsampled.extend([s, s])
-
-            return struct.pack(f'<{len(upsampled)}h', *upsampled)
+            samples = np.frombuffer(audio_data, dtype=np.int16)
+            return np.repeat(samples, 2).tobytes()
         except Exception:
             return audio_data
 
