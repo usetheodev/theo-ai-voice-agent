@@ -23,8 +23,8 @@ class AMIClient:
     """Cliente AMI assíncrono para controle do Asterisk.
 
     Suporta apenas as ações necessárias: Login, Redirect e Logoff.
-    Não implementa subscription de eventos nem auto-reconnect
-    (o caller é responsável por retry).
+    Implementa auto-reconnect no Redirect (se conexão caiu).
+    Não implementa subscription de eventos.
     """
 
     def __init__(
@@ -44,6 +44,7 @@ class AMIClient:
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
         self._connected = False
+        self._lock = asyncio.Lock()
 
     @property
     def is_connected(self) -> bool:
@@ -245,28 +246,31 @@ class AMIClient:
     async def _send_action(self, action: str) -> Optional[str]:
         """Envia uma ação AMI e aguarda a resposta.
 
+        Serializado via lock para evitar interleaving de reads concorrentes.
+
         Args:
             action: String formatada da ação AMI (terminada em \\r\\n\\r\\n).
 
         Returns:
             Texto completo da resposta ou None se falhou.
         """
-        if self._writer is None or self._reader is None:
-            return None
+        async with self._lock:
+            if self._writer is None or self._reader is None:
+                return None
 
-        try:
-            self._writer.write(action.encode("utf-8"))
-            await asyncio.wait_for(
-                self._writer.drain(),
-                timeout=self._timeout,
-            )
-        except (OSError, asyncio.TimeoutError) as exc:
-            logger.error("Erro ao enviar ação AMI: %s", exc)
-            self._connected = False
-            return None
+            try:
+                self._writer.write(action.encode("utf-8"))
+                await asyncio.wait_for(
+                    self._writer.drain(),
+                    timeout=self._timeout,
+                )
+            except (OSError, asyncio.TimeoutError) as exc:
+                logger.error("Erro ao enviar ação AMI: %s", exc)
+                self._connected = False
+                return None
 
-        # Lê resposta (delimitada por \r\n\r\n)
-        return await self._read_response()
+            # Lê resposta (delimitada por \r\n\r\n)
+            return await self._read_response()
 
     async def _read_response(self) -> Optional[str]:
         """Lê uma resposta AMI completa (delimitada por \\r\\n\\r\\n).
@@ -283,10 +287,11 @@ class AMIClient:
         buffer = ""
 
         try:
-            deadline = asyncio.get_event_loop().time() + self._timeout
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + self._timeout
 
             while True:
-                remaining = deadline - asyncio.get_event_loop().time()
+                remaining = deadline - loop.time()
                 if remaining <= 0:
                     raise asyncio.TimeoutError()
 

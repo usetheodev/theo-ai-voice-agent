@@ -6,7 +6,7 @@ import logging
 import asyncio
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Literal
-from datetime import datetime
+from datetime import datetime, timezone
 
 from config import SESSION_CONFIG
 from pipeline.conversation import ConversationPipeline
@@ -29,14 +29,17 @@ class Session:
     pipeline: ConversationPipeline
     audio_buffer: AudioBuffer
     state: SessionState = 'idle'
-    created_at: datetime = field(default_factory=datetime.now)
-    last_activity: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_activity: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Lock para operações thread-safe
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     # Contador de interacoes sem resolucao (para escalacao automatica)
     interaction_count: int = 0
+
+    # Contador de frames ignorados (quando state != listening)
+    _ignored_frames: int = 0
 
     # Timestamps para métricas TTFB
     audio_end_timestamp: float = 0.0  # Quando audio.end foi recebido
@@ -49,7 +52,7 @@ class Session:
 
     def update_activity(self):
         """Atualiza timestamp de última atividade"""
-        self.last_activity = datetime.now()
+        self.last_activity = datetime.now(timezone.utc)
 
     async def set_state(self, new_state: SessionState):
         """Define estado da sessão (thread-safe)"""
@@ -128,7 +131,7 @@ class SessionManager:
             session = self.sessions[session_id]
 
             # Calcula duração
-            duration = (datetime.now() - session.created_at).total_seconds()
+            duration = (datetime.now(timezone.utc) - session.created_at).total_seconds()
 
             # Registra métricas
             track_session_end(reason, duration)
@@ -159,7 +162,7 @@ class SessionManager:
             max_idle_seconds = SESSION_CONFIG.get("max_idle_seconds", 300)
 
         async with self._lock:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             stale = []
 
             for session_id, session in self.sessions.items():

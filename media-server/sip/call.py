@@ -14,6 +14,7 @@ Latência típica: ~100-200ms (vs 3-5s com gravação em arquivo)
 """
 
 import logging
+import re
 import threading
 import time
 import uuid
@@ -328,8 +329,7 @@ class MyCall(pj.Call):
 
         except Exception as e:
             self._log(f"Erro ao configurar playback streaming: {e}", "error")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Traceback playback streaming")
 
     def _wait_playback_finished(self):
         """Aguarda o playback terminar (buffer esvaziar)"""
@@ -496,7 +496,6 @@ class MyCall(pj.Call):
             return
 
         # Valida target: deve ser numerico (ramal) ou padrão de extensao valido
-        import re
         if not re.match(r'^[0-9*#]+$', target):
             self._log(f"Transfer com target invalido: '{target}' (deve ser numerico)", "error")
             self._resume_streaming()
@@ -573,8 +572,7 @@ class MyCall(pj.Call):
 
         except Exception as e:
             self._log(f"Erro ao iniciar streaming: {e}", "error")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Traceback inicio streaming")
 
     def _stop_streaming(self):
         """Para captura de áudio streaming"""

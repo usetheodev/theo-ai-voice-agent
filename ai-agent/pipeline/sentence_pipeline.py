@@ -22,7 +22,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from typing import AsyncGenerator, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import AsyncGenerator, Optional, Tuple, TYPE_CHECKING
 
 from config import PIPELINE_CONFIG
 
@@ -83,7 +83,6 @@ class SentencePipeline:
         self._tts = tts
         self._queue_size = queue_size
         self._metrics = PipelineMetrics()
-        self.pending_tool_calls: List[Dict] = []
 
     @property
     def metrics(self) -> PipelineMetrics:
@@ -203,10 +202,6 @@ class SentencePipeline:
             for sentence in sentences:
                 await queue.put(sentence)
                 logger.debug(f" Sentença enfileirada: {sentence[:30]}...")
-
-            # Capture pending tool calls from LLM
-            if hasattr(self._llm, 'pending_tool_calls'):
-                self.pending_tool_calls = list(self._llm.pending_tool_calls)
 
         except Exception as e:
             logger.error(f"Erro no produtor LLM: {e}")

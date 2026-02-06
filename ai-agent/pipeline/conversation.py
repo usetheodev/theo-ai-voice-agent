@@ -14,8 +14,6 @@ Modos de operação:
 
 import asyncio
 import logging
-import queue
-import threading
 import time
 from typing import Dict, List, Optional, Tuple, Generator, AsyncGenerator
 
@@ -54,10 +52,20 @@ class ConversationPipeline:
         self.llm: Optional[LLMProvider] = None
         self.tts: Optional[TTSProvider] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self.pending_tool_calls: List[Dict] = []
 
         if auto_init:
             self._init_providers_sync()
+
+    @property
+    def pending_tool_calls(self) -> List[Dict]:
+        """Delega ao LLM provider (single source of truth, sem cópias intermediárias)."""
+        return self.llm.pending_tool_calls if self.llm else []
+
+    @pending_tool_calls.setter
+    def pending_tool_calls(self, value: List[Dict]):
+        """Seta pending_tool_calls no LLM provider."""
+        if self.llm:
+            self.llm.pending_tool_calls = value
 
     def _init_providers_sync(self):
         """Inicializa provedores de forma síncrona (compatibilidade).
@@ -351,9 +359,6 @@ class ConversationPipeline:
             async for sentence, audio_chunk in sentence_pipeline.process_streaming(text):
                 yield sentence, audio_chunk
 
-            # Capture pending tool calls
-            self.pending_tool_calls = getattr(sentence_pipeline, 'pending_tool_calls', [])
-
             # Log métricas do pipeline
             metrics = sentence_pipeline.metrics
             logger.info(
@@ -579,36 +584,6 @@ class ConversationPipeline:
         greeting = AGENT_MESSAGES["greeting"]
         audio = await self._synthesize_async(greeting)
         return greeting, audio
-
-    def generate_greeting_stream(self) -> Generator[Tuple[str, bytes], None, None]:
-        """Gera saudação inicial com streaming."""
-        greeting = AGENT_MESSAGES["greeting"]
-
-        if self.tts and self.tts.supports_streaming:
-            for audio_chunk in self._synthesize_stream_sync(greeting):
-                yield greeting, audio_chunk
-        else:
-            audio = self._synthesize(greeting)
-            if audio:
-                yield greeting, audio
-
-    async def generate_greeting_stream_async(self) -> AsyncGenerator[Tuple[str, bytes], None]:
-        """Gera saudação inicial com streaming (async)."""
-        greeting = AGENT_MESSAGES["greeting"]
-
-        if self.tts and self.tts.supports_streaming:
-            async for audio_chunk in self._synthesize_stream_async(greeting):
-                yield greeting, audio_chunk
-        else:
-            audio = await self._synthesize_async(greeting)
-            if audio:
-                yield greeting, audio
-
-    def generate_error_response(self) -> Tuple[str, Optional[bytes]]:
-        """Gera resposta de erro."""
-        error_msg = AGENT_MESSAGES["error"]
-        audio = self._synthesize(error_msg)
-        return error_msg, audio
 
     # ==================== Utils ====================
 

@@ -15,9 +15,12 @@ import re
 from abc import ABC, abstractmethod
 from typing import List, Dict, Generator, Optional
 
-from config import LLM_CONFIG
+from config import LLM_CONFIG, ANTHROPIC_LLM_CONFIG, OPENAI_LLM_CONFIG, LOCAL_LLM_CONFIG
 
 logger = logging.getLogger("ai-agent.llm")
+
+# Regex compilado uma vez (usado por generate_sentences)
+_SENTENCE_ENDINGS = re.compile(r'[.!?]+\s*')
 
 
 def _load_tools_openai() -> List[Dict]:
@@ -62,6 +65,29 @@ def _extract_openai_tool_calls(message) -> List[Dict]:
     return tool_calls
 
 
+def _resolve_streaming_tool_calls(tool_calls_acc: Dict[int, Dict]) -> List[Dict]:
+    """Resolve tool calls acumulados de um streaming OpenAI-compatible em formato interno.
+
+    Durante streaming, tool calls chegam fragmentados chunk a chunk.
+    Esta funcao recebe o acumulador e retorna a lista final no formato padrao.
+    """
+    result = []
+    for idx in sorted(tool_calls_acc.keys()):
+        tc = tool_calls_acc[idx]
+        try:
+            args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+        except json.JSONDecodeError:
+            args = {}
+            logger.warning(f"Falha ao parsear tool call arguments: {tc['arguments']}")
+        result.append({
+            "id": tc["id"],
+            "name": tc["name"],
+            "input": args,
+        })
+        logger.info(f"Tool call detectado: {tc['name']}({args})")
+    return result
+
+
 class LLMProvider(ABC):
     """Interface base para provedores de LLM"""
 
@@ -94,7 +120,6 @@ class LLMProvider(ABC):
         Útil para TTS streaming - sintetiza frase por frase.
         """
         buffer = ""
-        sentence_endings = re.compile(r'[.!?]+\s*')
         sentence_count = 0
 
         for chunk in self.generate_stream(user_message):
@@ -102,7 +127,7 @@ class LLMProvider(ABC):
 
             # Procura por frases completas
             while True:
-                match = sentence_endings.search(buffer)
+                match = _SENTENCE_ENDINGS.search(buffer)
                 if match:
                     # Encontrou fim de frase
                     sentence = buffer[:match.end()].strip()
@@ -122,6 +147,38 @@ class LLMProvider(ABC):
             yield buffer.strip()
 
         logger.info(f" Total sentenças geradas: {sentence_count}")
+
+    def _save_openai_tool_history(self, assistant_message: str) -> None:
+        """Salva resposta OpenAI-compatible no historico com tool_calls e tool results sinteticos.
+
+        Usado por OpenAILLM e LocalLLM (ambos seguem formato OpenAI).
+        """
+        if self.pending_tool_calls:
+            tool_calls_history = [{
+                "id": tc["id"],
+                "type": "function",
+                "function": {
+                    "name": tc["name"],
+                    "arguments": json.dumps(tc["input"]),
+                }
+            } for tc in self.pending_tool_calls]
+            self.conversation_history.append({
+                "role": "assistant",
+                "content": assistant_message or None,
+                "tool_calls": tool_calls_history,
+            })
+            # Synthetic tool results para manter historico valido
+            for tc in self.pending_tool_calls:
+                self.conversation_history.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": "Action queued for execution.",
+                })
+        else:
+            self.conversation_history.append({
+                "role": "assistant",
+                "content": assistant_message,
+            })
 
     def reset_conversation(self):
         """Limpa histórico da conversa"""
@@ -147,7 +204,7 @@ class AnthropicLLM(LLMProvider):
         """Inicializa cliente Anthropic"""
         try:
             import anthropic
-            api_key = LLM_CONFIG["anthropic_api_key"]
+            api_key = ANTHROPIC_LLM_CONFIG["api_key"]
             if not api_key:
                 raise ValueError("ANTHROPIC_API_KEY não configurada")
             self.client = anthropic.Anthropic(api_key=api_key)
@@ -227,7 +284,7 @@ class AnthropicLLM(LLMProvider):
             })
 
             request_kwargs = {
-                "model": LLM_CONFIG["model"],
+                "model": ANTHROPIC_LLM_CONFIG["model"],
                 "max_tokens": LLM_CONFIG["max_tokens"],
                 "system": self.system_prompt,
                 "messages": self.conversation_history,
@@ -274,7 +331,7 @@ class AnthropicLLM(LLMProvider):
             full_response = ""
 
             stream_kwargs = {
-                "model": LLM_CONFIG["model"],
+                "model": ANTHROPIC_LLM_CONFIG["model"],
                 "max_tokens": LLM_CONFIG["max_tokens"],
                 "system": self.system_prompt,
                 "messages": self.conversation_history,
@@ -312,7 +369,7 @@ class OpenAILLM(LLMProvider):
         """Inicializa cliente OpenAI"""
         try:
             from openai import OpenAI
-            api_key = LLM_CONFIG["openai_api_key"]
+            api_key = OPENAI_LLM_CONFIG["api_key"]
             if not api_key:
                 raise ValueError("OPENAI_API_KEY não configurada")
             self.client = OpenAI(api_key=api_key)
@@ -324,35 +381,6 @@ class OpenAILLM(LLMProvider):
     @property
     def supports_streaming(self) -> bool:
         return True
-
-    def _save_openai_tool_history(self, assistant_message: str) -> None:
-        """Salva resposta OpenAI no historico com tool_calls e tool results sinteticos."""
-        if self.pending_tool_calls:
-            tool_calls_history = [{
-                "id": tc["id"],
-                "type": "function",
-                "function": {
-                    "name": tc["name"],
-                    "arguments": json.dumps(tc["input"]),
-                }
-            } for tc in self.pending_tool_calls]
-            self.conversation_history.append({
-                "role": "assistant",
-                "content": assistant_message or None,
-                "tool_calls": tool_calls_history,
-            })
-            # Synthetic tool results para manter historico valido
-            for tc in self.pending_tool_calls:
-                self.conversation_history.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": "Action queued for execution.",
-                })
-        else:
-            self.conversation_history.append({
-                "role": "assistant",
-                "content": assistant_message,
-            })
 
     def generate(self, user_message: str) -> str:
         """Gera resposta usando GPT (modo batch) com suporte a tool calling."""
@@ -371,7 +399,7 @@ class OpenAILLM(LLMProvider):
             messages.extend(self.conversation_history)
 
             request_kwargs = {
-                "model": LLM_CONFIG.get("openai_model", "gpt-3.5-turbo"),
+                "model": OPENAI_LLM_CONFIG["model"],
                 "max_tokens": LLM_CONFIG["max_tokens"],
                 "temperature": LLM_CONFIG["temperature"],
                 "messages": messages,
@@ -420,7 +448,7 @@ class OpenAILLM(LLMProvider):
             full_response = ""
 
             stream_kwargs = {
-                "model": LLM_CONFIG.get("openai_model", "gpt-3.5-turbo"),
+                "model": OPENAI_LLM_CONFIG["model"],
                 "max_tokens": LLM_CONFIG["max_tokens"],
                 "temperature": LLM_CONFIG["temperature"],
                 "messages": messages,
@@ -457,19 +485,7 @@ class OpenAILLM(LLMProvider):
                             tool_calls_acc[idx]["arguments"] += tc_chunk.function.arguments
 
             # Processa tool calls acumulados
-            for idx in sorted(tool_calls_acc.keys()):
-                tc = tool_calls_acc[idx]
-                try:
-                    args = json.loads(tc["arguments"]) if tc["arguments"] else {}
-                except json.JSONDecodeError:
-                    args = {}
-                    logger.warning(f"Falha ao parsear tool call arguments: {tc['arguments']}")
-                self.pending_tool_calls.append({
-                    "id": tc["id"],
-                    "name": tc["name"],
-                    "input": args,
-                })
-                logger.info(f"Tool call detectado: {tc['name']}({args})")
+            self.pending_tool_calls = _resolve_streaming_tool_calls(tool_calls_acc)
 
             self._save_openai_tool_history(full_response)
 
@@ -509,8 +525,8 @@ class LocalLLM(LLMProvider):
         try:
             from openai import OpenAI
 
-            base_url = LLM_CONFIG.get("local_base_url", "http://localhost:12434/engines/llama.cpp/v1")
-            self.model = LLM_CONFIG.get("local_model", "ai/smollm3")
+            base_url = LOCAL_LLM_CONFIG["base_url"]
+            self.model = LOCAL_LLM_CONFIG["model"]
 
             # Docker Model Runner e similares não precisam de API key real
             self.client = OpenAI(
@@ -549,34 +565,6 @@ class LocalLLM(LLMProvider):
 
         # Retorna apenas content (resposta final para TTS)
         return getattr(message, 'content', None) or ""
-
-    def _save_openai_tool_history(self, assistant_message: str) -> None:
-        """Salva resposta OpenAI-compatible no historico com tool_calls e tool results sinteticos."""
-        if self.pending_tool_calls:
-            tool_calls_history = [{
-                "id": tc["id"],
-                "type": "function",
-                "function": {
-                    "name": tc["name"],
-                    "arguments": json.dumps(tc["input"]),
-                }
-            } for tc in self.pending_tool_calls]
-            self.conversation_history.append({
-                "role": "assistant",
-                "content": assistant_message or None,
-                "tool_calls": tool_calls_history,
-            })
-            for tc in self.pending_tool_calls:
-                self.conversation_history.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": "Action queued for execution.",
-                })
-        else:
-            self.conversation_history.append({
-                "role": "assistant",
-                "content": assistant_message,
-            })
 
     def generate(self, user_message: str) -> str:
         """Gera resposta usando modelo local (modo batch) com tool calling."""
@@ -694,19 +682,8 @@ class LocalLLM(LLMProvider):
                         if tc_chunk.function and tc_chunk.function.arguments:
                             tool_calls_acc[idx]["arguments"] += tc_chunk.function.arguments
 
-            for idx in sorted(tool_calls_acc.keys()):
-                tc = tool_calls_acc[idx]
-                try:
-                    args = json.loads(tc["arguments"]) if tc["arguments"] else {}
-                except json.JSONDecodeError:
-                    args = {}
-                    logger.warning(f"Falha ao parsear tool call arguments: {tc['arguments']}")
-                self.pending_tool_calls.append({
-                    "id": tc["id"],
-                    "name": tc["name"],
-                    "input": args,
-                })
-                logger.info(f"Tool call detectado: {tc['name']}({args})")
+            # Processa tool calls acumulados
+            self.pending_tool_calls = _resolve_streaming_tool_calls(tool_calls_acc)
 
             self._save_openai_tool_history(full_response)
 

@@ -148,10 +148,6 @@ STT_CONFIG = {
 
     # Número de workers no ThreadPoolExecutor
     "executor_workers": int(os.getenv("ASR_EXECUTOR_WORKERS", "2")),
-
-    # Para compatibilidade com código antigo
-    "whisper_model": os.getenv("STT_MODEL", "base"),
-    "openai_api_key": os.getenv("OPENAI_API_KEY", ""),
 }
 
 
@@ -159,40 +155,10 @@ STT_CONFIG = {
 # LLM (Large Language Model)
 # =============================================================================
 
+# Config comum a todos os providers LLM
 LLM_CONFIG = {
     # Provider: anthropic, openai, local, mock
-    # - anthropic: Claude API (requer ANTHROPIC_API_KEY)
-    # - openai: OpenAI API (requer OPENAI_API_KEY)
-    # - local: Docker Model Runner ou qualquer servidor OpenAI-compatible
-    # - mock: Respostas simuladas para testes
     "provider": os.getenv("LLM_PROVIDER", "anthropic"),
-
-    # API Keys
-    "anthropic_api_key": os.getenv("ANTHROPIC_API_KEY", ""),
-    "openai_api_key": os.getenv("OPENAI_API_KEY", ""),
-
-    # Modelo Anthropic
-    "model": os.getenv("LLM_MODEL", "claude-3-haiku-20240307"),
-
-    # Modelo OpenAI
-    "openai_model": os.getenv("OPENAI_LLM_MODEL", "gpt-3.5-turbo"),
-
-    # =========================================================================
-    # LLM LOCAL (Docker Model Runner / vLLM / Ollama)
-    # =========================================================================
-    # URL base do servidor local (OpenAI-compatible API)
-    # Em Docker, use host.docker.internal para acessar servicos no host:
-    #   Docker Model Runner: http://host.docker.internal:12434/engines/llama.cpp/v1
-    #   vLLM: http://host.docker.internal:8000/v1
-    #   Ollama: http://host.docker.internal:11434/v1
-    # Fora do Docker (desenvolvimento local), use localhost
-    "local_base_url": os.getenv("LOCAL_LLM_BASE_URL", "http://host.docker.internal:12434/engines/llama.cpp/v1"),
-
-    # Modelo local a usar
-    # Docker Model Runner: ai/smollm3, ai/phi4, ai/qwen3, ai/functiongemma
-    # vLLM: depende do modelo carregado
-    # Ollama: llama3, mistral, phi3, etc.
-    "local_model": os.getenv("LOCAL_LLM_MODEL", "ai/smollm3"),
 
     # Número máximo de tokens na resposta
     "max_tokens": int(os.getenv("LLM_MAX_TOKENS", "256")),
@@ -208,6 +174,31 @@ LLM_CONFIG = {
 Seja conciso e direto nas respostas, pois está em uma ligação telefônica.
 Responda sempre em português brasileiro.
 Limite suas respostas a 2-3 frases curtas."""),
+}
+
+# Config específica: Anthropic Claude
+ANTHROPIC_LLM_CONFIG = {
+    "api_key": os.getenv("ANTHROPIC_API_KEY", ""),
+    "model": os.getenv("LLM_MODEL", "claude-3-haiku-20240307"),
+}
+
+# Config específica: OpenAI GPT
+OPENAI_LLM_CONFIG = {
+    "api_key": os.getenv("OPENAI_API_KEY", ""),
+    "model": os.getenv("OPENAI_LLM_MODEL", "gpt-3.5-turbo"),
+}
+
+# Config específica: LLM Local (Docker Model Runner / vLLM / Ollama)
+# URL base do servidor local (OpenAI-compatible API)
+# Em Docker, use host.docker.internal para acessar servicos no host:
+#   Docker Model Runner: http://host.docker.internal:12434/engines/llama.cpp/v1
+#   vLLM: http://host.docker.internal:8000/v1
+#   Ollama: http://host.docker.internal:11434/v1
+# Fora do Docker (desenvolvimento local), use localhost
+LOCAL_LLM_CONFIG = {
+    "base_url": os.getenv("LOCAL_LLM_BASE_URL", "http://host.docker.internal:12434/engines/llama.cpp/v1"),
+    # Modelos recomendados: ai/smollm3, ai/phi4, ai/qwen3, ai/functiongemma
+    "model": os.getenv("LOCAL_LLM_MODEL", "ai/smollm3"),
 }
 
 

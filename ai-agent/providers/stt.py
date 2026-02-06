@@ -397,7 +397,7 @@ class WhisperLocalSTT(STTProvider):
     ):
         if config is None:
             config = WhisperLocalConfig(
-                model=STT_CONFIG.get("whisper_model", STT_CONFIG.get("model", "base")),
+                model=STT_CONFIG.get("model", "base"),
                 language=STT_CONFIG.get("language", "pt"),
             )
         super().__init__(config=config, **kwargs)
