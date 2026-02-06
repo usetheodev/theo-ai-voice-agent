@@ -39,10 +39,17 @@ fi
 
 PJSIP_TEMPLATE="/etc/asterisk/pjsip.conf.template"
 PJSIP_CONF="/etc/asterisk/pjsip.conf"
+MANAGER_TEMPLATE="/etc/asterisk/manager.conf.template"
+MANAGER_CONF="/etc/asterisk/manager.conf"
 
-# Template é montado como :ro (bind mount). Copia para path writável.
+# Templates são montados como :ro (bind mount). Copia para path writável.
 if [ -f "$PJSIP_TEMPLATE" ]; then
     cp "$PJSIP_TEMPLATE" "$PJSIP_CONF"
+fi
+
+if [ -f "$MANAGER_TEMPLATE" ]; then
+    cp "$MANAGER_TEMPLATE" "$MANAGER_CONF"
+    echo "[asterisk-entrypoint] AMI: manager.conf loaded"
 fi
 
 if [ -n "$EXTERNAL_IP" ] && [ -f "$PJSIP_CONF" ]; then

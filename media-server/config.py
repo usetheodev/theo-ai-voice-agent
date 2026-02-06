@@ -291,6 +291,30 @@ TRANSCRIBE_CONFIG = {
 
 
 # =============================================================================
+# CONFIGURAÇÕES DO AMI (Asterisk Manager Interface)
+# Usado para controle de chamadas (transfer assistida)
+# =============================================================================
+
+AMI_CONFIG = {
+    # Host do Asterisk (nome do container Docker)
+    "host": os.getenv("AMI_HOST", "asterisk-pabx"),
+
+    # Porta do AMI
+    "port": int(os.getenv("AMI_PORT", "5038")),
+
+    # Credenciais (definidas em manager.conf do Asterisk)
+    "username": os.getenv("AMI_USERNAME", "media-server"),
+    "secret": os.getenv("AMI_SECRET", ""),
+
+    # Timeout para operacoes AMI (segundos)
+    "timeout": float(os.getenv("AMI_TIMEOUT", "5.0")),
+
+    # Habilitar AMI (pode desabilitar se nao precisar de transfer)
+    "enabled": parse_bool(os.getenv("AMI_ENABLED", "true"), True),
+}
+
+
+# =============================================================================
 # CONFIGURAÇÕES DO MEDIA FORK
 # =============================================================================
 

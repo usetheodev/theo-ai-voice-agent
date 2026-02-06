@@ -31,10 +31,12 @@ class SIPEndpoint:
         audio_destination: "IAudioDestination",
         loop,
         fork_manager: Optional["MediaForkManager"] = None,
+        ami_client=None,
     ):
         self.audio_destination = audio_destination
         self.loop = loop
         self.fork_manager = fork_manager
+        self.ami_client = ami_client
         self.ep: Optional[pj.Endpoint] = None
         self.account: Optional[MyAccount] = None
         self.running = False
@@ -182,7 +184,10 @@ class SIPEndpoint:
         self._configure_auth(acc_cfg, realm)
 
         # Cria conta
-        self.account = MyAccount(self.audio_destination, self.loop, self.fork_manager)
+        self.account = MyAccount(
+            self.audio_destination, self.loop, self.fork_manager,
+            ami_client=self.ami_client,
+        )
         self.account.create(acc_cfg)
 
     def stop(self):

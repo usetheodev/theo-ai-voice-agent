@@ -70,6 +70,7 @@ from .enums import (
     ErrorCategory,
     SessionState,
     MessageType,
+    CallActionType,
 )
 
 # Config classes
@@ -114,6 +115,7 @@ from .messages import (
     AudioSpeechEndMessage,
     ResponseStartMessage,
     ResponseEndMessage,
+    CallActionMessage,
     parse_message,
     is_valid_message,
 )
@@ -137,6 +139,7 @@ __all__ = [
     "ErrorCategory",
     "SessionState",
     "MessageType",
+    "CallActionType",
     # Config
     "AudioConfig",
     "VADConfig",
@@ -175,6 +178,7 @@ __all__ = [
     "AudioSpeechEndMessage",
     "ResponseStartMessage",
     "ResponseEndMessage",
+    "CallActionMessage",
     "parse_message",
     "is_valid_message",
     # Negotiation

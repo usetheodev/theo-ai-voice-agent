@@ -123,3 +123,4 @@ class IAudioDestination(Protocol):
     on_response_audio: Optional[Callable[[str, bytes], None]]  # session_id, audio
     on_response_end: Optional[Callable[[str], None]]  # session_id
     on_error: Optional[Callable[[str, str, str], None]]  # session_id, code, message
+    on_call_action: Optional[Callable[[str, str, Optional[str]], None]]  # session_id, action, target

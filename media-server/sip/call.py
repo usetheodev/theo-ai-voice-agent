@@ -49,11 +49,21 @@ class MyCall(pj.Call):
         loop,
         call_id=pj.PJSUA_INVALID_ID,
         fork_manager: Optional["MediaForkManager"] = None,
+        caller_channel: Optional[str] = None,
     ):
         pj.Call.__init__(self, acc, call_id)
         self.acc = acc
         self.audio_destination = audio_destination
         self.loop = loop
+
+        # Caller channel do Asterisk (para AMI Redirect em transfers)
+        self.caller_channel = caller_channel
+
+        # AMI client (injetado pelo MediaServer via account)
+        self.ami_client = None
+
+        # Acao de chamada pendente (ex: transfer apos playback)
+        self.pending_call_action: Optional[tuple] = None
 
         # Media Fork Manager (isolamento do path de IA)
         self.fork_manager = fork_manager
@@ -415,9 +425,22 @@ class MyCall(pj.Call):
                 daemon=True
             ).start()
 
+        def on_call_action(session_id: str, action: str, target: Optional[str]):
+            if session_id != self.session_id:
+                return
+            self._log(f"Call action recebido: {action} target={target}")
+
+            # Armazena acao pendente - sera executada apos playback terminar
+            self.pending_call_action = (action, target)
+
+            # Se playback ja terminou, executa imediatamente
+            if self.playback_finished.is_set() and not self.is_playing_response:
+                self._execute_pending_call_action()
+
         self.audio_destination.on_response_start = on_response_start
         self.audio_destination.on_response_audio = on_response_audio
         self.audio_destination.on_response_end = on_response_end
+        self.audio_destination.on_call_action = on_call_action
 
     def _on_playback_complete(self):
         """Chamado quando resposta termina - aguarda buffer esvaziar"""
@@ -428,7 +451,71 @@ class MyCall(pj.Call):
             self.greeting_playback_done.set()
             self._log(" Greeting reproduzido - barge-in habilitado")
 
+        # Verifica se ha acao de chamada pendente (ex: transfer)
+        if self.pending_call_action:
+            self._execute_pending_call_action()
+            return  # Nao resume streaming - chamada sera redirecionada
+
         self._resume_streaming()
+
+    def _execute_pending_call_action(self):
+        """Executa acao de chamada pendente (transfer ou hangup) via AMI"""
+        if not self.pending_call_action:
+            return
+
+        action, target = self.pending_call_action
+        self.pending_call_action = None
+
+        if action == "transfer":
+            self._execute_transfer(target)
+        elif action == "hangup":
+            self._log("Executando hangup por decisao da IA")
+            try:
+                call_prm = pj.CallOpParam()
+                self.hangup(call_prm)
+            except Exception as e:
+                self._log(f"Erro no hangup: {e}", "error")
+        else:
+            self._log(f"Acao de chamada desconhecida: {action}", "warning")
+            self._resume_streaming()
+
+    def _execute_transfer(self, target: Optional[str]):
+        """Executa transfer assistida via AMI Redirect"""
+        if not target:
+            self._log("Transfer sem target - ignorando", "error")
+            self._resume_streaming()
+            return
+
+        if not self.caller_channel:
+            self._log("Transfer impossivel: caller_channel nao disponivel", "error")
+            self._resume_streaming()
+            return
+
+        if not self.ami_client:
+            self._log("Transfer impossivel: AMI client nao disponivel", "error")
+            self._resume_streaming()
+            return
+
+        self._log(f"Executando transfer: {self.caller_channel} -> [transfer-assistida]/{target}")
+
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                self.ami_client.redirect(
+                    channel=self.caller_channel,
+                    context="transfer-assistida",
+                    exten=target,
+                ),
+                self.loop
+            )
+            success = future.result(timeout=10)
+            if success:
+                self._log(f"AMI Redirect executado com sucesso para {target}")
+            else:
+                self._log(f"AMI Redirect falhou para {target}", "error")
+                self._resume_streaming()
+        except Exception as e:
+            self._log(f"Erro no AMI Redirect: {e}", "error")
+            self._resume_streaming()
 
     def _start_streaming(self):
         """Inicia captura de áudio streaming"""

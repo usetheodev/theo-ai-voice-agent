@@ -17,7 +17,7 @@ import logging
 import queue
 import threading
 import time
-from typing import Optional, Tuple, Generator, AsyncGenerator
+from typing import Dict, List, Optional, Tuple, Generator, AsyncGenerator
 
 from config import AUDIO_CONFIG, AGENT_MESSAGES, PIPELINE_CONFIG
 from providers.stt import create_stt_provider_sync, STTProvider
@@ -54,6 +54,7 @@ class ConversationPipeline:
         self.llm: Optional[LLMProvider] = None
         self.tts: Optional[TTSProvider] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self.pending_tool_calls: List[Dict] = []
 
         if auto_init:
             self._init_providers_sync()
@@ -349,6 +350,9 @@ class ConversationPipeline:
 
             async for sentence, audio_chunk in sentence_pipeline.process_streaming(text):
                 yield sentence, audio_chunk
+
+            # Capture pending tool calls
+            self.pending_tool_calls = getattr(sentence_pipeline, 'pending_tool_calls', [])
 
             # Log métricas do pipeline
             metrics = sentence_pipeline.metrics

@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any, Type
 import json
 
-from .enums import MessageType, SessionStatus
+from .enums import MessageType, SessionStatus, CallActionType
 from .config import (
     AudioConfig,
     VADConfig,
@@ -577,6 +577,54 @@ class ResponseEndMessage(ASPMessage):
         )
 
 
+@dataclass
+class CallActionMessage(ASPMessage):
+    """
+    Mensagem call.action enviada pelo AI Agent para o Media Server.
+
+    Comunica uma acao de controle de chamada decidida pela IA
+    (ex: transferir chamada, encerrar chamada).
+
+    O Media Server executa a acao via AMI apos o playback completar.
+    """
+    session_id: str
+    action: str  # CallActionType value
+    target: Optional[str] = None
+    reason: Optional[str] = None
+    timestamp: Optional[str] = None
+
+    @property
+    def message_type(self) -> MessageType:
+        return MessageType.CALL_ACTION
+
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = _get_timestamp()
+
+    def to_dict(self) -> dict:
+        result = {
+            "type": self.message_type.value,
+            "session_id": self.session_id,
+            "action": self.action,
+            "timestamp": self.timestamp
+        }
+        if self.target is not None:
+            result["target"] = self.target
+        if self.reason is not None:
+            result["reason"] = self.reason
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "CallActionMessage":
+        return cls(
+            session_id=data["session_id"],
+            action=data["action"],
+            target=data.get("target"),
+            reason=data.get("reason"),
+            timestamp=data.get("timestamp")
+        )
+
+
 # Message registry for parsing
 _MESSAGE_TYPES: Dict[str, Type[ASPMessage]] = {
     MessageType.PROTOCOL_CAPABILITIES.value: ProtocolCapabilitiesMessage,
@@ -591,6 +639,7 @@ _MESSAGE_TYPES: Dict[str, Type[ASPMessage]] = {
     MessageType.AUDIO_SPEECH_END.value: AudioSpeechEndMessage,
     MessageType.RESPONSE_START.value: ResponseStartMessage,
     MessageType.RESPONSE_END.value: ResponseEndMessage,
+    MessageType.CALL_ACTION.value: CallActionMessage,
 }
 
 

@@ -30,6 +30,7 @@ class AIAgentAdapter:
         self._on_response_audio: Optional[Callable[[str, bytes], None]] = None
         self._on_response_end: Optional[Callable[[str], None]] = None
         self._on_error: Optional[Callable[[str, str, str], None]] = None
+        self._on_call_action: Optional[Callable[[str, str, Optional[str]], None]] = None
 
     @property
     def is_connected(self) -> bool:
@@ -121,3 +122,12 @@ class AIAgentAdapter:
     def on_error(self, callback: Optional[Callable[[str, str, str], None]]) -> None:
         self._on_error = callback
         self._client.on_error = callback
+
+    @property
+    def on_call_action(self) -> Optional[Callable[[str, str, Optional[str]], None]]:
+        return self._on_call_action
+
+    @on_call_action.setter
+    def on_call_action(self, callback: Optional[Callable[[str, str, Optional[str]], None]]) -> None:
+        self._on_call_action = callback
+        self._client.on_call_action = callback

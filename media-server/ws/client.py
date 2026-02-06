@@ -70,6 +70,7 @@ class WebSocketClient:
         self.on_response_audio: Optional[Callable[[str, bytes], None]] = None  # session_id, audio
         self.on_response_end: Optional[Callable[[str], None]] = None  # session_id
         self.on_error: Optional[Callable[[str, str, str], None]] = None  # session_id, code, message
+        self.on_call_action: Optional[Callable[[str, str, Optional[str]], None]] = None  # session_id, action, target
 
         # Session state
         self._pending_sessions: Dict[str, asyncio.Future] = {}
@@ -480,6 +481,7 @@ class WebSocketClient:
             SessionUpdatedMessage,
             SessionEndedMessage,
             ProtocolErrorMessage,
+            CallActionMessage,
         )
 
         try:
@@ -506,6 +508,14 @@ class WebSocketClient:
 
             elif isinstance(msg, SessionEndedMessage):
                 logger.info(f"session.ended: {msg.session_id[:8]}")
+
+            elif isinstance(msg, CallActionMessage):
+                logger.info(
+                    f"[{msg.session_id[:8]}] Call action recebido: "
+                    f"action={msg.action}, target={msg.target}"
+                )
+                if self.on_call_action:
+                    self.on_call_action(msg.session_id, msg.action, msg.target)
 
             elif isinstance(msg, ProtocolErrorMessage):
                 logger.error(f"ASP protocol.error: {msg.code} - {msg.message}")

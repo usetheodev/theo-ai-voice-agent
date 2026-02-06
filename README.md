@@ -1,10 +1,13 @@
 # Theo - AI Voice Agent
 
-Sistema de agente de voz conversacional com IA para telefonia SIP/WebRTC.
+Agente de voz conversacional com controle de chamadas em tempo real. Integra telefonia SIP/VoIP com pipeline de IA (STT, LLM, TTS) para atendimento automatizado com transferencia assistida.
 
 ```
 Usuário ──► Asterisk ──► Media Server ──► AI Agent ──► Resposta de voz
-           (PABX)       (SIP Bridge)    (STT→LLM→TTS)
+           (PABX)    ▲  (SIP Bridge)    (STT→LLM→TTS)
+                     │                        │
+                     └── AMI Redirect ◄───────┘
+                     (Transfer assistida)  (Tool Calling)
 ```
 
 ## Arquitetura
@@ -16,10 +19,10 @@ Usuário ──► Asterisk ──► Media Server ──► AI Agent ──► 
 │   │SoftPhone │ WebRTC │          │  SIP   │       Media Server          │  │
 │   │ (React)  │◄──────►│ Asterisk │◄──────►│       (SIP Bridge)          │  │
 │   └──────────┘  WSS   │  (PABX)  │  RTP   │                             │  │
-│                       └──────────┘        │  ┌─────────────────────┐    │  │
-│   ┌──────────┐             │              │  │ PJSUA2 + WebRTC VAD │    │  │
-│   │ Zoiper / │    SIP/RTP  │              │  └─────────────────────┘    │  │
-│   │ Linphone │◄────────────┘              └────────────┬────────────────┘  │
+│                       │          │        │  ┌─────────────────────┐    │  │
+│   ┌──────────┐  SIP   │          │◄──AMI──│  │ PJSUA2 + AMI Client│    │  │
+│   │ Zoiper / │◄──────►│          │Redirect│  └─────────────────────┘    │  │
+│   │ Linphone │  RTP   └──────────┘        └────────────┬────────────────┘  │
 │   └──────────┘                                         │                   │
 │                                          WebSocket + ASP Protocol          │
 │                                                        │                   │
@@ -31,11 +34,12 @@ Usuário ──► Asterisk ──► Media Server ──► AI Agent ──► 
 │                            │  │   ┌─────┐   ┌─────┐   ┌─────┐      │  │   │
 │                            │  │   │ STT │──►│ LLM │──►│ TTS │      │  │   │
 │                            │  │   └─────┘   └─────┘   └─────┘      │  │   │
-│                            │  │                                     │  │   │
-│                            │  │  Providers:                         │  │   │
-│                            │  │  • FasterWhisper / OpenAI Whisper   │  │   │
-│                            │  │  • Claude / GPT / Local LLM         │  │   │
-│                            │  │  • Kokoro / gTTS / OpenAI TTS       │  │   │
+│                            │  │                  │                   │  │   │
+│                            │  │  Providers:      │ Tool Calling      │  │   │
+│                            │  │  • FasterWhisper  │ • transfer_call   │  │   │
+│                            │  │  • Claude / GPT   │ • end_call        │  │   │
+│                            │  │  • Kokoro / gTTS  ▼                   │  │   │
+│                            │  │              CallActionMessage ──────►│  │   │
 │                            │  └─────────────────────────────────────┘  │   │
 │                            │                                           │   │
 │                            │  ┌─────────────────────────────────────┐  │   │
@@ -52,9 +56,9 @@ Usuário ──► Asterisk ──► Media Server ──► AI Agent ──► 
 
 | Componente | Descrição | Porta |
 |------------|-----------|-------|
-| **Asterisk** | PABX SIP com suporte WebRTC | 5160 (SIP), 8189 (WSS) |
-| **Media Server** | Bridge SIP↔WebSocket com PJSUA2 | 40000-40100 (RTP) |
-| **AI Agent** | Pipeline de conversação STT→LLM→TTS | 8765 (WS), 9090 (metrics) |
+| **Asterisk** | PABX SIP com WebRTC e AMI | 5160 (SIP), 8189 (WSS), 5038 (AMI) |
+| **Media Server** | Bridge SIP↔WebSocket + AMI Client | 40000-40100 (RTP) |
+| **AI Agent** | Pipeline STT→LLM→TTS + Tool Calling | 8765 (WS), 9090 (metrics) |
 | **AI Transcribe** | Transcrição em tempo real para Elasticsearch | 8766 (WS), 9093 (metrics) |
 | **SoftPhone** | Cliente WebRTC em React | 3000 |
 | **Elasticsearch** | Armazenamento de transcrições | 9200 |
@@ -463,12 +467,68 @@ Media Server                              AI Agent
      │◄─────── response.start ───────────────│
      │◄─────── audio chunks ─────────────────│
      │◄─────── response.end ─────────────────│
+     │◄─────── call.action (transfer/hangup)─│  ← NEW
      │                                        │
      │──────── session.end ──────────────────►│
      │◄─────── session.ended ────────────────│
 ```
 
 **Documentação completa:** [docs/ASP_SPECIFICATION.md](docs/ASP_SPECIFICATION.md)
+
+## Transferencia Assistida de Chamadas
+
+O agente de voz pode controlar chamadas em tempo real durante a conversa. Quando o LLM decide que o cliente precisa ser transferido, o sistema executa automaticamente via AMI (Asterisk Manager Interface).
+
+### Fluxo
+
+```
+1. Caller liga para 2000 (AI Agent)
+2. Agente conversa normalmente (pipeline STT → LLM → TTS intacto)
+3. LLM decide transferir: diz "Vou transferir para o suporte"
+   + tool_call: transfer_call("suporte")
+4. AI Agent envia CallActionMessage via ASP Protocol
+5. Media Server aguarda playback terminar (caller ouve frase completa)
+6. Media Server executa AMI Redirect para contexto [transfer-assistida]
+7. Asterisk move caller: MOH → Dial destino → Conecta
+8. Se destino nao atende → fallback automatico para AI Agent
+```
+
+### Tools disponiveis para o LLM
+
+| Tool | Descricao | Exemplo |
+|------|-----------|---------|
+| `transfer_call` | Transfere para departamento ou ramal | `transfer_call("suporte")` ou `transfer_call("1001")` |
+| `end_call` | Encerra a chamada | `end_call("conversa finalizada")` |
+
+### Departamentos
+
+Configuraveis via variavel de ambiente `DEPARTMENT_MAP` no AI Agent:
+
+```bash
+# Formato: "nome:ramal,nome:ramal"
+DEPARTMENT_MAP="suporte:1001,vendas:1002,financeiro:1003"
+```
+
+O LLM pode usar nomes de departamento (`suporte`) ou ramais diretos (`1001`).
+
+### Separacao de Concerns
+
+```
+Camada          | Sabe                         | NAO sabe
+----------------|------------------------------|---------------------------
+LLM             | transfer_call("suporte")     | channel names, AMI, SIP
+AI Agent        | tool call → ASP call.action  | como executar transfer
+Media Server    | AMI Redirect + caller_channel| por que a IA decidiu isso
+Asterisk        | dialplan + bridge + MOH      | que existe IA no sistema
+```
+
+### Fallback automatico
+
+Se o destino da transferencia nao atender (timeout de 30s), o Asterisk redireciona o caller de volta para o AI Agent (ramal 2000), iniciando nova sessao de conversa.
+
+### Decisao Arquitetural
+
+A transferencia usa **AMI** ao inves de ARI para preservar o pipeline existente (Media Fork Manager, streaming ports, barge-in, VAD). Documentacao: [ADR-001](docs/adr/ADR-001-call-control-ami-over-ari.md)
 
 ## Estrutura do Projeto
 
@@ -477,17 +537,19 @@ theo-ai-voice-agent/
 ├── ai-agent/                  # Servidor de conversação IA
 │   ├── providers/             # STT, LLM, TTS providers
 │   │   ├── stt.py            # FasterWhisper, Whisper, OpenAI
-│   │   ├── llm.py            # Claude, GPT, Local
+│   │   ├── llm.py            # Claude, GPT, Local (+Tool Calling)
 │   │   └── tts.py            # Kokoro, gTTS, OpenAI
 │   ├── pipeline/              # Pipeline STT→LLM→TTS
 │   ├── server/                # WebSocket server
+│   ├── tools/                 # LLM tools (transfer_call, end_call)
 │   └── config.py              # Configurações
 │
 ├── media-server/              # Bridge SIP ↔ WebSocket
 │   ├── sip/                   # PJSUA2 SIP handling
+│   ├── ami/                   # AMI client (transfer, hangup)
 │   ├── ws/                    # WebSocket client + ASP
 │   ├── core/                  # Media fork manager
-│   └── adapters/              # Transcribe adapter
+│   └── adapters/              # AI Agent + Transcribe adapters
 │
 ├── ai-transcribe/             # Transcrição em tempo real
 │   ├── transcriber/           # FasterWhisper STT
@@ -500,7 +562,7 @@ theo-ai-voice-agent/
 │   └── shared_config/         # Utilitários de config
 │
 ├── asterisk/                  # Configurações Asterisk
-│   ├── config/                # pjsip.conf, extensions.conf
+│   ├── config/                # pjsip.conf, extensions.conf, manager.conf
 │   └── sounds/                # Áudios customizados
 │
 ├── softphone/                 # SoftPhone React WebRTC
@@ -544,9 +606,26 @@ curl 'http://localhost:9200/voice-transcriptions-*/_search?pretty'
 
 Cada componente tem seu `.env.example` documentado:
 
-- `ai-agent/.env.example` - STT, LLM, TTS, VAD, Pipeline
-- `media-server/.env.example` - SIP, Áudio, VAD, ASP
+- `ai-agent/.env.example` - STT, LLM, TTS, VAD, Pipeline, Tool Calling
+- `media-server/.env.example` - SIP, Audio, VAD, ASP, AMI
 - `ai-transcribe/.env.example` - STT, Elasticsearch
+
+#### Variaveis AMI (Media Server)
+
+| Variavel | Default | Descricao |
+|----------|---------|-----------|
+| `AMI_HOST` | `asterisk-pabx` | Host do Asterisk (AMI) |
+| `AMI_PORT` | `5038` | Porta AMI |
+| `AMI_USERNAME` | `media-server` | Usuario AMI |
+| `AMI_SECRET` | *(requerido)* | Senha AMI (definida em manager.conf) |
+| `AMI_ENABLED` | `true` | Habilitar AMI (false desabilita transfer) |
+| `AMI_TIMEOUT` | `5.0` | Timeout para operacoes AMI (segundos) |
+
+#### Variaveis de Tool Calling (AI Agent)
+
+| Variavel | Default | Descricao |
+|----------|---------|-----------|
+| `DEPARTMENT_MAP` | `suporte:1001,vendas:1002,financeiro:1003` | Mapeamento departamento:ramal |
 
 ### Integração SBC
 
@@ -592,11 +671,14 @@ core show channels        # Ver chamadas em andamento
 
 | Documento | Descrição |
 |-----------|-----------|
+| [ADR-001: AMI over ARI](docs/adr/ADR-001-call-control-ami-over-ari.md) | Decisao arquitetural: controle de chamadas via AMI |
+| [PLAN-001: Call Transfer](docs/adr/PLAN-001-call-transfer-implementation.md) | Plano de implementacao da transferencia assistida |
 | [ASP_SPECIFICATION.md](docs/ASP_SPECIFICATION.md) | Especificação do protocolo ASP |
 | [ASP_PROTOCOL.md](docs/ASP_PROTOCOL.md) | Visão geral e exemplos |
 | [ASP_INTEGRATION.md](docs/ASP_INTEGRATION.md) | Guia de integração |
 | [ASP_TROUBLESHOOTING.md](docs/ASP_TROUBLESHOOTING.md) | Diagnóstico de problemas |
 | [SBC-INTEGRATION.md](docs/SBC-INTEGRATION.md) | Integração com SBC |
+| [ASTERISK_CONFIG.md](docs/ASTERISK_CONFIG.md) | Configuração do Asterisk |
 
 ## Requisitos
 

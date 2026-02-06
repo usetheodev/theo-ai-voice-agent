@@ -35,6 +35,9 @@ class Session:
     # Lock para operações thread-safe
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
+    # Contador de interacoes sem resolucao (para escalacao automatica)
+    interaction_count: int = 0
+
     # Timestamps para métricas TTFB
     audio_end_timestamp: float = 0.0  # Quando audio.end foi recebido
     ttfb_recorded: bool = False  # Se TTFB já foi registrado para esta resposta

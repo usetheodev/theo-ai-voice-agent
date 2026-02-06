@@ -277,6 +277,24 @@ SESSION_CONFIG = {
 
 
 # =============================================================================
+# ESCALAÇÃO AUTOMÁTICA
+# =============================================================================
+
+ESCALATION_CONFIG = {
+    # Numero maximo de interacoes sem resolucao antes de transferir
+    # 0 = desabilitado (nunca escala automaticamente)
+    "max_unresolved_interactions": int(os.getenv("MAX_UNRESOLVED_INTERACTIONS", "3")),
+
+    # Ramal destino para transferencia automatica
+    "default_transfer_target": os.getenv("DEFAULT_TRANSFER_TARGET", "1001"),
+
+    # Mensagem falada antes de transferir (enviada ao TTS)
+    "transfer_message": os.getenv("DEFAULT_TRANSFER_MESSAGE",
+        "Estou te transferindo para outro atendente para que esclareca seus problemas ou duvidas. Aguarde um momento."),
+}
+
+
+# =============================================================================
 # MENSAGENS DO AGENTE
 # =============================================================================
 

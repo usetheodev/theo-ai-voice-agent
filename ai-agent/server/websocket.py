@@ -531,6 +531,93 @@ class AIAgentServer:
         end_msg = ResponseEndMessage(session_id=session.session_id)
         await websocket.send(end_msg.to_json())
 
+        # Check for pending call actions from tool calling
+        has_tool_calls = hasattr(session.pipeline, 'pending_tool_calls') and session.pipeline.pending_tool_calls
+        if has_tool_calls:
+            from asp_protocol.messages import CallActionMessage
+            from asp_protocol.enums import CallActionType
+            try:
+                from tools.call_actions import resolve_target
+            except ImportError:
+                resolve_target = lambda x: x
+
+            for tool_call in session.pipeline.pending_tool_calls:
+                tool_name = tool_call.get("name", "")
+                tool_input = tool_call.get("input", {})
+
+                if tool_name == "transfer_call":
+                    target = resolve_target(tool_input.get("target", ""))
+                    action_msg = CallActionMessage(
+                        session_id=session.session_id,
+                        action=CallActionType.TRANSFER.value,
+                        target=target,
+                        reason=tool_input.get("reason"),
+                    )
+                    await websocket.send(action_msg.to_json())
+                    logger.info(f"[{session.session_id[:8]}] Call action: transfer to {target}")
+                elif tool_name == "end_call":
+                    action_msg = CallActionMessage(
+                        session_id=session.session_id,
+                        action=CallActionType.HANGUP.value,
+                        reason=tool_input.get("reason"),
+                    )
+                    await websocket.send(action_msg.to_json())
+                    logger.info(f"[{session.session_id[:8]}] Call action: hangup")
+
+            session.pipeline.pending_tool_calls = []
+
+        # Escalacao automatica: transfere apos N interacoes sem resolucao
+        if not has_tool_calls:
+            session.interaction_count += 1
+            from config import ESCALATION_CONFIG
+            max_interactions = ESCALATION_CONFIG["max_unresolved_interactions"]
+            if max_interactions > 0 and session.interaction_count >= max_interactions:
+                from asp_protocol.messages import CallActionMessage
+                from asp_protocol.enums import CallActionType
+
+                target = ESCALATION_CONFIG["default_transfer_target"]
+                transfer_msg = ESCALATION_CONFIG["transfer_message"]
+
+                logger.info(
+                    f"[{session.session_id[:8]}] Escalacao automatica: "
+                    f"{session.interaction_count} interacoes sem resolucao, "
+                    f"transferindo para {target}"
+                )
+
+                # Envia mensagem de aviso via TTS antes de transferir
+                await self._send_escalation_message(websocket, session, transfer_msg)
+
+                # Envia call action de transfer
+                action_msg = CallActionMessage(
+                    session_id=session.session_id,
+                    action=CallActionType.TRANSFER.value,
+                    target=target,
+                    reason=f"Escalacao automatica apos {session.interaction_count} interacoes",
+                )
+                await websocket.send(action_msg.to_json())
+            else:
+                logger.debug(
+                    f"[{session.session_id[:8]}] Interacao {session.interaction_count}"
+                    f"/{max_interactions if max_interactions > 0 else 'off'}"
+                )
+
+    async def _send_escalation_message(self, websocket: WebSocketServerProtocol, session: Session, text: str):
+        """Envia mensagem TTS de escalacao antes de transferir."""
+        try:
+            audio = await session.pipeline._synthesize_async(text)
+            if audio:
+                start_msg = ResponseStartMessage(
+                    session_id=session.session_id,
+                    text=text
+                )
+                await websocket.send(start_msg.to_json())
+                await self._send_audio(websocket, session.session_id, audio)
+                end_msg = ResponseEndMessage(session_id=session.session_id)
+                await websocket.send(end_msg.to_json())
+                logger.info(f"[{session.session_id[:8]}] Mensagem de escalacao enviada ({len(audio)} bytes)")
+        except Exception as e:
+            logger.error(f"[{session.session_id[:8]}] Erro ao enviar mensagem de escalacao: {e}")
+
     async def _send_audio_chunk(self, websocket: WebSocketServerProtocol, session_id: str, audio_chunk: bytes):
         """Envia um chunk de áudio diretamente"""
         # Registra TTFB no primeiro chunk
