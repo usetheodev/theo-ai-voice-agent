@@ -158,19 +158,26 @@ class AudioBuffer:
         """
         Adiciona áudio ao buffer SEM processar VAD.
         Use quando o VAD é feito externamente (ex: pelo media-server).
+
+        Se o buffer exceder o limite máximo, descarta áudio mais antigo
+        mantendo apenas os últimos N segundos (backpressure).
         """
+        # Se o audio_data sozinho excede o buffer, trunca o próprio audio_data
+        if len(audio_data) > self.MAX_BUFFER_SIZE:
+            audio_data = audio_data[-self.MAX_BUFFER_SIZE:]
+            self.buffer = bytearray()
+
         if len(self.buffer) + len(audio_data) > self.MAX_BUFFER_SIZE:
-            # Throttle warning: só loga uma vez a cada 5 segundos
-            if not hasattr(self, '_last_truncate_warning') or \
-               (hasattr(self, '_last_truncate_warning') and
-                (len(self.buffer) == 0 or self._truncate_count >= 50)):
-                import time
-                self._last_truncate_warning = time.time()
-                self._truncate_count = 0
-                logger.warning(f"Buffer de áudio atingiu limite máximo ({self.MAX_BUFFER_SIZE//1000}KB), truncando")
+            # Backpressure: descarta áudio mais antigo, mantém últimos N bytes
+            overflow = (len(self.buffer) + len(audio_data)) - self.MAX_BUFFER_SIZE
             self._truncate_count = getattr(self, '_truncate_count', 0) + 1
-            space_left = self.MAX_BUFFER_SIZE - len(self.buffer)
-            audio_data = audio_data[:space_left]
+            if self._truncate_count <= 3 or self._truncate_count % 50 == 0:
+                logger.warning(
+                    f"Buffer de áudio excedeu limite ({self.MAX_BUFFER_SIZE//1000}KB), "
+                    f"descartando {overflow} bytes antigos"
+                )
+            # Remove do início (áudio mais antigo)
+            self.buffer = self.buffer[overflow:]
 
         self.buffer.extend(audio_data)
         self.speech_detected = True  # Marca que tem fala (VAD externo)
@@ -219,6 +226,7 @@ class AudioBuffer:
         self.silence_frames = 0
         self.speech_detected = False
         self.speech_ring_buffer.clear()
+        self._truncate_count = 0
 
     @property
     def has_audio(self) -> bool:

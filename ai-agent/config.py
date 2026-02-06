@@ -85,6 +85,9 @@ AUDIO_CONFIG = {
     # Tamanho do chunk para envio de áudio (bytes)
     # 2000 bytes = ~125ms de áudio a 8kHz, 16-bit mono
     "chunk_size_bytes": int(os.getenv("AUDIO_CHUNK_SIZE_BYTES", "2000")),
+
+    # Duração máxima de áudio pendente para backpressure (ms)
+    "max_pending_audio_ms": int(os.getenv("AUDIO_MAX_PENDING_MS", "30000")),
 }
 
 
@@ -148,6 +151,10 @@ STT_CONFIG = {
 
     # Número de workers no ThreadPoolExecutor (4+ para pool compartilhado)
     "executor_workers": int(os.getenv("ASR_EXECUTOR_WORKERS", "4")),
+
+    # Provider de fallback quando o primário falha (circuit breaker OPEN)
+    # Opções: faster-whisper, whisper, openai, '' (desabilitado)
+    "fallback_provider": os.getenv("STT_FALLBACK_PROVIDER", ""),
 }
 
 
@@ -235,6 +242,10 @@ TTS_CONFIG = {
     "openai_api_key": os.getenv("OPENAI_API_KEY", ""),
     "openai_tts_model": os.getenv("OPENAI_TTS_MODEL", "tts-1"),
     "openai_tts_voice": os.getenv("OPENAI_TTS_VOICE", "alloy"),
+
+    # Provider de fallback quando o primário falha (circuit breaker OPEN)
+    # Opções: kokoro, gtts, openai, '' (desabilitado)
+    "fallback_provider": os.getenv("TTS_FALLBACK_PROVIDER", ""),
 }
 
 

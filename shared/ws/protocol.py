@@ -11,13 +11,13 @@ Mensagens de Controle (JSON):
 - error: Erro no processamento
 
 Mensagens de Áudio (Binary):
-Header (8 bytes):
+Header (12 bytes):
 [0]     Magic: 0x01
 [1]     Direction: 0x00=inbound (user->agent), 0x01=outbound (agent->user)
-[2-5]   Session ID hash (4 bytes)
-[6-7]   Reserved
+[2-9]   Session ID hash (8 bytes)
+[10-11] Reserved
 
-[8+]    PCM Audio (16-bit signed LE, 8kHz mono)
+[12+]   PCM Audio (16-bit signed LE, 8kHz mono)
 """
 
 import json
@@ -45,7 +45,7 @@ class AudioDirection(IntEnum):
 
 
 AUDIO_MAGIC = 0x01
-AUDIO_HEADER_SIZE = 8
+AUDIO_HEADER_SIZE = 12
 
 
 @dataclass
@@ -231,9 +231,9 @@ def parse_control_message(data: str) -> ControlMessage:
 
 
 def session_id_to_hash(session_id: str) -> bytes:
-    """Converte session_id para hash de 4 bytes"""
+    """Converte session_id para hash de 8 bytes (16 chars hex)"""
     h = hashlib.md5(session_id.encode()).digest()
-    return h[:4]
+    return h[:8]
 
 
 def hash_to_session_id_prefix(hash_bytes: bytes) -> str:
@@ -253,8 +253,8 @@ class AudioFrame:
         header = bytearray(AUDIO_HEADER_SIZE)
         header[0] = AUDIO_MAGIC
         header[1] = self.direction
-        header[2:6] = session_id_to_hash(self.session_id)
-        # bytes 6-7 reservados (zeros)
+        header[2:10] = session_id_to_hash(self.session_id)
+        # bytes 10-11 reservados (zeros)
         return bytes(header) + self.audio_data
 
     @classmethod
@@ -273,7 +273,7 @@ class AudioFrame:
             raise ValueError(f"Magic inválido: {magic:#x}")
 
         direction = AudioDirection(data[1])
-        session_hash = data[2:6]
+        session_hash = data[2:10]
         audio_data = data[AUDIO_HEADER_SIZE:]
 
         # Tenta recuperar session_id do lookup ou usa hash como fallback

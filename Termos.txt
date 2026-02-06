@@ -1,0 +1,17 @@
+Explique cada item:
+
+PassThrough  - Transmite os dados sem qualquer processamento ou modificação.
+
+Buffering   - Armazena temporariamente os dados recebidos para garantir uma transmissão suave e contínua, evitando interrupções.
+
+NoQueue  - Processa os dados imediatamente à medida que são recebidos, sem colocá-los em uma fila de espera.    
+LeakyBucket  - Implementa um mecanismo de controle de fluxo que permite a transmissão de dados a uma taxa constante,
+descartando qualquer excesso que ultrapasse essa taxa.
+
+HLS/DASH - Protocolos de streaming adaptativos que dividem o conteúdo de mídia em pequenos segmentos, permitindo a 
+reprodução contínua e ajustando a qualidade do vídeo com base na largura de banda disponível.
+
+WHIP - Protocolo leve para a ingestão de mídia em tempo real, facilitando a transmissão ao vivo com baixa latência.
+
+RTMP do OBS - Protocolo de streaming usado pelo Open Broadcaster Software (OBS) para transmitir vídeo e 
+áudio ao vivo para plataformas de streaming.

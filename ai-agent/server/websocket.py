@@ -37,6 +37,7 @@ from server.asp_handler import (
     ASPSession,
 )
 from providers.pool import ProviderPool
+from pipeline.latency_budget import LatencyBudget
 from config import ESCALATION_CONFIG
 from asp_protocol.messages import CallActionMessage
 from asp_protocol.enums import CallActionType
@@ -51,6 +52,7 @@ from metrics import (
     track_audio_sent,
     track_pipeline_error,
     VOICE_TTFB_SECONDS,
+    AUDIO_FRAMES_DROPPED_BACKPRESSURE,
 )
 
 logger = logging.getLogger("ai-agent.server")
@@ -388,12 +390,12 @@ class AIAgentServer:
                     logger.debug(f"Frame de áudio ignorado: sessão não encontrada (count: {self._no_session_warn_count})")
                 return
 
-            # Só processa se estiver ouvindo
+            # Backpressure: descarta frames durante processing/responding
             if session.state != 'listening':
-                # Log apenas ocasionalmente para não poluir
                 session._ignored_frames += 1
-                if session._ignored_frames <= 3 or session._ignored_frames % 50 == 0:
-                    logger.debug(f"[{frame.session_id[:8]}] ️ Ignorando frames (state={session.state}, count={session._ignored_frames})")
+                AUDIO_FRAMES_DROPPED_BACKPRESSURE.inc()
+                if session._ignored_frames <= 3 or session._ignored_frames % 100 == 0:
+                    logger.debug(f"[{frame.session_id[:8]}] Backpressure: descartando frames (state={session.state}, count={session._ignored_frames})")
                 return
 
             # Adiciona ao buffer SEM VAD (o media-server já faz VAD e envia audio.end)
@@ -412,9 +414,11 @@ class AIAgentServer:
             logger.warning(f"Sessão não encontrada: {msg.session_id[:8]}")
             return
 
-        # Guarda timestamp para cálculo de TTFB
+        # Guarda timestamp para cálculo de TTFB e latency budget
         session.audio_end_timestamp = time.perf_counter()
         session.ttfb_recorded = False
+        session.latency_budget = LatencyBudget()
+        session.latency_budget.start_from(session.audio_end_timestamp)
 
         logger.info(f"[{msg.session_id[:8]}] Buffer atual: {len(session.audio_buffer.buffer)} bytes, state={session.state}")
 
@@ -440,17 +444,15 @@ class AIAgentServer:
         await session.set_state('processing')
 
         try:
-            loop = asyncio.get_event_loop()
-
             # Verifica se pipeline suporta streaming
             if session.pipeline.supports_streaming:
                 await self._process_and_respond_stream(websocket, session, audio_data)
             else:
-                # Fallback: modo batch
-                text_response, audio_response = await loop.run_in_executor(
-                    None,
-                    session.pipeline.process,
-                    audio_data
+                # Fallback: modo batch (async)
+                text_response, audio_response = await session.pipeline.process_async(
+                    audio_data,
+                    latency_budget=session.latency_budget,
+                    session_id=session.session_id,
                 )
 
                 if not text_response:
@@ -468,6 +470,9 @@ class AIAgentServer:
 
                 # Envia áudio da resposta
                 if audio_response:
+                    # Finaliza latency budget no primeiro envio (batch)
+                    if session.latency_budget:
+                        session.latency_budget.finish()
                     await self._send_audio(websocket, session.session_id, audio_response)
 
                 # Despacha tool calls do batch (mesmo fluxo do streaming)
@@ -514,7 +519,11 @@ class AIAgentServer:
 
         try:
             # Usa o async generator diretamente - streaming real!
-            async for text_chunk, audio_chunk in session.pipeline.process_stream_async(audio_data):
+            async for text_chunk, audio_chunk in session.pipeline.process_stream_async(
+                audio_data,
+                latency_budget=session.latency_budget,
+                session_id=session.session_id,
+            ):
                 # Envia response.start no primeiro chunk
                 if not response_started:
                     start_msg = ResponseStartMessage(
@@ -650,13 +659,17 @@ class AIAgentServer:
 
     async def _send_audio_chunk(self, websocket: WebSocketServerProtocol, session_id: str, audio_chunk: bytes):
         """Envia um chunk de áudio diretamente"""
-        # Registra TTFB no primeiro chunk
+        # Registra TTFB e latency budget no primeiro chunk
         session = await self.session_manager.get_session(session_id)
         if session and session.audio_end_timestamp > 0 and not session.ttfb_recorded:
             ttfb = time.perf_counter() - session.audio_end_timestamp
             VOICE_TTFB_SECONDS.observe(ttfb)
             session.ttfb_recorded = True
             logger.debug(f"[{session_id[:8]}] ️ TTFB: {ttfb*1000:.0f}ms")
+
+            # Finaliza latency budget (E2E: audio_end → primeiro byte de resposta)
+            if session.latency_budget:
+                session.latency_budget.finish()
 
         frame = create_audio_frame(
             session_id=session_id,

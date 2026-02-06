@@ -225,7 +225,7 @@ class KokoroTTS(TTSProvider):
             f"lang={self._tts_config.lang_code}"
         )
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def _create_pipeline():
             return KPipeline(
@@ -273,7 +273,7 @@ class KokoroTTS(TTSProvider):
             )
 
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
 
             def _test_synth():
                 results = list(self._pipeline(
@@ -366,6 +366,14 @@ class KokoroTTS(TTSProvider):
         if not self._pipeline:
             return b""
 
+        # Circuit breaker: fail-fast se provider está indisponível
+        from providers.base import ProviderUnavailableError
+        try:
+            self._check_circuit_breaker()
+        except ProviderUnavailableError:
+            logger.warning(f"{self.provider_name}: circuit breaker OPEN - skipping synthesis")
+            return b""
+
         start_time = time.perf_counter()
 
         try:
@@ -373,7 +381,7 @@ class KokoroTTS(TTSProvider):
 
             processed_text = self._preprocess_text(text)
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
 
             def _synthesize():
                 audio_chunks = []
@@ -406,6 +414,7 @@ class KokoroTTS(TTSProvider):
 
             latency_ms = (time.perf_counter() - start_time) * 1000
             self._metrics.record_success(latency_ms)
+            self._record_circuit_success()
 
             if pcm_data:
                 logger.info(
@@ -418,6 +427,7 @@ class KokoroTTS(TTSProvider):
         except Exception as e:
             logger.error(f"Erro no Kokoro TTS: {e}")
             self._metrics.record_failure(str(e))
+            self._record_circuit_failure()
             import traceback
             traceback.print_exc()
             return b""
@@ -437,7 +447,7 @@ class KokoroTTS(TTSProvider):
 
             processed_text = self._preprocess_text(text)
             bridge: thread_queue.Queue = thread_queue.Queue()
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
 
             def _generate_to_bridge():
                 """Roda no executor: gera chunks e envia via bridge."""
@@ -548,7 +558,7 @@ class GoogleTTS(TTSProvider):
         start_time = time.perf_counter()
 
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
 
             def _synthesize():
                 tts = self.gTTS(text=text, lang=self._gtts_config.language)
@@ -675,7 +685,7 @@ class OpenAITTS(TTSProvider):
         start_time = time.perf_counter()
 
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
 
             def _synthesize():
                 response = self.client.audio.speech.create(
@@ -712,7 +722,7 @@ class OpenAITTS(TTSProvider):
             import queue as thread_queue
 
             bridge: thread_queue.Queue = thread_queue.Queue()
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
 
             def _generate_to_bridge():
                 """Roda em thread: gera chunks e envia via bridge."""
@@ -848,9 +858,14 @@ def _create_tts_instance(provider: str = None) -> TTSProvider:
     return MockTTS()
 
 
-async def create_tts_provider() -> TTSProvider:
-    """Factory assíncrona para criar, conectar e aquecer provedor TTS."""
-    tts = _create_tts_instance()
+async def create_tts_provider(provider_name: str = None) -> TTSProvider:
+    """Factory assíncrona para criar, conectar e aquecer provedor TTS.
+
+    Args:
+        provider_name: Nome do provider (ex: 'kokoro', 'gtts', 'openai').
+                      Se None, usa TTS_CONFIG['provider'].
+    """
+    tts = _create_tts_instance(provider=provider_name)
     await tts.connect()
 
     # Warmup apenas para Kokoro (modelo local)
