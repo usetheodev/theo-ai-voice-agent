@@ -69,7 +69,7 @@ class STTSettings(BaseModel):
     @field_validator('provider')
     @classmethod
     def validate_provider(cls, v):
-        valid = ['faster-whisper', 'whisper', 'openai']
+        valid = ['faster-whisper', 'whisper', 'openai', 'qwen3-asr']
         if v not in valid:
             raise ValueError(f"STT provider deve ser um de {valid}, recebeu: '{v}'")
         return v
@@ -78,7 +78,7 @@ class STTSettings(BaseModel):
     @classmethod
     def validate_fallback(cls, v):
         if v:
-            valid = ['faster-whisper', 'whisper', 'openai']
+            valid = ['faster-whisper', 'whisper', 'openai', 'qwen3-asr']
             if v not in valid:
                 raise ValueError(f"STT fallback_provider deve ser um de {valid} ou '', recebeu: '{v}'")
         return v

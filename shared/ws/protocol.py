@@ -160,14 +160,21 @@ class ResponseStartMessage:
 class ResponseEndMessage:
     """Fim da resposta do agente (AI Agent -> Media Server)"""
     session_id: str
+    interrupted: bool = False
     type: str = MessageType.RESPONSE_END
 
     def to_json(self) -> str:
-        return json.dumps({"type": self.type, "session_id": self.session_id})
+        d = {"type": self.type, "session_id": self.session_id}
+        if self.interrupted:
+            d["interrupted"] = self.interrupted
+        return json.dumps(d)
 
     @classmethod
     def from_dict(cls, data: dict) -> "ResponseEndMessage":
-        return cls(session_id=data["session_id"])
+        return cls(
+            session_id=data["session_id"],
+            interrupted=data.get("interrupted", False),
+        )
 
 
 @dataclass

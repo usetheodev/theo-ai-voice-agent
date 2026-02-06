@@ -10,6 +10,11 @@ webrtcvad>=2.0.10
 # faster-whisper: Recomendado - muito mais rápido que whisper original
 faster-whisper>=1.0.0
 
+# Qwen3-ASR: SOTA multilingual ASR (WER 1.63%)
+# Ativado com ASR_PROVIDER=qwen3-asr
+transformers>=4.52.0
+accelerate>=0.28.0
+
 # whisper original (fallback)
 # openai-whisper>=20231117
 
@@ -33,6 +38,7 @@ gtts>=2.5.0
 # Utils
 # -----------------------------------------------------------------------------
 numpy>=1.24.0
+scipy>=1.11.0
 pydantic>=2.0.0
 python-dotenv>=1.0.0
 

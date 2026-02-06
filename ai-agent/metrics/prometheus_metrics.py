@@ -99,6 +99,21 @@ PIPELINE_ERRORS = Counter(
 )
 
 # =============================================================================
+# MÉTRICAS DE BARGE-IN / RESPONSE INTERRUPTED
+# =============================================================================
+
+RESPONSE_INTERRUPTED_TOTAL = Counter(
+    'ai_agent_response_interrupted_total',
+    'Total de respostas interrompidas por barge-in'
+)
+
+RESPONSE_INTERRUPTED_PROGRESS = Histogram(
+    'ai_agent_response_interrupted_progress',
+    'Progresso da resposta quando interrompida (0.0-1.0)',
+    buckets=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+)
+
+# =============================================================================
 # MÉTRICAS DE CIRCUIT BREAKER
 # =============================================================================
 

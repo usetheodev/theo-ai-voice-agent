@@ -54,6 +54,8 @@ from metrics import (
     track_pipeline_error,
     VOICE_TTFB_SECONDS,
     AUDIO_FRAMES_DROPPED_BACKPRESSURE,
+    RESPONSE_INTERRUPTED_TOTAL,
+    RESPONSE_INTERRUPTED_PROGRESS,
 )
 
 logger = logging.getLogger("ai-agent.server")
@@ -196,6 +198,7 @@ class AIAgentServer:
         """Processa mensagem do protocolo ASP"""
         from asp_protocol import (
             SessionUpdateMessage,
+            ResponseInterruptedMessage,
             MessageType,
         )
 
@@ -211,6 +214,9 @@ class AIAgentServer:
 
             elif msg_type == MessageType.SESSION_END:
                 await self._handle_asp_session_end(websocket, msg)
+
+            elif msg_type == MessageType.RESPONSE_INTERRUPTED:
+                await self._handle_response_interrupted(websocket, msg)
 
             else:
                 logger.warning(f"Mensagem ASP inesperada: {msg_type}")
@@ -316,6 +322,36 @@ class AIAgentServer:
         # Remove sessão ASP
         if websocket in self._asp_sessions:
             del self._asp_sessions[websocket]
+
+    async def _handle_response_interrupted(self, websocket: WebSocketServerProtocol, msg):
+        """Handler para response.interrupted — cancela pipeline em andamento"""
+        session = await self.session_manager.get_session(msg.session_id)
+        if not session:
+            logger.warning(f"response.interrupted sem sessão: {msg.session_id[:8]}")
+            return
+
+        logger.info(
+            f"[{msg.session_id[:8]}] Barge-in recebido (progress={msg.progress:.0%}) — "
+            f"cancelando pipeline"
+        )
+
+        # Sinaliza cancelamento
+        session.cancel_response()
+
+        # Métricas
+        RESPONSE_INTERRUPTED_TOTAL.inc()
+        RESPONSE_INTERRUPTED_PROGRESS.observe(msg.progress)
+
+        # Atualiza histórico do LLM: marca resposta como interrompida
+        if session.pipeline.llm and session._partial_response_text:
+            partial = session._partial_response_text.strip()
+            if partial:
+                session.pipeline.llm.update_last_response(
+                    f"{partial}... [resposta interrompida pelo usuário]"
+                )
+
+        # Transiciona para listening
+        await session.set_state('listening')
 
     async def _handle_session_start(self, websocket: WebSocketServerProtocol, msg: SessionStartMessage):
         """Inicia nova sessão de conversação"""
@@ -552,13 +588,19 @@ class AIAgentServer:
 
         IMPORTANTE: Envia cada chunk imediatamente ao ser gerado,
         sem acumular em lista. Isso reduz latência de 3-6s para ~1-2s.
+
+        Suporta cancelamento cooperativo via session._cancel_event (barge-in).
         """
         await session.set_state('responding')
+
+        # Reseta sinal de cancelamento para nova interação
+        session.reset_cancel()
 
         # Flag para controlar se já enviamos response.start
         response_started = False
         streaming_ok = False
         chunks_sent = 0
+        interrupted = False
 
         try:
             # Usa o async generator diretamente - streaming real!
@@ -567,7 +609,14 @@ class AIAgentServer:
                 latency_budget=session.latency_budget,
                 session_id=session.session_id,
                 input_sample_rate=session.audio_config.sample_rate,
+                cancel_event=session._cancel_event,
             ):
+                # Verifica cancelamento por barge-in
+                if session.is_cancelled:
+                    logger.info(f"[{session.session_id[:8]}] Streaming cancelado por barge-in")
+                    interrupted = True
+                    break
+
                 # Envia response.start no primeiro chunk
                 if not response_started:
                     start_msg = ResponseStartMessage(
@@ -577,6 +626,9 @@ class AIAgentServer:
                     await websocket.send(start_msg.to_json())
                     response_started = True
                     logger.info(f"[{session.session_id[:8]}] ️ Streaming iniciado: {text_chunk[:30]}...")
+
+                # Acumula texto parcial para histórico em caso de interrupção
+                session._partial_response_text += text_chunk + " "
 
                 # Envia chunk IMEDIATAMENTE - sem acumular!
                 if audio_chunk:
@@ -588,8 +640,11 @@ class AIAgentServer:
                 logger.debug(f"[{session.session_id[:8]}] Nenhum chunk gerado")
                 return
 
-            streaming_ok = True
-            logger.info(f"[{session.session_id[:8]}]  Streaming completo: {chunks_sent} chunks enviados")
+            if not interrupted:
+                streaming_ok = True
+                logger.info(f"[{session.session_id[:8]}]  Streaming completo: {chunks_sent} chunks enviados")
+            else:
+                logger.info(f"[{session.session_id[:8]}]  Streaming interrompido após {chunks_sent} chunks")
 
         except Exception as e:
             logger.error(f"[{session.session_id[:8]}] Erro no streaming: {e}")
@@ -606,11 +661,14 @@ class AIAgentServer:
             has_tool_calls = await self._dispatch_tool_calls(websocket, session)
 
         # Notifica fim da resposta (APOS call actions)
-        end_msg = ResponseEndMessage(session_id=session.session_id)
+        end_msg = ResponseEndMessage(
+            session_id=session.session_id,
+            interrupted=interrupted,
+        )
         await websocket.send(end_msg.to_json())
 
         # Escalacao automatica: transfere apos N interacoes sem resolucao
-        if not has_tool_calls:
+        if not has_tool_calls and not interrupted:
             await self._check_escalation(websocket, session)
 
     async def _check_escalation(

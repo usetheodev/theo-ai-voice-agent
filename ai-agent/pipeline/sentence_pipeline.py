@@ -68,6 +68,7 @@ class SentencePipeline:
         llm: "LLMProvider",
         tts: "TTSProvider",
         queue_size: int = 3,
+        cancel_event: Optional[asyncio.Event] = None,
     ):
         """
         Inicializa o pipeline.
@@ -78,11 +79,13 @@ class SentencePipeline:
             queue_size: Tamanho máximo da fila de sentenças (default: 3)
                        Limita quantas frases podem ser geradas antes do TTS processar.
                        Valor baixo = menor uso de memória, mas pode causar stalls.
+            cancel_event: Evento de cancelamento cooperativo (barge-in)
         """
         self._llm = llm
         self._tts = tts
         self._queue_size = queue_size
         self._metrics = PipelineMetrics()
+        self._cancel_event = cancel_event
 
     @property
     def metrics(self) -> PipelineMetrics:
@@ -127,6 +130,11 @@ class SentencePipeline:
         try:
             # Consumidor (TTS sintetiza e yield)
             while True:
+                # Verifica cancelamento antes de pegar próxima sentença
+                if self._cancel_event and self._cancel_event.is_set():
+                    logger.info("SentencePipeline cancelado por barge-in")
+                    break
+
                 # Aguarda próxima sentença (com timeout para detectar problemas)
                 try:
                     sentence = await asyncio.wait_for(
@@ -146,6 +154,11 @@ class SentencePipeline:
 
                 # Sintetiza sentença e yield chunks imediatamente
                 async for audio_chunk in self._synthesize_sentence(sentence):
+                    # Verifica cancelamento antes de cada yield
+                    if self._cancel_event and self._cancel_event.is_set():
+                        logger.info("SentencePipeline cancelado durante TTS")
+                        break
+
                     # Registra latência do primeiro áudio
                     if first_audio_time is None:
                         first_audio_time = time.perf_counter()
@@ -158,6 +171,10 @@ class SentencePipeline:
 
                     self._metrics.audio_chunks_produced += 1
                     yield sentence, audio_chunk
+
+                # Break externo se cancelado durante TTS
+                if self._cancel_event and self._cancel_event.is_set():
+                    break
 
         finally:
             # Garante que o produtor é cancelado se consumidor parar

@@ -273,6 +273,41 @@ class TranscribeAdapter:
         """
         await self.send_audio(session_id, audio_data, AudioDirection.OUTBOUND)
 
+    async def send_text_utterance(
+        self,
+        session_id: str,
+        text: str,
+        speaker: str = "agent",
+    ) -> None:
+        """
+        Envia texto pre-transcrito para indexacao direta (sem STT).
+
+        Args:
+            session_id: ID da sessao
+            text: Texto a indexar
+            speaker: Quem falou ("caller" ou "agent")
+        """
+        if not self.is_connected:
+            return
+
+        if session_id not in self._sessions:
+            return
+
+        try:
+            from asp_protocol import TextUtteranceMessage
+
+            msg = TextUtteranceMessage(
+                session_id=session_id,
+                text=text,
+                speaker=speaker,
+            )
+            await self.ws.send(msg.to_json())
+
+            logger.debug(f"[{session_id[:8]}] text.utterance enviado: '{text[:50]}...'")
+
+        except Exception as e:
+            logger.debug(f"[{session_id[:8]}] Erro ao enviar text.utterance: {e}")
+
     async def send_audio_end(self, session_id: str) -> None:
         """
         Notifica fim do audio (para trigger de transcricao).

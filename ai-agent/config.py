@@ -153,8 +153,13 @@ STT_CONFIG = {
     "executor_workers": int(os.getenv("ASR_EXECUTOR_WORKERS", "4")),
 
     # Provider de fallback quando o primário falha (circuit breaker OPEN)
-    # Opções: faster-whisper, whisper, openai, '' (desabilitado)
+    # Opções: faster-whisper, whisper, openai, qwen3-asr, '' (desabilitado)
     "fallback_provider": os.getenv("STT_FALLBACK_PROVIDER", ""),
+
+    # Qwen3-ASR specific settings
+    "qwen3_chunk_ms": os.getenv("ASR_QWEN3_CHUNK_MS", "500"),
+    "qwen3_max_tokens": os.getenv("ASR_QWEN3_MAX_TOKENS", "512"),
+    "qwen3_flash_attn": os.getenv("ASR_QWEN3_FLASH_ATTN", "false"),
 }
 
 

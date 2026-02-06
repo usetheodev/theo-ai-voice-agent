@@ -347,6 +347,42 @@ class MediaForkManager:
             except Exception as e:
                 logger.debug(f"[{session_id[:8]}] Falha ao enviar audio.speech.end: {e}")
 
+    async def send_agent_text(self, session_id: str, text: str) -> bool:
+        """
+        Envia texto do agente diretamente para transcricao (sem STT).
+
+        Substitui o envio de audio outbound para o ai-transcribe.
+        O texto ja existe no ResponseStartMessage, entao evitamos o
+        ciclo redundante texto->TTS->audio->STT->texto.
+
+        Args:
+            session_id: ID da sessao
+            text: Texto completo da resposta do agente
+
+        Returns:
+            True se enviado com sucesso
+        """
+        if not self.enabled:
+            return False
+
+        if not self.transcribe_adapter:
+            return False
+
+        if session_id not in self._sessions:
+            return False
+
+        if self.transcribe_adapter.is_connected:
+            try:
+                await self.transcribe_adapter.send_text_utterance(
+                    session_id, text, speaker="agent"
+                )
+                logger.debug(f"[{session_id[:8]}] Texto do agente enviado para transcricao")
+                return True
+            except Exception as e:
+                logger.debug(f"[{session_id[:8]}] Falha ao enviar texto do agente: {e}")
+
+        return False
+
     async def send_outbound_audio(self, session_id: str, audio_data: bytes) -> bool:
         """
         Envia audio do agente (TTS) para transcricao.

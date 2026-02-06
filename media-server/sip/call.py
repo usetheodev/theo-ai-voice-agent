@@ -29,8 +29,15 @@ except ImportError:
     sys.exit(1)
 
 from config import AUDIO_CONFIG, CALL_CONFIG, PJSIP_CONFIG, MEDIA_FORK_CONFIG
-from metrics import track_call_ended, track_rtp_transmitted, track_barge_in, track_e2e_latency, track_barge_in_progress
+from metrics import (
+    track_call_ended, track_rtp_transmitted, track_barge_in,
+    track_e2e_latency, track_barge_in_progress,
+    track_rtcp_jitter, track_rtcp_packet_loss, track_rtcp_rtt,
+    track_mos_score, track_echo_guard_cooldown,
+)
+from sip.mos_estimator import estimate_mos
 from sip.streaming_port import StreamingAudioPort, StreamingPlaybackPort
+from sip.echo_guard import EchoGuard
 from ports.audio_destination import SessionInfo, AudioConfig
 
 if TYPE_CHECKING:
@@ -118,6 +125,18 @@ class MyCall(pj.Call):
         # Barge-in progress tracking
         self.response_total_bytes: int = 0
         self.response_played_bytes: int = 0
+
+        # Acumula texto das respostas do agente para envio ao transcribe
+        self._response_text_chunks: list = []
+
+        # EchoGuard: adaptive post-playback cooldown
+        echo_guard_enabled = CALL_CONFIG.get("echo_guard_enabled", True)
+        self.echo_guard = EchoGuard(
+            enabled=echo_guard_enabled,
+            min_cooldown_ms=int(CALL_CONFIG.get("echo_guard_min_cooldown_ms", 100)),
+            max_cooldown_ms=int(CALL_CONFIG.get("echo_guard_max_cooldown_ms", 1000)),
+            initial_cooldown_ms=int(CALL_CONFIG.get("post_playback_cooldown", 0.5) * 1000),
+        )
 
     def _log(self, message: str, level: str = "info"):
         log_func = getattr(logger, level, logger.info)
@@ -278,6 +297,10 @@ class MyCall(pj.Call):
         self._start_streaming()
         self._log(" Pronto para conversar")
 
+        # Inicia QoS collector thread
+        qos_thread = threading.Thread(target=self._qos_collector_loop, daemon=True)
+        qos_thread.start()
+
         # Loop principal - mantém thread viva (intervalo configurável)
         loop_interval = CALL_CONFIG.get("conversation_loop_interval", 0.05)
         while not self.stop_conversation.is_set():
@@ -398,6 +421,14 @@ class MyCall(pj.Call):
                 return
             self._log(f" Resposta: {text[:50]}...")
 
+            # Acumula texto da resposta para envio ao transcribe
+            if text:
+                self._response_text_chunks.append(text)
+
+            # Para comfort noise (TTS audio chegando)
+            if self.playback_port:
+                self.playback_port.stop_comfort_noise()
+
             # Marca início do playback
             self.is_playing_response = True
             self.playback_finished.clear()
@@ -424,31 +455,25 @@ class MyCall(pj.Call):
                 self.playback_port.add_audio(audio_data)
                 self.bytes_transmitted += len(audio_data)
 
-            # Envia audio do agente para transcricao (outbound)
-            if self.use_fork and self.fork_manager:
-                try:
-                    asyncio.run_coroutine_threadsafe(
-                        self.fork_manager.send_outbound_audio(self.session_id, audio_data),
-                        self.loop
-                    )
-                except Exception:
-                    pass  # Best-effort, nao bloqueia playback
-
         def on_response_end(session_id: str):
             if session_id != self.session_id:
                 return
 
             self._log(f" Resposta completa ({self.bytes_transmitted} bytes)")
 
-            # Envia sinal de fim de audio do agente para transcricao
-            if self.use_fork and self.fork_manager:
+            # Envia texto acumulado do agente direto para transcricao (sem STT)
+            if self.use_fork and self.fork_manager and self._response_text_chunks:
+                full_text = " ".join(self._response_text_chunks)
+                self._response_text_chunks.clear()
                 try:
                     asyncio.run_coroutine_threadsafe(
-                        self.fork_manager.send_outbound_audio_end(self.session_id),
+                        self.fork_manager.send_agent_text(self.session_id, full_text),
                         self.loop
                     )
                 except Exception:
                     pass  # Best-effort
+            else:
+                self._response_text_chunks.clear()
 
             # Registra métricas
             track_rtp_transmitted(self.bytes_transmitted)
@@ -494,8 +519,9 @@ class MyCall(pj.Call):
         self._wait_playback_finished()
 
         # Cooldown pós-playback: aguarda eco do alto-falante morrer
-        # Sem isso, o microfone capta eco do TTS e o VAD dispara falso positivo
-        cooldown = CALL_CONFIG.get("post_playback_cooldown", 0.5)
+        # EchoGuard adapta o cooldown baseado em histórico de falsos positivos
+        self.echo_guard.mark_playback_end()
+        cooldown = self.echo_guard.get_cooldown_seconds()
         if cooldown > 0:
             time.sleep(cooldown)
 
@@ -674,6 +700,7 @@ class MyCall(pj.Call):
         self.barge_in_triggered.set()
 
         # Calcula e registra progresso da resposta quando barge-in ocorreu
+        progress = 0.0
         if self.response_total_bytes > 0 and self.playback_port:
             # Bytes restantes no buffer = ainda não reproduzidos
             bytes_remaining = len(self.playback_port.audio_buffer)
@@ -691,6 +718,18 @@ class MyCall(pj.Call):
         # Limpa buffer de playback (para de falar imediatamente)
         if self.playback_port:
             self.playback_port.clear()
+
+        # Notifica AI Agent sobre a interrupção (para cancelar pipeline)
+        if self.audio_destination and self.session_id and self.loop:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self.audio_destination.send_response_interrupted(
+                        self.session_id, progress
+                    ),
+                    self.loop,
+                )
+            except Exception as e:
+                self._log(f"Erro ao enviar response.interrupted: {e}")
 
         # Sinaliza que playback terminou (foi interrompido)
         self.playback_finished.set()
@@ -714,6 +753,10 @@ class MyCall(pj.Call):
         self.response_total_bytes = 0
         self.response_played_bytes = 0
 
+        # Ativa comfort noise durante processing
+        if self.playback_port:
+            self.playback_port.start_comfort_noise()
+
         self._log(" Fim de fala detectado - aguardando resposta")
         # O streaming_port já envia audio.end automaticamente
 
@@ -727,6 +770,78 @@ class MyCall(pj.Call):
                 future.add_done_callback(self._log_future_exception)
             except Exception as e:
                 self._log(f"Erro ao enviar audio.end para transcribe: {e}", "warning")
+
+    def _qos_collector_loop(self):
+        """Coleta RTCP stats e calcula MOS a cada 5s enquanto chamada ativa"""
+        try:
+            pj.Endpoint.instance().libRegisterThread("qos-collector")
+        except Exception:
+            pass
+
+        interval = 5.0
+        while not self.stop_conversation.is_set():
+            self.stop_conversation.wait(timeout=interval)
+            if self.stop_conversation.is_set():
+                break
+
+            try:
+                ci = self.getInfo()
+                for i, mi in enumerate(ci.media):
+                    if mi.type != pj.PJMEDIA_TYPE_AUDIO:
+                        continue
+                    if mi.status != pj.PJSUA_CALL_MEDIA_ACTIVE:
+                        continue
+
+                    try:
+                        stat = self.getStreamStat(i)
+                    except Exception:
+                        continue
+
+                    # RX stats
+                    rx = stat.rtcp.rxStat
+                    rx_jitter_ms = rx.jitterUsec.mean / 1000.0 if rx.jitterUsec.mean > 0 else 0.0
+                    rx_loss = stat.rtcp.rxStat.loss
+                    rx_total = stat.rtcp.rxStat.pkt
+
+                    # TX stats
+                    tx = stat.rtcp.txStat
+                    tx_jitter_ms = tx.jitterUsec.mean / 1000.0 if tx.jitterUsec.mean > 0 else 0.0
+                    tx_loss = stat.rtcp.txStat.loss
+                    tx_total = stat.rtcp.txStat.pkt
+
+                    # RTT
+                    rtt_ms = stat.rtcp.rttUsec.mean / 1000.0 if stat.rtcp.rttUsec.mean > 0 else 0.0
+
+                    # Update metrics
+                    track_rtcp_jitter("rx", rx_jitter_ms)
+                    track_rtcp_jitter("tx", tx_jitter_ms)
+                    track_rtcp_packet_loss("rx", rx_loss)
+                    track_rtcp_packet_loss("tx", tx_loss)
+                    track_rtcp_rtt(rtt_ms)
+
+                    # Calculate MOS
+                    loss_pct = (rx_loss / rx_total * 100.0) if rx_total > 0 else 0.0
+                    mos = estimate_mos(
+                        packet_loss_pct=loss_pct,
+                        jitter_ms=rx_jitter_ms,
+                        rtt_ms=rtt_ms,
+                        codec="g711",
+                    )
+                    track_mos_score(mos)
+
+                    # EchoGuard cooldown metric
+                    track_echo_guard_cooldown(self.echo_guard.cooldown_ms)
+
+                    self._log(
+                        f"QoS: MOS={mos} jitter_rx={rx_jitter_ms:.1f}ms "
+                        f"loss={rx_loss}/{rx_total} rtt={rtt_ms:.1f}ms "
+                        f"echo_cd={self.echo_guard.cooldown_ms}ms",
+                        "debug",
+                    )
+                    break  # Só processa primeiro stream de áudio
+
+            except Exception as e:
+                self._log(f"Erro no QoS collector: {e}", "debug")
 
     def onCallMediaState(self, prm):
         """Estado da mídia mudou"""

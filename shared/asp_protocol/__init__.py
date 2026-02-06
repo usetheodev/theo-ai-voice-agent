@@ -115,7 +115,9 @@ from .messages import (
     AudioSpeechEndMessage,
     ResponseStartMessage,
     ResponseEndMessage,
+    ResponseInterruptedMessage,
     CallActionMessage,
+    TextUtteranceMessage,
     parse_message,
     is_valid_message,
 )
@@ -178,7 +180,9 @@ __all__ = [
     "AudioSpeechEndMessage",
     "ResponseStartMessage",
     "ResponseEndMessage",
+    "ResponseInterruptedMessage",
     "CallActionMessage",
+    "TextUtteranceMessage",
     "parse_message",
     "is_valid_message",
     # Negotiation

@@ -60,5 +60,8 @@ class MessageType(str, Enum):
     AUDIO_SPEECH_END = "audio.speech_end"
     RESPONSE_START = "response.start"
     RESPONSE_END = "response.end"
+    RESPONSE_INTERRUPTED = "response.interrupted"
     # Call control messages
     CALL_ACTION = "call.action"
+    # Text messages
+    TEXT_UTTERANCE = "text.utterance"

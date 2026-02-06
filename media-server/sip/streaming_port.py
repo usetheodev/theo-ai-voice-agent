@@ -24,6 +24,7 @@ except ImportError:
 from config import AUDIO_CONFIG, RTP_QUALITY_CONFIG, MEDIA_FORK_CONFIG
 from metrics import track_vad_event, track_vad_utterance_duration
 from sip.rtp_quality import RtpQualityTracker
+from sip.comfort_noise import ComfortNoiseGenerator
 
 if TYPE_CHECKING:
     from ports.audio_destination import IAudioDestination
@@ -257,6 +258,18 @@ class StreamingAudioPort(pj.AudioMediaPort):
         # Lock para thread-safety
         self._lock = threading.Lock()
 
+        # Anti-aliasing FIR filter for 16kHz→8kHz downsampling
+        # Cutoff at 3400Hz (Nyquist for 8kHz = 4kHz, with margin)
+        # 31-tap FIR is fast enough for 20ms callback (~0.1ms)
+        try:
+            from scipy.signal import firwin, lfilter
+            self._aa_coeffs = firwin(31, 3400, fs=self.input_sample_rate)
+            self._aa_lfilter = lfilter
+            self._has_aa_filter = True
+        except ImportError:
+            self._has_aa_filter = False
+            logger.warning("scipy não disponível - downsample sem anti-aliasing")
+
         # RTP Quality Tracker (usando configurações centralizadas)
         self.rtp_tracker = RtpQualityTracker(
             expected_interval_ms=RTP_QUALITY_CONFIG.get("expected_interval_ms", self.frame_duration_ms),
@@ -380,10 +393,15 @@ class StreamingAudioPort(pj.AudioMediaPort):
             logger.error(f"[{self.session_id[:8]}] Erro em onFrameReceived: {e}")
 
     def _downsample(self, audio_data: bytes) -> bytes:
-        """16kHz -> 8kHz via decimacao numpy."""
+        """16kHz -> 8kHz with anti-aliasing FIR filter."""
         try:
             samples = np.frombuffer(audio_data, dtype=np.int16)
-            return samples[::2].tobytes()
+            if self._has_aa_filter:
+                # Apply low-pass filter before decimation to prevent aliasing
+                filtered = self._aa_lfilter(self._aa_coeffs, 1.0, samples.astype(np.float64))
+                return filtered[::2].astype(np.int16).tobytes()
+            else:
+                return samples[::2].tobytes()
         except Exception as e:
             logger.error(f"Erro no downsampling: {e}")
             return audio_data
@@ -452,6 +470,22 @@ class StreamingPlaybackPort(pj.AudioMediaPort):
         self.max_buffer_bytes = int(sample_rate * 2 * 5)  # 5s max
         self._lock = threading.Lock()
 
+        # Comfort Noise Generator
+        cn_enabled = AUDIO_CONFIG.get("comfort_noise_enabled", True)
+        cn_dbfs = float(AUDIO_CONFIG.get("comfort_noise_dbfs", -60.0))
+        self._comfort_noise = ComfortNoiseGenerator(
+            sample_rate=sample_rate,
+            frame_duration_ms=20,
+            dbfs=cn_dbfs,
+            enabled=cn_enabled,
+        )
+
+        # PLC (Packet Loss Concealment)
+        self._last_good_frame: Optional[bytes] = None
+        self._plc_frames_count: int = 0
+        self._plc_max_frames: int = 5
+        self._plc_total_events: int = 0
+
         # Controle
         self.is_active = True
         self.frames_played = 0
@@ -485,12 +519,36 @@ class StreamingPlaybackPort(pj.AudioMediaPort):
                     logger.warning(f"[{self.session_id[:8]}] Playback buffer cheio, descartando")
 
     def _upsample(self, audio_data: bytes) -> bytes:
-        """8kHz -> 16kHz via duplicacao numpy."""
+        """8kHz -> 16kHz via linear interpolation."""
         try:
-            samples = np.frombuffer(audio_data, dtype=np.int16)
-            return np.repeat(samples, 2).tobytes()
+            samples = np.frombuffer(audio_data, dtype=np.int16).astype(np.float64)
+            n = len(samples)
+            # Linear interpolation: smoother than np.repeat
+            x_old = np.arange(n)
+            x_new = np.linspace(0, n - 1, n * 2)
+            upsampled = np.interp(x_new, x_old, samples)
+            return upsampled.astype(np.int16).tobytes()
         except Exception:
             return audio_data
+
+    def _conceal_frame(self) -> Optional[bytes]:
+        """PLC: waveform substitution with progressive fade-out."""
+        if self._last_good_frame is None:
+            return None
+        if self._plc_frames_count >= self._plc_max_frames:
+            return None
+
+        self._plc_frames_count += 1
+
+        # Progressive fade: 80% → 60% → 40% → 20% → 0%
+        attenuation = 1.0 - (self._plc_frames_count / self._plc_max_frames)
+
+        try:
+            samples = np.frombuffer(self._last_good_frame, dtype=np.int16)
+            concealed = (samples * attenuation).astype(np.int16)
+            return concealed.tobytes()
+        except Exception:
+            return None
 
     def onFrameRequested(self, frame: pj.MediaFrame):
         """Chamado quando PJSUA2 precisa de áudio para enviar (playback)"""
@@ -500,23 +558,50 @@ class StreamingPlaybackPort(pj.AudioMediaPort):
 
         with self._lock:
             if len(self.audio_buffer) >= self.frame_size:
+                # Audio real disponível: para comfort noise automaticamente
+                if self._comfort_noise.is_active:
+                    self._comfort_noise.stop()
+
                 # Copia frame do buffer
                 frame_data = bytes(self.audio_buffer[:self.frame_size])
                 self.audio_buffer = self.audio_buffer[self.frame_size:]
+
+                # Save for PLC and reset counter
+                self._last_good_frame = frame_data
+                self._plc_frames_count = 0
 
                 frame.buf = bytes_to_bytevector(frame_data)
                 frame.type = pj.PJMEDIA_FRAME_TYPE_AUDIO
                 self.frames_played += 1
             else:
-                # Buffer vazio - envia silêncio (usa cache para performance)
-                if self.frame_size not in _silence_cache:
-                    _silence_cache[self.frame_size] = bytes_to_bytevector(b'\x00' * self.frame_size)
-                frame.buf = _silence_cache[self.frame_size]
-                frame.type = pj.PJMEDIA_FRAME_TYPE_AUDIO
+                # Buffer vazio: try PLC first, then comfort noise, then silence
+                plc_frame = self._conceal_frame()
+                if plc_frame:
+                    self._plc_total_events += 1
+                    frame.buf = bytes_to_bytevector(plc_frame)
+                    frame.type = pj.PJMEDIA_FRAME_TYPE_AUDIO
+                else:
+                    cn_frame = self._comfort_noise.get_frame()
+                    if cn_frame:
+                        frame.buf = bytes_to_bytevector(cn_frame)
+                        frame.type = pj.PJMEDIA_FRAME_TYPE_AUDIO
+                    else:
+                        if self.frame_size not in _silence_cache:
+                            _silence_cache[self.frame_size] = bytes_to_bytevector(b'\x00' * self.frame_size)
+                        frame.buf = _silence_cache[self.frame_size]
+                        frame.type = pj.PJMEDIA_FRAME_TYPE_AUDIO
 
     def onFrameReceived(self, frame: pj.MediaFrame):
         """Não usado para playback"""
         pass
+
+    def start_comfort_noise(self):
+        """Start comfort noise (called when speech ends, AI is processing)."""
+        self._comfort_noise.start()
+
+    def stop_comfort_noise(self):
+        """Stop comfort noise (called when TTS audio starts arriving)."""
+        self._comfort_noise.stop()
 
     def clear(self):
         """Limpa buffer de áudio"""
@@ -526,6 +611,7 @@ class StreamingPlaybackPort(pj.AudioMediaPort):
     def stop(self):
         """Para o playback"""
         self.is_active = False
+        self._comfort_noise.stop()
         self.clear()
         logger.info(f"[{self.session_id[:8]}] StreamingPlaybackPort parado (frames: {self.frames_played})")
 

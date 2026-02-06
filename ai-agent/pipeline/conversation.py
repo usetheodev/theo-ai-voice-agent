@@ -245,6 +245,7 @@ class ConversationPipeline:
         latency_budget=None,
         session_id: str = "",
         input_sample_rate: int = 0,
+        cancel_event: Optional[asyncio.Event] = None,
     ) -> AsyncGenerator[Tuple[str, bytes], None]:
         """
         Processa áudio com streaming REAL assíncrono usando SentencePipeline.
@@ -291,7 +292,8 @@ class ConversationPipeline:
             sentence_pipeline = SentencePipeline(
                 llm=self.llm,
                 tts=self.tts,
-                queue_size=queue_size
+                queue_size=queue_size,
+                cancel_event=cancel_event,
             )
 
             first_audio_yielded = False
@@ -447,6 +449,11 @@ class ConversationPipeline:
         llm_stream = self.llm.supports_streaming if self.llm else False
         tts_stream = self.tts.supports_streaming if self.tts else False
         return llm_stream and tts_stream
+
+    @property
+    def supports_streaming_stt(self) -> bool:
+        """Verifica se STT provider suporta transcrição incremental."""
+        return self.stt.supports_streaming_stt if self.stt else False
 
 
 # ==================== Factory ====================

@@ -33,6 +33,18 @@ from metrics.prometheus_metrics import (
     RTP_JITTER_MS,
     RTP_PACKETS_TOTAL,
     RTP_PACKET_LOSS_RATIO,
+    # RTCP / QoS
+    RTCP_JITTER_MS,
+    RTCP_PACKET_LOSS_TOTAL,
+    RTCP_RTT_MS,
+    CALL_MOS_SCORE,
+    MOS_SCORE_DISTRIBUTION,
+    # PLC
+    PLC_EVENTS_TOTAL,
+    PLC_DURATION_MS,
+    # Echo Guard
+    ECHO_GUARD_COOLDOWN_MS,
+    ECHO_DETECTED_TOTAL,
     # Media Fork
     MEDIA_FORK_BUFFER_SIZE_BYTES,
     MEDIA_FORK_BUFFER_SIZE_MS,
@@ -66,6 +78,15 @@ from metrics.prometheus_metrics import (
     track_rtp_jitter,
     track_rtp_packet,
     track_rtp_packet_loss_ratio,
+    # RTCP / QoS Helpers
+    track_rtcp_jitter,
+    track_rtcp_packet_loss,
+    track_rtcp_rtt,
+    track_mos_score,
+    track_plc_event,
+    track_plc_duration,
+    track_echo_guard_cooldown,
+    track_echo_detected,
     # Media Fork Helpers
     track_fork_buffer_size,
     track_fork_frame_received,
@@ -100,6 +121,18 @@ __all__ = [
     'RTP_JITTER_MS',
     'RTP_PACKETS_TOTAL',
     'RTP_PACKET_LOSS_RATIO',
+    # RTCP / QoS
+    'RTCP_JITTER_MS',
+    'RTCP_PACKET_LOSS_TOTAL',
+    'RTCP_RTT_MS',
+    'CALL_MOS_SCORE',
+    'MOS_SCORE_DISTRIBUTION',
+    # PLC
+    'PLC_EVENTS_TOTAL',
+    'PLC_DURATION_MS',
+    # Echo Guard
+    'ECHO_GUARD_COOLDOWN_MS',
+    'ECHO_DETECTED_TOTAL',
     'start_metrics_server',
     'track_sip_registration',
     'track_incoming_call',
@@ -121,6 +154,15 @@ __all__ = [
     'track_rtp_jitter',
     'track_rtp_packet',
     'track_rtp_packet_loss_ratio',
+    # RTCP / QoS Helpers
+    'track_rtcp_jitter',
+    'track_rtcp_packet_loss',
+    'track_rtcp_rtt',
+    'track_mos_score',
+    'track_plc_event',
+    'track_plc_duration',
+    'track_echo_guard_cooldown',
+    'track_echo_detected',
     # Media Fork
     'MEDIA_FORK_BUFFER_SIZE_BYTES',
     'MEDIA_FORK_BUFFER_SIZE_MS',

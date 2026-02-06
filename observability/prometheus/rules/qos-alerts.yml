@@ -1,0 +1,85 @@
+groups:
+  - name: voice_pipeline_qos_alerts
+    rules:
+      # MOS < 3.0 por 30s = qualidade ruim
+      - alert: LowMOSScore
+        expr: media_server_call_mos_score < 3.0
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "MOS score baixo ({{ $value }})"
+          description: "MOS score da chamada está abaixo de 3.0 por mais de 30s. Qualidade de voz degradada."
+
+      # MOS < 2.0 por 15s = qualidade crítica
+      - alert: CriticalMOSScore
+        expr: media_server_call_mos_score < 2.0
+        for: 15s
+        labels:
+          severity: critical
+        annotations:
+          summary: "MOS score crítico ({{ $value }})"
+          description: "MOS score da chamada está abaixo de 2.0. Qualidade de voz inaceitável."
+
+      # Packet loss alto (>5% por 1m)
+      - alert: HighPacketLoss
+        expr: |
+          (media_server_rtcp_packet_loss_total{direction="rx"} /
+           (media_server_rtcp_packet_loss_total{direction="rx"} +
+            rate(media_server_rtp_packets_total{direction="inbound",status="received"}[1m]) * 60 + 0.001)
+          ) > 0.05
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Packet loss RTP alto"
+          description: "Taxa de perda de pacotes RTP acima de 5% por mais de 1 minuto."
+
+      # Jitter alto (>50ms por 1m)
+      - alert: HighJitter
+        expr: media_server_rtcp_jitter_ms{direction="rx"} > 50
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Jitter RTP alto ({{ $value }}ms)"
+          description: "Jitter RTCP RX acima de 50ms por mais de 1 minuto."
+
+      # RTT alto (>300ms por 1m)
+      - alert: HighRTT
+        expr: media_server_rtcp_rtt_ms > 300
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RTT alto ({{ $value }}ms)"
+          description: "Round-trip time RTCP acima de 300ms por mais de 1 minuto."
+
+      # PLC frequente (>10 eventos em 5m)
+      - alert: FrequentPLC
+        expr: rate(media_server_plc_events_total{direction="playback"}[5m]) * 300 > 10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PLC frequente ({{ $value }} eventos em 5m)"
+          description: "Packet Loss Concealment está sendo acionado frequentemente. Possível instabilidade de rede."
+
+  - name: voice_pipeline_qos_recording_rules
+    interval: 30s
+    rules:
+      # MOS médio (5m)
+      - record: voice_pipeline:mos_avg_5m
+        expr: avg_over_time(media_server_call_mos_score[5m])
+
+      # RTCP Jitter P95 (5m)
+      - record: voice_pipeline:rtcp_jitter_rx_avg_5m
+        expr: avg_over_time(media_server_rtcp_jitter_ms{direction="rx"}[5m])
+
+      # PLC events rate (por minuto)
+      - record: voice_pipeline:plc_events_per_minute
+        expr: rate(media_server_plc_events_total{direction="playback"}[5m]) * 60
+
+      # Echo guard cooldown médio
+      - record: voice_pipeline:echo_guard_cooldown_avg_5m
+        expr: avg_over_time(media_server_echo_guard_cooldown_ms[5m])

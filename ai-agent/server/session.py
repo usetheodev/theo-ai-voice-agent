@@ -50,6 +50,10 @@ class Session:
     # Latency budget tracker (recriado a cada interação)
     latency_budget: Optional[LatencyBudget] = None
 
+    # Barge-in cancellation
+    _cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
+    _partial_response_text: str = ""
+
 
     @property
     def session_hash(self) -> str:
@@ -59,6 +63,20 @@ class Session:
     def update_activity(self):
         """Atualiza timestamp de última atividade"""
         self.last_activity = datetime.now(timezone.utc)
+
+    def cancel_response(self):
+        """Sinaliza cancelamento da resposta em andamento (barge-in)"""
+        self._cancel_event.set()
+
+    def reset_cancel(self):
+        """Reseta sinal de cancelamento para nova interação"""
+        self._cancel_event.clear()
+        self._partial_response_text = ""
+
+    @property
+    def is_cancelled(self) -> bool:
+        """Verifica se a resposta foi cancelada"""
+        return self._cancel_event.is_set()
 
     async def set_state(self, new_state: SessionState):
         """Define estado da sessão (thread-safe)"""

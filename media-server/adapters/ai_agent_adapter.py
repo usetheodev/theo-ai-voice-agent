@@ -77,6 +77,10 @@ class AIAgentAdapter:
         """Sinaliza fim da fala do usuário"""
         await self._client.send_audio_end(session_id)
 
+    async def send_response_interrupted(self, session_id: str, progress: float = 0.0) -> None:
+        """Notifica que a resposta foi interrompida (barge-in)"""
+        await self._client.send_response_interrupted(session_id, progress)
+
     # Properties para callbacks com sincronização bidirecional
 
     @property

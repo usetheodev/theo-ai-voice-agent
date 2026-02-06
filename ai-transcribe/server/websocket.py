@@ -201,6 +201,7 @@ class TranscribeServer:
                 SessionEndMessage,
                 SessionEndedMessage,
                 AudioSpeechEndMessage,
+                TextUtteranceMessage,
                 negotiate_config,
                 ProtocolCapabilities,
                 SessionStatus,
@@ -221,6 +222,9 @@ class TranscribeServer:
 
             elif msg_type == MessageType.AUDIO_SPEECH_END:
                 await self._handle_audio_end(websocket, msg)
+
+            elif msg_type == MessageType.TEXT_UTTERANCE:
+                await self._handle_text_utterance(websocket, msg)
 
             else:
                 logger.debug(f"Mensagem ignorada: {msg_type}")
@@ -364,6 +368,95 @@ class TranscribeServer:
         audio_outbound = session.flush_audio(is_outbound=True)
         if audio_outbound and len(audio_outbound) >= 1000:  # >= 60ms
             await self._transcribe_and_index(session, audio_outbound, speaker="agent")
+
+    async def _handle_text_utterance(self, websocket: WebSocketServerProtocol, msg):
+        """Handler para text.utterance - texto pre-transcrito do agente."""
+        logger.debug(f"[{msg.session_id[:8]}] text.utterance recebido: '{msg.text[:50]}...'")
+
+        session = await self.session_manager.get_session(msg.session_id)
+        if not session:
+            logger.warning(f"Sessao nao encontrada para text.utterance: {msg.session_id[:8]}")
+            return
+
+        if not msg.text or not msg.text.strip():
+            logger.debug(f"[{msg.session_id[:8]}] text.utterance vazio - ignorando")
+            return
+
+        await self._index_text_directly(session, msg.text.strip(), msg.speaker)
+
+    async def _index_text_directly(
+        self,
+        session: TranscribeSession,
+        text: str,
+        speaker: str = "agent",
+    ):
+        """
+        Indexa texto pre-transcrito diretamente no Elasticsearch (sem STT).
+
+        Args:
+            session: Sessao de transcricao
+            text: Texto a indexar
+            speaker: Quem falou ("caller" ou "agent")
+        """
+        try:
+            word_count = len(text.split())
+
+            # Registra metricas (latency=0, audio_duration=0 pois nao houve STT)
+            track_transcription(
+                latency_seconds=0,
+                audio_duration_seconds=0,
+                word_count=word_count,
+                status="direct_text"
+            )
+
+            # Gera embedding se disponivel
+            text_embedding = None
+            embedding_model = None
+            embedding_latency_ms = None
+
+            if self.embedding_provider and self.embedding_provider.is_connected:
+                try:
+                    embedding_result = await self.embedding_provider.embed(text)
+                    text_embedding = embedding_result.embedding
+                    embedding_model = embedding_result.model_name
+                    embedding_latency_ms = embedding_result.latency_ms
+
+                    track_embedding(
+                        latency_seconds=embedding_result.latency_ms / 1000,
+                        status="success"
+                    )
+                except Exception as e:
+                    logger.warning(f"[{session.session_id[:8]}] Erro ao gerar embedding: {e}")
+                    track_embedding(latency_seconds=0, status="error")
+
+            # Cria documento (audio_duration_ms=0 e transcription_latency_ms=0)
+            doc = self.doc_builder.build(
+                session_id=session.session_id,
+                call_id=session.call_id,
+                text=text,
+                audio_duration_ms=0,
+                transcription_latency_ms=0,
+                language="pt",
+                speaker=speaker,
+                caller_id=session.caller_id,
+                metadata=session.metadata,
+                text_embedding=text_embedding,
+                embedding_model=embedding_model,
+                embedding_latency_ms=embedding_latency_ms,
+            )
+
+            # Adiciona ao bulk indexer
+            await self.bulk_indexer.add(doc)
+
+            # Atualiza contador da sessao
+            session.utterances_transcribed += 1
+
+            logger.info(
+                f"[{session.session_id[:8]}] [{speaker}] Texto direto: '{text[:80]}'"
+            )
+
+        except Exception as e:
+            logger.error(f"[{session.session_id[:8]}] Erro ao indexar texto direto: {e}")
 
     async def _transcribe_and_index(
         self,

@@ -118,6 +118,16 @@ class IAudioDestination(Protocol):
         """
         ...
 
+    async def send_response_interrupted(self, session_id: str, progress: float = 0.0) -> None:
+        """
+        Notifica que a resposta foi interrompida pelo usuário (barge-in).
+
+        Args:
+            session_id: ID da sessão
+            progress: Fração da resposta reproduzida (0.0-1.0)
+        """
+        ...
+
     # Event handlers (atribuídos externamente)
     on_session_started: Optional[Callable[[str], None]]
     on_response_start: Optional[Callable[[str, str], None]]  # session_id, text

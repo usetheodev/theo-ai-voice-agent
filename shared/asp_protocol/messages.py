@@ -514,7 +514,8 @@ class AudioSpeechEndMessage(ASPMessage):
 class ResponseStartMessage(ASPMessage):
     """Indica início de resposta do agente."""
     session_id: str
-    response_id: str
+    text: str = ""
+    response_id: str = ""
     timestamp: Optional[str] = None
 
     @property
@@ -526,19 +527,23 @@ class ResponseStartMessage(ASPMessage):
             self.timestamp = _get_timestamp()
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "type": self.message_type.value,
             "session_id": self.session_id,
-            "response_id": self.response_id,
-            "timestamp": self.timestamp
+            "text": self.text,
+            "timestamp": self.timestamp,
         }
+        if self.response_id:
+            d["response_id"] = self.response_id
+        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> "ResponseStartMessage":
         return cls(
             session_id=data["session_id"],
-            response_id=data["response_id"],
-            timestamp=data.get("timestamp")
+            text=data.get("text", ""),
+            response_id=data.get("response_id", ""),
+            timestamp=data.get("timestamp"),
         )
 
 
@@ -546,7 +551,7 @@ class ResponseStartMessage(ASPMessage):
 class ResponseEndMessage(ASPMessage):
     """Indica fim de resposta do agente."""
     session_id: str
-    response_id: str
+    response_id: str = ""
     interrupted: bool = False
     timestamp: Optional[str] = None
 
@@ -559,20 +564,55 @@ class ResponseEndMessage(ASPMessage):
             self.timestamp = _get_timestamp()
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "type": self.message_type.value,
             "session_id": self.session_id,
-            "response_id": self.response_id,
             "interrupted": self.interrupted,
-            "timestamp": self.timestamp
+            "timestamp": self.timestamp,
         }
+        if self.response_id:
+            d["response_id"] = self.response_id
+        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> "ResponseEndMessage":
         return cls(
             session_id=data["session_id"],
-            response_id=data["response_id"],
+            response_id=data.get("response_id", ""),
             interrupted=data.get("interrupted", False),
+            timestamp=data.get("timestamp"),
+        )
+
+
+@dataclass
+class ResponseInterruptedMessage(ASPMessage):
+    """Indica que a resposta do agente foi interrompida pelo usuário (barge-in)."""
+    session_id: str
+    progress: float = 0.0  # 0.0-1.0, quanto da resposta foi reproduzido
+    timestamp: Optional[str] = None
+
+    @property
+    def message_type(self) -> MessageType:
+        return MessageType.RESPONSE_INTERRUPTED
+
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = _get_timestamp()
+        self.progress = max(0.0, min(1.0, self.progress))
+
+    def to_dict(self) -> dict:
+        return {
+            "type": self.message_type.value,
+            "session_id": self.session_id,
+            "progress": self.progress,
+            "timestamp": self.timestamp
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ResponseInterruptedMessage":
+        return cls(
+            session_id=data["session_id"],
+            progress=data.get("progress", 0.0),
             timestamp=data.get("timestamp")
         )
 
@@ -625,6 +665,46 @@ class CallActionMessage(ASPMessage):
         )
 
 
+@dataclass
+class TextUtteranceMessage(ASPMessage):
+    """
+    Mensagem text.utterance para enviar texto pré-transcrito.
+
+    Usada para enviar texto do agente diretamente ao ai-transcribe,
+    evitando o ciclo redundante texto→TTS→áudio→STT→texto.
+    """
+    session_id: str
+    text: str
+    speaker: str = "agent"
+    timestamp: Optional[str] = None
+
+    @property
+    def message_type(self) -> MessageType:
+        return MessageType.TEXT_UTTERANCE
+
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = _get_timestamp()
+
+    def to_dict(self) -> dict:
+        return {
+            "type": self.message_type.value,
+            "session_id": self.session_id,
+            "text": self.text,
+            "speaker": self.speaker,
+            "timestamp": self.timestamp,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "TextUtteranceMessage":
+        return cls(
+            session_id=data["session_id"],
+            text=data.get("text", ""),
+            speaker=data.get("speaker", "agent"),
+            timestamp=data.get("timestamp"),
+        )
+
+
 # Message registry for parsing
 _MESSAGE_TYPES: Dict[str, Type[ASPMessage]] = {
     MessageType.PROTOCOL_CAPABILITIES.value: ProtocolCapabilitiesMessage,
@@ -639,7 +719,9 @@ _MESSAGE_TYPES: Dict[str, Type[ASPMessage]] = {
     MessageType.AUDIO_SPEECH_END.value: AudioSpeechEndMessage,
     MessageType.RESPONSE_START.value: ResponseStartMessage,
     MessageType.RESPONSE_END.value: ResponseEndMessage,
+    MessageType.RESPONSE_INTERRUPTED.value: ResponseInterruptedMessage,
     MessageType.CALL_ACTION.value: CallActionMessage,
+    MessageType.TEXT_UTTERANCE.value: TextUtteranceMessage,
 }
 
 

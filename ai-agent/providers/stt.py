@@ -23,7 +23,7 @@ import time
 import wave
 from abc import abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import AsyncGenerator, Optional
 
 from config import STT_CONFIG, AUDIO_CONFIG
 from providers.base import (
@@ -130,6 +130,30 @@ class STTProvider(BaseProvider):
     async def transcribe_file(self, audio_file: str) -> str:
         """Transcreve arquivo de áudio para texto."""
         pass
+
+    async def transcribe_stream(
+        self, audio_data: bytes, input_sample_rate: int = 0
+    ) -> AsyncGenerator[str, None]:
+        """Transcreve áudio com resultados parciais incrementais.
+
+        Default: delega para transcribe() (sem streaming real).
+        Override para providers que suportam streaming nativo.
+
+        Args:
+            audio_data: Áudio PCM 16-bit signed completo
+            input_sample_rate: Sample rate do áudio de entrada
+
+        Yields:
+            Transcrições parciais incrementais
+        """
+        result = await self.transcribe(audio_data, input_sample_rate=input_sample_rate)
+        if result:
+            yield result
+
+    @property
+    def supports_streaming_stt(self) -> bool:
+        """Indica se o provider suporta transcrição incremental."""
+        return False
 
     def _save_wav(self, file, audio_data: bytes) -> None:
         """Salva áudio como WAV."""
@@ -695,10 +719,28 @@ class OpenAIWhisperSTT(STTProvider):
 # ==================== Factory ====================
 
 # Mapeamento de providers para classes
+def _get_qwen3_class():
+    """Lazy import para evitar carregar transformers se não necessário."""
+    from providers.stt_qwen3 import Qwen3ASRSTT
+    return Qwen3ASRSTT
+
+
+class _LazyProvider:
+    """Wrapper para lazy import de providers pesados."""
+    def __init__(self, loader):
+        self._loader = loader
+        self._cls = None
+    def __call__(self, *args, **kwargs):
+        if self._cls is None:
+            self._cls = self._loader()
+        return self._cls(*args, **kwargs)
+
+
 _STT_PROVIDERS = {
     "faster-whisper": FasterWhisperSTT,
     "whisper": WhisperLocalSTT,
     "openai": OpenAIWhisperSTT,
+    "qwen3-asr": _LazyProvider(_get_qwen3_class),
 }
 
 _STT_FALLBACK_ORDER = ["faster-whisper", "whisper"]
@@ -737,9 +779,12 @@ async def create_stt_provider(provider_name: str = None) -> STTProvider:
     stt = _create_stt_instance(provider=provider_name)
     await stt.connect()
 
-    # Warmup apenas para faster-whisper (modelo local)
-    if isinstance(stt, FasterWhisperSTT):
-        await stt.warmup()
+    # Warmup para modelos locais
+    if hasattr(stt, 'warmup'):
+        try:
+            await stt.warmup()
+        except Exception as e:
+            logger.warning(f"Warmup falhou para {stt.provider_name}: {e}")
 
     return stt
 

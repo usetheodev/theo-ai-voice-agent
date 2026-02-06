@@ -349,17 +349,25 @@ class KokoroTTS(TTSProvider):
         return text
 
     def _resample(self, audio, from_rate: int, to_rate: int):
-        """Resample áudio usando decimação simples."""
+        """Resample áudio com anti-aliasing (scipy resample_poly)."""
         import numpy as np
 
         if from_rate == to_rate:
             return audio
 
-        factor = from_rate // to_rate
-        if factor <= 0:
-            return audio
-
-        return audio[::factor]
+        try:
+            from scipy.signal import resample_poly
+            from math import gcd
+            g = gcd(from_rate, to_rate)
+            up = to_rate // g
+            down = from_rate // g
+            return resample_poly(audio, up, down)
+        except ImportError:
+            # Fallback: decimação simples (sem anti-aliasing)
+            factor = from_rate // to_rate
+            if factor <= 0:
+                return audio
+            return audio[::factor]
 
     async def synthesize(self, text: str) -> bytes:
         """Converte texto em áudio usando Kokoro."""
@@ -773,15 +781,21 @@ class OpenAITTS(TTSProvider):
             self._metrics.record_failure(str(e))
 
     def _downsample_24k_to_8k(self, pcm_24k: bytes) -> bytes:
-        """Converte PCM de 24kHz para 8kHz (decimação por 3)."""
+        """Converte PCM de 24kHz para 8kHz com anti-aliasing."""
         try:
             if len(pcm_24k) < 2:
                 return b""
 
-            num_samples = len(pcm_24k) // 2
-            samples = struct.unpack(f'<{num_samples}h', pcm_24k)
-            downsampled = samples[::3]
-            return struct.pack(f'<{len(downsampled)}h', *downsampled)
+            import numpy as np
+            samples = np.frombuffer(pcm_24k, dtype=np.int16).astype(np.float64)
+
+            try:
+                from scipy.signal import resample_poly
+                downsampled = resample_poly(samples, 1, 3).astype(np.int16)
+                return downsampled.tobytes()
+            except ImportError:
+                # Fallback: decimação simples
+                return samples[::3].astype(np.int16).tobytes()
         except Exception:
             return pcm_24k
 

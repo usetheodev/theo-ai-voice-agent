@@ -187,6 +187,15 @@ class LLMProvider(ABC):
         if len(self.conversation_history) > max_msgs:
             self.conversation_history = self.conversation_history[-max_msgs:]
 
+    def update_last_response(self, new_text: str):
+        """Atualiza última resposta do assistant no histórico (para barge-in)."""
+        for i in range(len(self.conversation_history) - 1, -1, -1):
+            if self.conversation_history[i].get("role") == "assistant":
+                self.conversation_history[i]["content"] = new_text
+                logger.debug(f"Histórico atualizado: resposta interrompida ({len(new_text)} chars)")
+                return
+        logger.debug("update_last_response: nenhuma resposta assistant no histórico")
+
     def reset_conversation(self):
         """Limpa histórico da conversa"""
         self.conversation_history = []

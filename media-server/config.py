@@ -139,6 +139,10 @@ AUDIO_CONFIG = {
     # Taxa mínima de frames com fala para considerar que há fala (0.0 - 1.0)
     # 0.4 = 40% dos frames no ring buffer devem ter fala
     "vad_speech_ratio_threshold": float(os.getenv("VAD_SPEECH_RATIO_THRESHOLD", "0.4")),
+
+    # Comfort Noise: ruído leve durante processing para evitar "linha morta"
+    "comfort_noise_enabled": parse_bool(os.getenv("COMFORT_NOISE_ENABLED", "true"), True),
+    "comfort_noise_dbfs": float(os.getenv("COMFORT_NOISE_DBFS", "-60.0")),
 }
 
 
@@ -170,7 +174,13 @@ CALL_CONFIG = {
 
     # Cooldown pós-playback (segundos): tempo de espera após TTS antes de resumir captura
     # Permite eco do alto-falante morrer. 0 = desabilitado.
+    # Usado como valor inicial pelo EchoGuard adaptativo.
     "post_playback_cooldown": float(os.getenv("CALL_POST_PLAYBACK_COOLDOWN", "0.5")),
+
+    # EchoGuard: cooldown adaptativo pós-playback
+    "echo_guard_enabled": parse_bool(os.getenv("ECHO_GUARD_ENABLED", "true"), True),
+    "echo_guard_min_cooldown_ms": int(os.getenv("ECHO_GUARD_MIN_COOLDOWN_MS", "100")),
+    "echo_guard_max_cooldown_ms": int(os.getenv("ECHO_GUARD_MAX_COOLDOWN_MS", "1000")),
 }
 
 

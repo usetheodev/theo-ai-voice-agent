@@ -322,6 +322,22 @@ class WebSocketClient:
         except Exception as e:
             logger.error(f"Erro ao enviar audio.end: {e}")
 
+    async def send_response_interrupted(self, session_id: str, progress: float = 0.0):
+        """Notifica o AI Agent que a resposta foi interrompida (barge-in)"""
+        if not self.is_connected:
+            return
+
+        try:
+            from asp_protocol.messages import ResponseInterruptedMessage
+            msg = ResponseInterruptedMessage(
+                session_id=session_id,
+                progress=progress,
+            )
+            await self.ws.send(msg.to_json())
+            logger.info(f"[{session_id[:8]}] response.interrupted enviado (progress={progress:.0%})")
+        except Exception as e:
+            logger.error(f"Erro ao enviar response.interrupted: {e}")
+
     async def end_session(self, session_id: str, reason: str = "hangup"):
         """Encerra sessão
 
@@ -485,6 +501,8 @@ class WebSocketClient:
             SessionEndedMessage,
             ProtocolErrorMessage,
             CallActionMessage,
+            ResponseStartMessage as ASPResponseStartMessage,
+            ResponseEndMessage as ASPResponseEndMessage,
         )
 
         try:
@@ -511,6 +529,17 @@ class WebSocketClient:
 
             elif isinstance(msg, SessionEndedMessage):
                 logger.info(f"session.ended: {msg.session_id[:8]}")
+
+            elif isinstance(msg, ASPResponseStartMessage):
+                text = getattr(msg, 'text', '') or ''
+                logger.info(f"[{msg.session_id[:8]}]  Resposta: {text[:50]}...")
+                if self.on_response_start:
+                    self.on_response_start(msg.session_id, text)
+
+            elif isinstance(msg, ASPResponseEndMessage):
+                logger.debug(f"[{msg.session_id[:8]}] Resposta concluída")
+                if self.on_response_end:
+                    self.on_response_end(msg.session_id)
 
             elif isinstance(msg, CallActionMessage):
                 logger.info(
