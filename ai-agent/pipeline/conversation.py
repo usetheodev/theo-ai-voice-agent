@@ -482,6 +482,10 @@ class ConversationPipeline:
             track_pipeline_error('tts')
             return None
 
+    async def synthesize_text_async(self, text: str) -> Optional[bytes]:
+        """Sintetiza texto em áudio (async) - API pública para uso externo."""
+        return await self._synthesize_async(text)
+
     async def _synthesize_async(self, text: str) -> Optional[bytes]:
         """Sintetiza texto em áudio (async)."""
         if not self.tts:

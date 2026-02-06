@@ -237,8 +237,13 @@ class AIAgentServer:
 
         websocket.session_id = msg.session_id
 
-        # Envia saudação
-        await self._send_greeting(websocket, session)
+        # Pula saudacao em transfer retry (chamada retornando de transfer falha)
+        is_retry = msg.metadata and msg.metadata.get("transfer_retry")
+        if is_retry:
+            logger.info(f"[{msg.session_id[:8]}] Transfer retry - pulando saudacao")
+            await session.set_state('listening')
+        else:
+            await self._send_greeting(websocket, session)
 
     async def _handle_asp_session_update(self, websocket: WebSocketServerProtocol, msg):
         """Handler para session.update ASP"""
@@ -527,11 +532,10 @@ class AIAgentServer:
             if not response_started:
                 return
 
-        # Notifica fim da resposta
-        end_msg = ResponseEndMessage(session_id=session.session_id)
-        await websocket.send(end_msg.to_json())
-
-        # Check for pending call actions from tool calling
+        # Envia call actions ANTES de response.end para evitar race condition:
+        # o media-server executa ações no callback de playback_complete,
+        # que dispara quando recebe response.end e o buffer esvazia.
+        # Se call.action chegasse depois, a ação seria perdida.
         has_tool_calls = hasattr(session.pipeline, 'pending_tool_calls') and session.pipeline.pending_tool_calls
         if has_tool_calls:
             from asp_protocol.messages import CallActionMessage
@@ -565,6 +569,10 @@ class AIAgentServer:
                     logger.info(f"[{session.session_id[:8]}] Call action: hangup")
 
             session.pipeline.pending_tool_calls = []
+
+        # Notifica fim da resposta (APOS call actions)
+        end_msg = ResponseEndMessage(session_id=session.session_id)
+        await websocket.send(end_msg.to_json())
 
         # Escalacao automatica: transfere apos N interacoes sem resolucao
         if not has_tool_calls:
@@ -604,7 +612,7 @@ class AIAgentServer:
     async def _send_escalation_message(self, websocket: WebSocketServerProtocol, session: Session, text: str):
         """Envia mensagem TTS de escalacao antes de transferir."""
         try:
-            audio = await session.pipeline._synthesize_async(text)
+            audio = await session.pipeline.synthesize_text_async(text)
             if audio:
                 start_msg = ResponseStartMessage(
                     session_id=session.session_id,

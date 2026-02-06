@@ -37,6 +37,7 @@ services:
     environment:
       - TZ=America/Sao_Paulo
       - EXTERNAL_MEDIA_IP=auto
+      - AMI_SECRET=${AMI_SECRET:-Th30V01c3AMI!2026}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     cap_add:
@@ -137,7 +138,7 @@ services:
       - AMI_HOST=asterisk-pabx
       - AMI_PORT=5038
       - AMI_USERNAME=media-server
-      - AMI_SECRET=Th30V01c3AMI!2026
+      - AMI_SECRET=${AMI_SECRET:-Th30V01c3AMI!2026}
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:9091/metrics || exit 1"]
       interval: 30s

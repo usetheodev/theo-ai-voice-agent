@@ -172,7 +172,7 @@ class WebSocketClient:
         """Verifica se está conectado"""
         return self._connected.is_set() and self.ws is not None
 
-    async def start_session(self, session_id: str, call_id: str) -> bool:
+    async def start_session(self, session_id: str, call_id: str, metadata: dict = None) -> bool:
         """Inicia nova sessão de conversação
 
         Se em modo ASP, usa o protocolo ASP com negociação de configuração.
@@ -184,17 +184,15 @@ class WebSocketClient:
 
         try:
             if self._asp_mode:
-                # Modo ASP: usa handler com negociação
-                return await self._start_session_asp(session_id, call_id)
+                return await self._start_session_asp(session_id, call_id, metadata)
             else:
-                # Modo legado
                 return await self._start_session_legacy(session_id, call_id)
 
         except Exception as e:
             logger.error(f"Erro ao iniciar sessão: {e}")
             return False
 
-    async def _start_session_asp(self, session_id: str, call_id: str) -> bool:
+    async def _start_session_asp(self, session_id: str, call_id: str, metadata: dict = None) -> bool:
         """Inicia sessão usando protocolo ASP."""
         # Cria configs a partir das configurações locais
         audio_config = create_audio_config_from_local(AUDIO_CONFIG)
@@ -205,6 +203,11 @@ class WebSocketClient:
         future = loop.create_future()
         self._pending_asp_sessions[session_id] = (future, call_id)
 
+        # Merge metadata do caller com source
+        session_metadata = {"source": "media-server"}
+        if metadata:
+            session_metadata.update(metadata)
+
         # Envia session.start (sem aguardar resposta aqui)
         sent = await self._asp_handler.send_session_start(
             websocket=self.ws,
@@ -212,7 +215,7 @@ class WebSocketClient:
             call_id=call_id,
             audio_config=audio_config,
             vad_config=vad_config,
-            metadata={"source": "media-server"}
+            metadata=session_metadata,
         )
 
         if not sent:

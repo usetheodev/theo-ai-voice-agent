@@ -50,6 +50,7 @@ class MyCall(pj.Call):
         call_id=pj.PJSUA_INVALID_ID,
         fork_manager: Optional["MediaForkManager"] = None,
         caller_channel: Optional[str] = None,
+        is_transfer_retry: bool = False,
     ):
         pj.Call.__init__(self, acc, call_id)
         self.acc = acc
@@ -58,6 +59,9 @@ class MyCall(pj.Call):
 
         # Caller channel do Asterisk (para AMI Redirect em transfers)
         self.caller_channel = caller_channel
+
+        # Transfer retry: chamada retornando do fallback de transfer falha
+        self.is_transfer_retry = is_transfer_retry
 
         # AMI client (injetado pelo MediaServer via account)
         self.ami_client = None
@@ -264,6 +268,10 @@ class MyCall(pj.Call):
 
         try:
             ci = self.getInfo()
+            metadata = {}
+            if self.is_transfer_retry:
+                metadata["transfer_retry"] = True
+
             session_info = SessionInfo(
                 session_id=self.session_id,
                 call_id=ci.callIdString,
@@ -271,7 +279,8 @@ class MyCall(pj.Call):
                     sample_rate=AUDIO_CONFIG["sample_rate"],
                     channels=AUDIO_CONFIG["channels"],
                     sample_width=AUDIO_CONFIG["sample_width"]
-                )
+                ),
+                metadata=metadata if metadata else None,
             )
             session_timeout = CALL_CONFIG.get("session_start_timeout", 60)
             future = asyncio.run_coroutine_threadsafe(
@@ -483,6 +492,13 @@ class MyCall(pj.Call):
         """Executa transfer assistida via AMI Redirect"""
         if not target:
             self._log("Transfer sem target - ignorando", "error")
+            self._resume_streaming()
+            return
+
+        # Valida target: deve ser numerico (ramal) ou padrão de extensao valido
+        import re
+        if not re.match(r'^[0-9*#]+$', target):
+            self._log(f"Transfer com target invalido: '{target}' (deve ser numerico)", "error")
             self._resume_streaming()
             return
 

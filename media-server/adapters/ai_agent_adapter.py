@@ -61,7 +61,8 @@ class AIAgentAdapter:
         """
         return await self._client.start_session(
             session_id=session_info.session_id,
-            call_id=session_info.call_id
+            call_id=session_info.call_id,
+            metadata=session_info.metadata,
         )
 
     async def end_session(self, session_id: str, reason: str = "hangup") -> None:

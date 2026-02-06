@@ -58,16 +58,19 @@ class MyAccount(pj.Account):
 
     def onIncomingCall(self, prm):
         """Chamada recebida"""
-        # Extrair caller channel do header SIP (para AMI Redirect em transfers)
+        # Extrair headers SIP customizados
         caller_channel = None
+        is_transfer_retry = False
         try:
             whole_msg = prm.rdata.wholeMsg
             for line in whole_msg.split('\r\n'):
-                if line.lower().startswith('x-caller-channel:'):
+                lower = line.lower()
+                if lower.startswith('x-caller-channel:'):
                     caller_channel = line.split(':', 1)[1].strip()
-                    break
+                elif lower.startswith('x-transfer-retry:'):
+                    is_transfer_retry = True
         except Exception as e:
-            logger.warning(f"Erro ao extrair X-Caller-Channel: {e}")
+            logger.warning(f"Erro ao extrair headers SIP: {e}")
 
         call = MyCall(
             self,
@@ -76,6 +79,7 @@ class MyAccount(pj.Account):
             prm.callId,
             fork_manager=self.fork_manager,
             caller_channel=caller_channel,
+            is_transfer_retry=is_transfer_retry,
         )
         call.ami_client = self.ami_client
         ci = call.getInfo()
@@ -91,6 +95,8 @@ class MyAccount(pj.Account):
             logger.info(f"[{cid}]    Caller channel: {caller_channel}")
         else:
             logger.warning(f"[{cid}]    X-Caller-Channel nao encontrado (transfer indisponivel)")
+        if is_transfer_retry:
+            logger.info(f"[{cid}]    Transfer retry: retornando de transfer falha")
         logger.info("=" * 50)
 
         # Verifica se já há chamada em andamento

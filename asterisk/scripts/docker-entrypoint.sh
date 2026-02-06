@@ -49,7 +49,10 @@ fi
 
 if [ -f "$MANAGER_TEMPLATE" ]; then
     cp "$MANAGER_TEMPLATE" "$MANAGER_CONF"
-    echo "[asterisk-entrypoint] AMI: manager.conf loaded"
+    # Substitui AMI secret do env (nunca hardcoded no template)
+    AMI_SECRET="${AMI_SECRET:-changeme}"
+    sed -i "s/__AMI_SECRET__/$AMI_SECRET/g" "$MANAGER_CONF"
+    echo "[asterisk-entrypoint] AMI: manager.conf loaded (secret from env)"
 fi
 
 if [ -n "$EXTERNAL_IP" ] && [ -f "$PJSIP_CONF" ]; then

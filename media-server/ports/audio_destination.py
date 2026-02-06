@@ -5,7 +5,7 @@ Define o contrato que qualquer destino de áudio deve implementar,
 permitindo conectar em AI Agent, Softphone, WebRTC, etc.
 """
 
-from typing import Protocol, Callable, Optional, runtime_checkable
+from typing import Protocol, Callable, Optional, Dict, Any, runtime_checkable
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -32,6 +32,7 @@ class SessionInfo:
     session_id: str
     call_id: str
     audio_config: AudioConfig = field(default_factory=AudioConfig)
+    metadata: Optional[Dict[str, Any]] = None
 
 
 @runtime_checkable

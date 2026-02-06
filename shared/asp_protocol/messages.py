@@ -7,7 +7,7 @@ Classes para todas as mensagens do protocolo com serialização JSON.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
-from typing import Optional, List, Dict, Any, Type
+from typing import Optional, List, Dict, Any, Type, Union
 import json
 
 from .enums import MessageType, SessionStatus, CallActionType
@@ -588,7 +588,7 @@ class CallActionMessage(ASPMessage):
     O Media Server executa a acao via AMI apos o playback completar.
     """
     session_id: str
-    action: str  # CallActionType value
+    action: Union[str, CallActionType]
     target: Optional[str] = None
     reason: Optional[str] = None
     timestamp: Optional[str] = None
@@ -605,7 +605,7 @@ class CallActionMessage(ASPMessage):
         result = {
             "type": self.message_type.value,
             "session_id": self.session_id,
-            "action": self.action,
+            "action": self.action.value if isinstance(self.action, CallActionType) else self.action,
             "timestamp": self.timestamp
         }
         if self.target is not None:

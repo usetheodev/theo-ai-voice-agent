@@ -160,9 +160,12 @@ class AMIClient:
         Returns:
             True se o Asterisk aceitou o Redirect.
         """
+        # Auto-reconnect se conexao caiu (ex: Asterisk restart)
         if not self._connected:
-            logger.error("Redirect falhou: não conectado ao AMI")
-            return False
+            logger.warning("AMI desconectado - tentando reconectar antes do Redirect")
+            if not await self.reconnect():
+                logger.error("Redirect falhou: reconexao AMI falhou")
+                return False
 
         action_id = str(uuid.uuid4())
         action = (
@@ -224,6 +227,16 @@ class AMIClient:
         self._connected = False
         await self._close_transport()
         logger.info("AMI desconectado")
+
+    async def reconnect(self) -> bool:
+        """Fecha conexao existente e reconecta ao AMI.
+
+        Returns:
+            True se reconectou com sucesso.
+        """
+        logger.info("Tentando reconexao AMI...")
+        await self._close_transport()
+        return await self.connect()
 
     # -------------------------------------------------------------------------
     # Métodos internos
